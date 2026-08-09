@@ -6,7 +6,7 @@ import ChatWindow from "@/components/ChatWindow";
 import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
 import { LucideMenu, LucideX } from "lucide-react";
 
-export type DashboardView = "chat" | "telemetry";
+export type DashboardView = "chat" | "botTelemetry" | "globalTelemetry";
 
 export type GatewayTelemetry = {
   configured_webhook_url?: string | null;
@@ -54,10 +54,11 @@ export default function Home() {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // Auto-close sidebar when selecting on mobile
-  const handleSelectMobile = (cred: Credential) => {
+  const handleSelect = (cred: Credential) => {
     setSelected(cred);
-    setActiveView("chat");
+    setActiveView((currentView) =>
+      currentView === "botTelemetry" ? "botTelemetry" : "chat"
+    );
     if (isMobile) setSidebarOpen(false);
   };
 
@@ -108,7 +109,7 @@ export default function Home() {
             setActiveView(v);
             if (isMobile) setSidebarOpen(false);
           }}
-          onSelect={handleSelectMobile}
+          onSelect={handleSelect}
         />
       </div>
 
@@ -118,8 +119,10 @@ export default function Home() {
           isMobile ? "pt-12" : ""
         }`}
       >
-        {activeView === "telemetry" ? (
-          <TelemetryAnalyticsView />
+        {activeView === "globalTelemetry" ? (
+          <TelemetryAnalyticsView scope="global" />
+        ) : activeView === "botTelemetry" ? (
+          <TelemetryAnalyticsView scope="credential" credential={selected} />
         ) : (
           <ChatWindow credential={selected} />
         )}

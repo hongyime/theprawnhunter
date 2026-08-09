@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { BarChart3, MessageSquareText, LucideTarget } from "lucide-react";
+import { BarChart3, MessageSquareText, LucideTarget, Radar } from "lucide-react";
 import type { Credential, DashboardView } from "@/app/page";
 
 export default function Sidebar({
@@ -121,30 +121,42 @@ export default function Sidebar({
                 <h2 className="font-bold text-lg flex items-center gap-2 text-slate-800">
                     <LucideTarget className="text-red-600" /> Discovered Bots
                 </h2>
-                <div className="mt-3 grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1">
+                <div className="mt-3 grid grid-cols-3 gap-1 rounded-md bg-slate-100 p-1">
                     <button
                         type="button"
                         onClick={() => onViewChange("chat")}
-                        className={`flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold transition-colors ${
+                        className={`flex min-w-0 items-center justify-center gap-1 rounded px-1.5 py-1.5 text-xs font-semibold transition-colors ${
                             activeView === "chat"
                                 ? "bg-white text-slate-900 shadow-sm"
                                 : "text-slate-500 hover:text-slate-800"
                         }`}
                     >
                         <MessageSquareText className="h-3.5 w-3.5" />
-                        Chat Feed
+                        <span className="truncate">Chat Feed</span>
                     </button>
                     <button
                         type="button"
-                        onClick={() => onViewChange("telemetry")}
-                        className={`flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold transition-colors ${
-                            activeView === "telemetry"
+                        onClick={() => onViewChange("botTelemetry")}
+                        className={`flex min-w-0 items-center justify-center gap-1 rounded px-1.5 py-1.5 text-xs font-semibold transition-colors ${
+                            activeView === "botTelemetry"
                                 ? "bg-white text-slate-900 shadow-sm"
                                 : "text-slate-500 hover:text-slate-800"
                         }`}
                     >
-                        <BarChart3 className="h-3.5 w-3.5" />
-                        Telemetry
+                        <Radar className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">Bot Intel</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onViewChange("globalTelemetry")}
+                        className={`flex min-w-0 items-center justify-center gap-1 rounded px-1.5 py-1.5 text-xs font-semibold transition-colors ${
+                            activeView === "globalTelemetry"
+                                ? "bg-white text-slate-900 shadow-sm"
+                                : "text-slate-500 hover:text-slate-800"
+                        }`}
+                    >
+                        <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">All Telemetry</span>
                     </button>
                 </div>
             </div>
