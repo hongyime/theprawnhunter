@@ -499,12 +499,7 @@ Notes:
 
 ## License
 
-See [LICENSE](LICENSE).
-
-<!-- repo renamed to theprawnhunter on 2026-08-04 -->
-
-
----
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Advanced Features (added 2026-08-03 → 2026-08-06)
 
