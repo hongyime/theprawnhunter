@@ -9,7 +9,7 @@ from telethon import TelegramClient
 async def get_names():
     # Paths from DB
     paths = [
-        '/app/sessions/account_6592348112_1779153362',
+        '/app/sessions/account_00000000_1779153362',
         '/app/sessions/account_6584731565_1779170779'
     ]
     
