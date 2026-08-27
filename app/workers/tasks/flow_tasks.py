@@ -872,6 +872,10 @@ async def _enrich_logic(cred_id: str):
 
     bot_username = bot_username or "unknown"
     bot_id = bot_id or "0"
+    capabilities = await _fetch_bot_capabilities(
+        bot_token,
+        chat_id=first_chat["id"] if real_chats else None,
+    )
     topic_name = f"@{bot_username} / {bot_id}"
     
     topic_id = 0
@@ -894,6 +898,7 @@ async def _enrich_logic(cred_id: str):
     })
     if topic_id:
         meta_payload["topic_id"] = topic_id
+    meta_payload["capabilities"] = capabilities
 
     await async_execute(db.table("discovered_credentials").update({
         "chat_id": first_chat["id"],
