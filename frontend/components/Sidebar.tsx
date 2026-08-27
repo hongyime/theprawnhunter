@@ -5,6 +5,22 @@ import { supabase } from "@/lib/supabase";
 import { BarChart3, MessageSquareText, LucideTarget, Radar } from "lucide-react";
 import type { Credential, DashboardView } from "@/app/page";
 
+function ConfidenceBadge({ score }: { score: number | null }) {
+  if (score === null || score === undefined) {
+    return <span className="text-xs text-gray-400 font-mono">–</span>
+  }
+  const { label, cls } =
+    score >= 0.8
+      ? { label: 'High', cls: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' }
+      : score >= 0.4
+      ? { label: 'Med', cls: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' }
+      : { label: 'Low', cls: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' }
+  return (
+    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${cls}`}>
+      {label}
+    </span>
+  )
+}
 export default function Sidebar({
     selected,
     activeView,
@@ -180,19 +196,7 @@ export default function Sidebar({
                         </div>
                         <div className="text-sm text-slate-500 truncate flex items-center gap-1">
                             <span className="bg-slate-200 px-1 py-0.5 rounded text-[10px] uppercase font-mono">{cred.source}</span>
-                            {typeof cred.confidence_score === "number" && (
-                                <span
-                                    className={`px-1 py-0.5 rounded text-[10px] font-mono font-semibold ${cred.confidence_score >= 70
-                                        ? "bg-emerald-100 text-emerald-800"
-                                        : cred.confidence_score >= 40
-                                            ? "bg-amber-100 text-amber-800"
-                                            : "bg-slate-100 text-slate-600"
-                                        }`}
-                                    title={`Confidence ${cred.confidence_score}/100`}
-                                >
-                                    {cred.confidence_score}
-                                </span>
-                            )}
+                            <ConfidenceBadge score={cred.confidence_score ?? null} />
                             {typeof cred.chat_member_count === "number" && cred.chat_member_count > 1 && (
                                 <span className="bg-blue-50 text-blue-700 px-1 py-0.5 rounded text-[10px] font-mono" title={`${cred.chat_member_count} members`}>
                                     👥{cred.chat_member_count >= 1000 ? `${Math.round(cred.chat_member_count / 1000)}k` : cred.chat_member_count}
