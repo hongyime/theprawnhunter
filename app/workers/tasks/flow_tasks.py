@@ -178,6 +178,62 @@ async def _merge_credential_meta(cred_id: str, patch: Dict[str, Any]) -> Dict[st
     return merged_meta
 
 
+async def _fetch_bot_capabilities(
+    bot_token: str,
+    chat_id: int | None = None,
+    get_me_result: dict | None = None,
+) -> dict:
+    """
+    Fetch bot capability metadata from the Telegram Bot API.
+    Returns dict with keys: can_join_groups, can_read_all_group_messages,
+    supports_inline_queries, default_admin_rights_groups,
+    default_admin_rights_channels, description, short_description, linked_chat_id.
+    Never raises — returns {} on total failure, partial dict on partial failure.
+    """
+    capabilities: dict = {}
+    base = f"https://api.telegram.org/bot{bot_token}"
+
+    async def _get(path: str) -> dict | None:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as _hc:
+                r = await _hc.get(f"{base}/{path}")
+                if r.status_code == 200:
+                    return r.json().get("result") or {}
+        except Exception as e:
+            logger.debug(f"[BotCapabilities] {path} failed: {e}")
+        return None
+
+    # Reuse existing getMe result if provided, else fetch fresh
+    me = get_me_result or await _get("getMe")
+    if me:
+        capabilities["can_join_groups"] = bool(me.get("can_join_groups"))
+        capabilities["can_read_all_group_messages"] = bool(me.get("can_read_all_group_messages"))
+        capabilities["supports_inline_queries"] = bool(me.get("supports_inline_queries"))
+
+    # Default admin rights for groups
+    groups_rights = await _get("getMyDefaultAdministratorRights?for_channels=false")
+    capabilities["default_admin_rights_groups"] = groups_rights if groups_rights else None
+
+    # Default admin rights for channels
+    channel_rights = await _get("getMyDefaultAdministratorRights?for_channels=true")
+    capabilities["default_admin_rights_channels"] = channel_rights if channel_rights else None
+
+    # Bot description
+    desc = await _get("getMyDescription")
+    capabilities["description"] = (desc or {}).get("description", "")
+
+    short_desc = await _get("getMyShortDescription")
+    capabilities["short_description"] = (short_desc or {}).get("short_description", "")
+
+    # Linked chat from primary chat if available
+    capabilities["linked_chat_id"] = None
+    if chat_id:
+        chat_info = await _get(f"getChat?chat_id={chat_id}")
+        if chat_info:
+            capabilities["linked_chat_id"] = chat_info.get("linked_chat_id")
+
+    return capabilities
+
 def _strategy_attempt_to_dict(attempt: Any) -> Dict[str, Any]:
     if hasattr(attempt, "to_dict"):
         return attempt.to_dict()
