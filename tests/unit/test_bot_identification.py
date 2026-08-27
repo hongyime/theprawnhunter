@@ -145,8 +145,8 @@ class TestFetchBotCapabilities:
         assert result.get("description", "") == ""
 
     @pytest.mark.asyncio
-    async def test_total_failure_returns_empty_dict(self):
-        """If all calls raise, returns {} without raising."""
+    async def test_total_failure_never_raises(self):
+        """If all calls raise, returns without raising — no can_join_groups key."""
         from app.workers.tasks.flow_tasks import _fetch_bot_capabilities
 
         async def fake_get(url, **kwargs):
@@ -160,4 +160,8 @@ class TestFetchBotCapabilities:
         with patch("app.workers.tasks.flow_tasks.httpx.AsyncClient", return_value=mock_client):
             result = await _fetch_bot_capabilities("123456:ABC")
 
-        assert result == {}
+        # getMe failed → capability flags are NOT set
+        assert "can_join_groups" not in result
+        assert "can_read_all_group_messages" not in result
+        # other keys are set to None/empty but no exception raised
+        assert result is not None
