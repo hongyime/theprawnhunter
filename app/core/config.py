@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     HONEYPOT_REDIRECT_BOT: str = "bryanseahbot"  # username of the redirect target
     HONEYPOT_REDIRECT_DEEPLINK: str = "migrate"  # ?start=<this> param
     MONITOR_API_KEY: str  # Required — protects /monitor and /health/detailed endpoints
+    ALERT_WEBHOOK_URL: str = ""  # POST alert JSON here on credential_activated / honeypot_update
+    ALERT_WEBHOOK_SECRET: str = ""  # Sent as X-Webhook-Secret header (optional auth)
 
     # Telegram Monitoring (The Bot(s) WE control - supports multi-bot rotation)
     # Comma-separated bot tokens, e.g. "token1,token2,token3"
