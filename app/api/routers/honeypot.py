@@ -27,11 +27,13 @@ traffic because we never call setWebhook.
 """
 
 from datetime import datetime, timezone
+import asyncio as _asyncio
 from fastapi import APIRouter, HTTPException, Header, Request
 
 from app.core.config import settings
 from app.core.database import db
 from app.core.logger import get_logger
+from app.core.webhook import dispatch_alert as _dispatch_alert
 
 logger = get_logger(__name__)
 
@@ -120,6 +122,12 @@ async def receive_webhook_update(credential_id: str, request: Request):
                 "source_ip": request.client.host if request.client else None,
             }
         ).execute()
+        _asyncio.create_task(_dispatch_alert({
+            "event": "honeypot_update",
+            "timestamp": now.isoformat(),
+            "credential_id": str(credential_id),
+            "honeypot_update": payload,
+        }))
     except Exception as e:
         logger.error(f"[Honeypot] insert failed for {credential_id[:8]}...: {e}")
         return {"ok": True}
