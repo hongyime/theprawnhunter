@@ -53,6 +53,8 @@ cp .env.template .env
 | `ENV` | `development` | Set to `production` to disable `/docs` and `/scan/trigger` |
 | `DEBUG` | `True` | Log verbosity |
 | `MONITOR_API_KEY` | *(unset)* | If set, all `/monitor/*` and `/health/detailed` endpoints require `X-Monitor-Key` header |
+| `ALERT_WEBHOOK_URL` | *(unset)* | When set, a JSON payload is POSTed here on `credential_activated` and `honeypot_update` events. Supports Slack, Splunk HEC, MISP, or any HTTP endpoint. |
+| `ALERT_WEBHOOK_SECRET` | *(unset)* | Sent as `X-Webhook-Secret` header with every webhook POST. Optional auth for your receiver. |
 | `WHITELISTED_BOT_IDS` | `""` | Comma-separated bot usernames or IDs kept in the monitor group |
 | `ANONYMOUS_ADMIN_ID` | `1087968824` | Telegram anonymous group admin bot ID |
 | `USER_SESSION_STRING` | *(unset)* | Telethon session string for user-agent invite flow |
