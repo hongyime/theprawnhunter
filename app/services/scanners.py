@@ -10,13 +10,11 @@ import hashlib
 import json
 from typing import List, Dict, Any
 from app.core.config import settings
-import requests
 import base64
 import re
 import urllib3
 import logging
 import random
-import functools
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -854,17 +852,30 @@ class ExaService:
     ]
 
     def __init__(self):
-        self.api_key = settings.EXA_API_KEY
         self.base_url = "https://api.exa.ai/search"
 
+    def _get_api_key(self) -> str | None:
+        """Pick a random available Exa key from EXA_API_KEY / EXA_API_KEY_2 / EXA_API_KEY_3."""
+        keys = [
+            key
+            for key in (
+                settings.EXA_API_KEY,
+                getattr(settings, "EXA_API_KEY_2", None),
+                getattr(settings, "EXA_API_KEY_3", None),
+            )
+            if key
+        ]
+        return random.choice(keys) if keys else None
+
     async def search(self, query: str = '"api.telegram.org/bot"') -> List[Dict[str, Any]]:
-        if not self.api_key:
-            logger.warning("    [Exa] Missing EXA_API_KEY")
+        api_key = self._get_api_key()
+        if not api_key:
+            logger.warning("    [Exa] No EXA_API_KEY configured")
             return []
 
         try:
             headers = {
-                "x-api-key": self.api_key,
+                "x-api-key": api_key,
                 "Content-Type": "application/json",
             }
             payload = {

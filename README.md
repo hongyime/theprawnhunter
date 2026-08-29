@@ -85,6 +85,7 @@ All scanner keys degrade gracefully when absent  the corresponding scanner is si
 | `SHODAN_KEY` | Shodan |
 | `FOFA_EMAIL` + `FOFA_KEY` | FOFA API (paid plan only) |
 | `URLSCAN_KEY` | URLScan.io |
+| `EXA_API_KEY`, `EXA_API_KEY_2`, `EXA_API_KEY_3` | Exa paste/code search; extra keys are rotated per request |
 | `GITHUB_TOKEN` or `GITHUB_TOKENS` | GitHub Code Search + Gists |
 | `GITLAB_TOKEN` | GitLab |
 | `BITBUCKET_USER` + `BITBUCKET_API_TOKEN` | Bitbucket (Bearer auth) |

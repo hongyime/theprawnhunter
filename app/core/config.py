@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     BITBUCKET_USER: Optional[str] = None        # Atlassian account email (for Basic auth with API token)
     BITBUCKET_API_TOKEN: Optional[str] = None   # API token (replaces app password — use Bearer auth)
     EXA_API_KEY: Optional[str] = None
+    EXA_API_KEY_2: Optional[str] = None
+    EXA_API_KEY_3: Optional[str] = None
     CENSYS_ID: Optional[str] = None
     CENSYS_SECRET: Optional[str] = None
     HYBRID_ANALYSIS_KEY: Optional[str] = None
