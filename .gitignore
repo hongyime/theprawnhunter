@@ -61,6 +61,8 @@ frontend/out/
 
 # Qodo / AI tooling
 .qodo/
+.omo/
+.agents/tickets/
 
 # Kiro specs (local dev only — not for CI)
 # Uncomment if you don't want specs in the repo:

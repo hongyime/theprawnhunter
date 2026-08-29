@@ -1,4 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => {
+    const DEFAULT_API_URL = "https://winnethepooh.hong-yi.me";
+    const DEFAULT_COUNTRY_TOTAL = 49;
+
     const btnStart      = document.getElementById("btn-start");
     const btnStop       = document.getElementById("btn-stop");
     const btnResume     = document.getElementById("btn-resume");
@@ -9,13 +12,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const inputMonKey   = document.getElementById("input-monitor-key");
     const elTotal       = document.getElementById("count-total");
 
-    // Load saved config — pre-fill with public tunnel URL if empty
-    chrome.storage.local.get(["supabase_config"], (result) => {
+    // Render from local storage first so popup paint does not depend on
+    // waking the Manifest V3 background service worker.
+    chrome.storage.local.get(["supabase_config", "scraper_state"], (result) => {
         const cfg = result.supabase_config || {};
-        // Default API URL: public Cloudflare tunnel endpoint (friends can use without setup)
-        inputApiUrl.value = cfg.apiUrl || "https://winnethepooh.hong-yi.me";
+        inputApiUrl.value = cfg.apiUrl || DEFAULT_API_URL;
         if (cfg.monitorKey) inputMonKey.value = cfg.monitorKey;
-        // Auto-save defaults on first load
+        if (result.scraper_state) updateUI(summarizeStoredState(result.scraper_state));
         if (!cfg.apiUrl) saveConfig();
     });
 
@@ -31,7 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
     inputApiUrl.onchange = saveConfig;
     inputMonKey.onchange = saveConfig;
 
-    // Get initial state
+    // Refresh from the background worker when it is awake.
     chrome.runtime.sendMessage({ action: "GET_STATE" }, (response) => {
         if (chrome.runtime.lastError) return;
         updateUI(response);
@@ -58,6 +61,23 @@ document.addEventListener("DOMContentLoaded", () => {
         chrome.runtime.sendMessage({ action: "UPLOAD_RESULTS" });
     };
 
+    function summarizeStoredState(state) {
+        const countryList = Array.isArray(state.countryList) ? state.countryList : [];
+        return {
+            isRunning: !!state.isRunning,
+            isPaused: !!state.isPaused,
+            status: state.status || "Ready",
+            query: state.query,
+            domainMode: state.domainMode || "en",
+            countriesDone: state.countriesDone || 0,
+            resultsFound: state.resultsFound || 0,
+            resultsValid: state.resultsValid || 0,
+            countryTotal: state.domainMode === "both"
+                ? (countryList.length || DEFAULT_COUNTRY_TOTAL) * 2
+                : (countryList.length || DEFAULT_COUNTRY_TOTAL),
+        };
+    }
+
     function updateUI(state) {
         if (!state) return;
 
@@ -67,8 +87,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const validEl = document.getElementById("count-valid");
         if (validEl) validEl.innerText = state.resultsValid || 0;
         if (!state.isRunning && state.domainMode) selectMode.value = state.domainMode;
-        // Both mode = 48 countries × 2 domains = 96 total
-        if (elTotal) elTotal.innerText = state.domainMode === "both" ? "96" : (state.countryList ? state.countryList.length : 48);
+        // Both mode scans the current country set across two domains.
+        if (elTotal) {
+            elTotal.innerText = state.countryTotal || (
+                state.domainMode === "both" ? DEFAULT_COUNTRY_TOTAL * 2 : DEFAULT_COUNTRY_TOTAL
+            );
+        }
 
         if (state.isRunning && !state.isPaused) {
             btnStart.classList.add("hidden");
@@ -76,6 +100,7 @@ document.addEventListener("DOMContentLoaded", () => {
             btnResume.classList.add("hidden");
             inputQuery.disabled   = true;
             selectMode.disabled   = true;
+            document.getElementById("status").style.color = "#fb0";
         } else if (state.isPaused) {
             btnStop.classList.add("hidden");
             btnResume.classList.remove("hidden");

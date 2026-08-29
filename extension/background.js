@@ -33,68 +33,78 @@ let state = {
     countryList: [],
 };
 
-loadState();
-
 let activeTabId = null;
+const stateReady = loadState().then(() => {
+    restoreActiveTab();
+    recoverRunningScan();
+}).catch((err) => {
+    console.warn("[BG] state restore failed:", err);
+});
 
 // Restore activeTabId from storage on SW restart
-chrome.storage.local.get(["activeTabId"], (r) => {
-    if (r.activeTabId) {
-        activeTabId = r.activeTabId;
-        // Verify the tab still exists — clear if it doesn't
-        chrome.tabs.get(activeTabId, (tab) => {
-            if (chrome.runtime.lastError || !tab) {
-                activeTabId = null;
-                chrome.storage.local.remove("activeTabId");
-            }
-        });
-    }
-});
+function restoreActiveTab() {
+    chrome.storage.local.get(["activeTabId"], (r) => {
+        if (r.activeTabId) {
+            activeTabId = r.activeTabId;
+            // Verify the tab still exists — clear if it doesn't
+            chrome.tabs.get(activeTabId, (tab) => {
+                if (chrome.runtime.lastError || !tab) {
+                    activeTabId = null;
+                    chrome.storage.local.remove("activeTabId");
+                }
+            });
+        }
+    });
+}
 
 // Re-entry after SW restart: if a scan was running, kick it back into action
 // Chrome kills the SW after ~30s idle; on next alarm/event it restarts cold.
 // State and activeTabId are restored from storage above — but alarms are gone.
 // We recreate the watchdog and re-trigger processing if no alarm is pending.
-chrome.storage.local.get(["activeTabId"], (r) => {
-    if (!state.isRunning || state.isPaused) return;
-    // Recreate watchdog alarm (idempotent — Chrome dedupes by name)
-    chrome.alarms.create("watchdog", { periodInMinutes: 3 });
-    // Check if scrape_page alarm is already pending; if not, fire next country
-    chrome.alarms.get("scrape_page", (alarm) => {
-        if (!alarm && r.activeTabId) {
-            // Give tab 1s to settle after SW restart, then check its state
-            setTimeout(() => {
-                chrome.tabs.get(r.activeTabId, (tab) => {
-                    if (chrome.runtime.lastError || !tab) return;
-                    if (tab.status === "complete") {
-                        // Page already loaded — send SCRAPE_PAGE directly
-                        chrome.tabs.sendMessage(r.activeTabId, { action: "SCRAPE_PAGE" })
-                            .catch(() => nextCountry());
-                    }
-                    // If tab is still loading, onUpdated will fire and create the alarm
-                });
-            }, 1000);
-        }
+function recoverRunningScan() {
+    chrome.storage.local.get(["activeTabId"], (r) => {
+        if (!state.isRunning || state.isPaused) return;
+        // Recreate watchdog alarm (idempotent — Chrome dedupes by name)
+        chrome.alarms.create("watchdog", { periodInMinutes: 3 });
+        // Check if scrape_page alarm is already pending; if not, fire next country
+        chrome.alarms.get("scrape_page", (alarm) => {
+            if (!alarm && r.activeTabId) {
+                // Give tab 1s to settle after SW restart, then check its state
+                setTimeout(() => {
+                    chrome.tabs.get(r.activeTabId, (tab) => {
+                        if (chrome.runtime.lastError || !tab) return;
+                        if (tab.status === "complete") {
+                            // Page already loaded — send SCRAPE_PAGE directly
+                            chrome.tabs.sendMessage(r.activeTabId, { action: "SCRAPE_PAGE" })
+                                .catch(() => nextCountry());
+                        }
+                        // If tab is still loading, onUpdated will fire and create the alarm
+                    });
+                }, 1000);
+            }
+        });
     });
-});
+}
 
 // --- LISTENERS ---
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.action) {
         case "GET_STATE":
-            sendResponse(serializeState(state));
-            return false;
+            stateReady.then(() => {
+                sendResponse(serializeState(state, { includeResults: !!msg.includeResults }));
+            });
+            return true;
         case "START_SCAN":
-            startScan(msg.query, msg.domain, msg.domainMode);
+            stateReady.then(() => startScan(msg.query, msg.domain, msg.domainMode));
             break;
         case "STOP_SCAN":
-            stopScan("Stopped by user");
+            stateReady.then(() => stopScan("Stopped by user"));
             break;
         case "RESUME_SCAN":
-            resumeScan();
+            stateReady.then(() => resumeScan());
             break;
         case "UPLOAD_RESULTS":
-            uploadToSupabase();
+            stateReady.then(() => uploadToSupabase());
             break;
         case "CAPTCHA_DETECTED":
             pauseScan("⚠️ Captcha Detected!");
@@ -104,10 +114,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             break;
         case "RESULTS_FOUND":
             // Batch: msg.data is an array of {token, chatId} objects
-            handleResults(msg.data || []);
+            stateReady.then(() => handleResults(msg.data || []));
             break;
         case "PAGE_COMPLETE":
-            nextCountry();
+            stateReady.then(() => nextCountry());
             break;
         case "LOG":
             console.log("[Content]", msg.message);
@@ -141,36 +151,64 @@ function saveState() {
 }
 
 function loadState() {
-    chrome.storage.local.get(["scraper_state"], (result) => {
-        if (result.scraper_state) {
-            const loaded = result.scraper_state;
-            loaded.seenTokens = loaded.seenTokens
-                ? new Set(loaded.seenTokens)
-                : new Set();
-            // Guard: countryList must exist and be consistent with countryIndex.
-            // Service worker restarts can reload an old state where countryList
-            // is missing or shorter than countryIndex — realign here.
-            if (
-                !Array.isArray(loaded.countryList) ||
-                loaded.countryList.length === 0 ||
-                loaded.countryIndex >= loaded.countryList.length
-            ) {
-                loaded.countryList = [...COUNTRY_CODES].sort(() => Math.random() - 0.5);
-                loaded.countryIndex = 0;
+    return new Promise((resolve) => {
+        chrome.storage.local.get(["scraper_state"], (result) => {
+            if (result.scraper_state) {
+                const loaded = result.scraper_state;
+                loaded.seenTokens = loaded.seenTokens
+                    ? new Set(loaded.seenTokens)
+                    : new Set();
+                // Guard: countryList must exist and be consistent with countryIndex.
+                // Service worker restarts can reload an old state where countryList
+                // is missing or shorter than countryIndex — realign here.
+                if (
+                    !Array.isArray(loaded.countryList) ||
+                    loaded.countryList.length === 0 ||
+                    loaded.countryIndex >= loaded.countryList.length
+                ) {
+                    loaded.countryList = [...COUNTRY_CODES].sort(() => Math.random() - 0.5);
+                    loaded.countryIndex = 0;
+                }
+                // Mark as stopped if it was mid-run when the SW died
+                if (loaded.isRunning && !loaded.isPaused) {
+                    loaded.isRunning = false;
+                    loaded.status = "Stopped (Recovered)";
+                }
+                state = loaded;
             }
-            // Mark as stopped if it was mid-run when the SW died
-            if (loaded.isRunning && !loaded.isPaused) {
-                loaded.isRunning = false;
-                loaded.status = "Stopped (Recovered)";
-            }
-            state = loaded;
-        }
+            resolve();
+        });
     });
 }
 
-function serializeState(s) {
+function serializeState(s, options = {}) {
+    const countryTotal = s.domainMode === "both" ? COUNTRY_CODES.length * 2 : (
+        Array.isArray(s.countryList) && s.countryList.length > 0 ? s.countryList.length : COUNTRY_CODES.length
+    );
+    const summary = {
+        isRunning: s.isRunning,
+        isPaused: s.isPaused,
+        status: s.status,
+        query: s.query,
+        domain: s.domain,
+        domainMode: s.domainMode,
+        domainPhase: s.domainPhase,
+        countryIndex: s.countryIndex,
+        countriesDone: s.countriesDone,
+        resultsFound: s.resultsFound,
+        resultsValid: s.resultsValid,
+        countryTotal,
+    };
+
+    if (!options.includeResults) return summary;
+
     // Return a plain object — Sets are not serialisable via sendMessage
-    return { ...s, seenTokens: Array.from(s.seenTokens) };
+    return {
+        ...summary,
+        results: s.results,
+        seenTokens: Array.from(s.seenTokens),
+        countryList: s.countryList,
+    };
 }
 
 // --- CORE LOGIC ---
