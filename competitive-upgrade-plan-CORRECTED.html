@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Competitive Upgrade — The Prawn Hunter</title>
+  <style>
+    :root {
+      --bg: #08101c;
+      --panel: #0d1828;
+      --panel-2: #111f33;
+      --text: #e8eef8;
+      --muted: #9fb0c7;
+      --line: #22344d;
+      --cyan: #46d7d0;
+      --blue: #7aa7ff;
+      --green: #61d59a;
+      --amber: #f3bf5a;
+      --red: #ff7c85;
+      --violet: #bba4ff;
+      --shadow: 0 16px 44px rgba(0,0,0,.28);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 15% 5%, rgba(70,215,208,.11), transparent 28rem),
+        radial-gradient(circle at 86% 8%, rgba(122,167,255,.10), transparent 32rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.62 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--cyan); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { color: #8df0eb; }
+    code {
+      color: #cbd9ff;
+      background: rgba(122,167,255,.09);
+      border: 1px solid rgba(122,167,255,.18);
+      border-radius: 5px;
+      padding: .08rem .32rem;
+      font: .88em/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .shell { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 100vh; }
+    nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 20px;
+      border-right: 1px solid var(--line);
+      background: rgba(8,16,28,.83);
+      backdrop-filter: blur(16px);
+      overflow: auto;
+    }
+    .brand { margin-bottom: 28px; }
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      margin-bottom: 10px;
+      border: 1px solid rgba(70,215,208,.45);
+      border-radius: 11px;
+      color: var(--cyan);
+      background: rgba(70,215,208,.08);
+      font-weight: 850;
+    }
+    .brand strong { display: block; font-size: 14px; letter-spacing: .02em; }
+    .brand small { color: var(--muted); }
+    nav a {
+      display: block;
+      margin: 3px 0;
+      padding: 7px 9px;
+      border-radius: 7px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    nav a:hover { color: var(--text); background: rgba(255,255,255,.045); }
+    nav .nav-label {
+      margin: 22px 9px 6px;
+      color: #70849f;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    main { width: min(1260px, 100%); padding: 54px 54px 100px; }
+    section { scroll-margin-top: 24px; margin: 0 0 58px; }
+    .eyebrow { color: var(--cyan); font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { max-width: 900px; margin: 12px 0 16px; font-size: clamp(38px, 6vw, 68px); line-height: 1.02; letter-spacing: -.045em; }
+    h2 { margin: 0 0 17px; font-size: clamp(25px, 4vw, 37px); line-height: 1.15; letter-spacing: -.025em; }
+    h3 { margin: 0 0 11px; font-size: 18px; }
+    h4 { margin: 0 0 5px; font-size: 14px; }
+    p { margin: 0 0 14px; }
+    .lede { max-width: 900px; color: #c4d0e1; font-size: 19px; line-height: 1.55; }
+    .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255,255,255,.025);
+      font-size: 12px;
+    }
+    .pill b { color: var(--text); }
+    .hero-grid { display: grid; grid-template-columns: 1.45fr .75fr; gap: 18px; margin-top: 30px; }
+    .card {
+      padding: 21px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(145deg, rgba(17,31,51,.94), rgba(11,22,38,.94));
+      box-shadow: var(--shadow);
+    }
+    .card.flat { box-shadow: none; }
+    .diagnosis {
+      border-color: rgba(70,215,208,.42);
+      background: linear-gradient(145deg, rgba(70,215,208,.09), rgba(17,31,51,.95) 48%);
+    }
+    .big-number { color: var(--cyan); font-size: 45px; font-weight: 850; line-height: 1; letter-spacing: -.04em; }
+    .muted { color: var(--muted); }
+    .callout {
+      margin: 18px 0;
+      padding: 16px 18px;
+      border-left: 3px solid var(--amber);
+      border-radius: 0 10px 10px 0;
+      color: #e7d4a8;
+      background: rgba(243,191,90,.08);
+    }
+    .callout.danger { border-left-color: var(--red); color: #ffd0d3; background: rgba(255,124,133,.08); }
+    .callout.good { border-left-color: var(--green); color: #c9f5de; background: rgba(97,213,154,.08); }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 15px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 15px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+    .stat { padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.024); }
+    .stat b { display: block; margin-bottom: 4px; font-size: 22px; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; align-items: stretch; margin: 18px 0; }
+    .flow-step { position: relative; min-height: 110px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.025); }
+    .flow-step:not(:last-child)::after { content: "→"; position: absolute; top: 39%; right: -15px; z-index: 2; color: var(--blue); font-weight: 900; }
+    .flow-step strong { display: block; color: var(--text); font-size: 13px; }
+    .flow-step span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+    .flow-step.gap { border-color: rgba(255,124,133,.55); background: rgba(255,124,133,.07); }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: rgba(9,18,31,.72); }
+    table { width: 100%; border-collapse: collapse; min-width: 920px; font-size: 12.5px; }
+    th, td { padding: 12px 13px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+    th { position: sticky; top: 0; z-index: 1; color: #b8c9dd; background: #142239; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td { background: rgba(255,255,255,.025); }
+    td:first-child { color: var(--text); font-weight: 700; }
+    .rating { white-space: nowrap; font-weight: 800; }
+    .strong { color: var(--green); }
+    .partial { color: var(--amber); }
+    .weak { color: var(--red); }
+    .na { color: #778ca7; }
+    .target { padding: 18px; }
+    .target-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .target-head b { font-size: 18px; }
+    .target .tag { color: var(--violet); font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+    dl { display: grid; grid-template-columns: 116px 1fr; gap: 7px 12px; margin: 0; font-size: 12.5px; }
+    dt { color: #7f94ad; font-weight: 750; }
+    dd { margin: 0; color: #c5d1e1; }
+    .finding { display: grid; grid-template-columns: 45px minmax(0,1fr); gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+    .finding:last-child { border-bottom: 0; }
+    .finding-num { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid rgba(70,215,208,.4); border-radius: 10px; color: var(--cyan); background: rgba(70,215,208,.07); font-weight: 850; }
+    .finding p { color: #b9c7d9; }
+    .priority-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .priority-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 18px currentColor; }
+    .priority-now .priority-dot { color: var(--red); background: var(--red); }
+    .priority-next .priority-dot { color: var(--amber); background: var(--amber); }
+    .priority-explore .priority-dot { color: var(--violet); background: var(--violet); }
+    .upgrade { margin-bottom: 13px; padding: 17px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.02); }
+    .upgrade:last-child { margin-bottom: 0; }
+    .upgrade-top { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+    .upgrade-top h4 { font-size: 15px; }
+    .effort { flex: 0 0 auto; color: var(--muted); font: 11px/1.4 ui-monospace, Consolas, monospace; }
+    .upgrade dl { grid-template-columns: 105px 1fr; }
+    .roadmap { position: relative; margin-left: 10px; padding-left: 28px; border-left: 1px solid var(--line); }
+    .phase { position: relative; margin-bottom: 17px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.02); }
+    .phase::before { content: ""; position: absolute; left: -35px; top: 24px; width: 12px; height: 12px; border: 3px solid var(--bg); border-radius: 50%; background: var(--blue); }
+    .phase-time { color: var(--blue); font: 11px/1.4 ui-monospace, Consolas, monospace; letter-spacing: .05em; text-transform: uppercase; }
+    ul, ol { margin: 9px 0 0; padding-left: 20px; }
+    li { margin: 5px 0; }
+    .metric-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    .metric { padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.02); }
+    .metric b { display: block; margin-bottom: 3px; font-size: 13px; }
+    .metric span { color: var(--muted); font-size: 11.5px; }
+    details { margin: 10px 0; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.018); }
+    summary { cursor: pointer; padding: 13px 15px; color: #d7e2ef; font-weight: 750; }
+    details > div { padding: 0 15px 15px; color: var(--muted); }
+    .source-list { columns: 2; column-gap: 28px; }
+    .source-list li { break-inside: avoid; margin-bottom: 9px; color: var(--muted); font-size: 12.5px; }
+    .footer { padding-top: 26px; border-top: 1px solid var(--line); color: #70849f; font-size: 12px; }
+    .print { margin-top: 14px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
+    .print:hover { color: var(--text); border-color: var(--blue); }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; }
+      nav { position: relative; width: 100%; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      nav a, nav .nav-label { display: none; }
+      .brand { margin: 0; }
+      main { padding: 38px 22px 80px; }
+      .hero-grid, .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .flow-step:not(:last-child)::after { content: "↓"; top: auto; right: 49%; bottom: -18px; }
+      .source-list { columns: 1; }
+    }
+    @media print {
+      :root { --bg: #fff; --panel: #fff; --panel-2: #f7f8fb; --text: #101828; --muted: #475467; --line: #d0d5dd; }
+      body { background: #fff; color: #101828; }
+      .shell { display: block; }
+      nav { display: none; }
+      main { width: 100%; padding: 20px; }
+      section { break-inside: avoid-page; }
+      .card, .table-wrap { box-shadow: none; background: #fff; }
+      .print { display: none; }
+      a { color: #175cd3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav aria-label="Plan navigation">
+      <div class="brand">
+        <div class="brand-mark">PH</div>
+        <strong>Competitive Upgrade</strong>
+        <small>The Prawn Hunter</small>
+      </div>
+      <div class="nav-label">Diagnosis</div>
+      <a href="#executive">Executive diagnosis</a>
+      <a href="#current-state">Current repo</a>
+      <a href="#targets">Comparison targets</a>
+      <a href="#matrix">Capability matrix</a>
+      <a href="#findings">Key findings</a>
+      <div class="nav-label">Plan</div>
+      <a href="#upgrades">Upgrade opportunities</a>
+      <a href="#roadmap">24-day roadmap</a>
+      <a href="#slice">First buildable slice</a>
+      <a href="#measurement">Success metrics</a>
+      <a href="#risks">Risks & tradeoffs</a>
+      <a href="#sources">Sources</a>
+      <button class="print" id="print-plan" type="button">Print / save PDF</button>
+    </nav>
+
+    <main>
+      <header id="executive">
+        <div class="eyebrow">Strategy plan · researched 2 Sep 2026</div>
+        <h1>Turn accumulated Telegram data into decisions—not a larger feed.</h1>
+        <p class="lede">The Prawn Hunter already has a capable collection and delivery engine. Its weak point is the layer between raw evidence and action: no durable finding object, no evidence-backed explanation, no analyst feedback loop, and no attributable consent-based conversation funnel.</p>
+        <div class="meta-row">
+          <span class="pill"><b>Repo snapshot</b> working tree on 2026-09-02</span>
+          <span class="pill"><b>Targets</b> 5 live products</span>
+          <span class="pill"><b>Primary outcome</b> higher useful-finding rate</span>
+          <span class="pill"><b>Secondary outcome</b> qualified inbound conversations</span>
+        </div>
+
+        <div class="hero-grid">
+          <div class="card diagnosis">
+            <div class="eyebrow">The diagnosis</div>
+            <h2 style="margin-top:9px">The system scores access yield, then broadcasts inventory.</h2>
+            <p>The current credential score explicitly estimates whether a bot is likely to yield content. The UI presents a read-only chat feed plus three extracted indicator types. Scheduled reports add useful aggregates, but their outputs are ephemeral Telegram messages rather than persistent, reviewable findings.</p>
+            <div class="callout good"><strong>What to build:</strong> an Insight Queue that groups evidence into findings, separates confidence from severity and priority, explains every score, records analyst feedback, and routes only high-value deltas.</div>
+          </div>
+          <div class="card">
+            <div class="big-number">1 → N → 1</div>
+            <p style="margin-top:10px"><strong>Desired compression loop</strong></p>
+            <p class="muted">One raw stream becomes N normalized signals, then one defensible finding with evidence, owner, decision, and next action.</p>
+          </div>
+        </div>
+
+        <div class="callout danger"><strong>Scope and safety boundary:</strong> this plan does not optimize deceptive outreach through bots, credentials, or accounts you do not own or lack explicit authorization to operate. Conversation recommendations apply to your owned bot and voluntary, attributable entry paths only. The working-tree multi-touch redirect experiment should remain disabled pending authorization, consent, and abuse review.</div>
+      </header>
+
+      <section id="current-state">
+        <div class="eyebrow">1 · Understand the current repo</div>
+        <h2>Current repo summary</h2>
+        <div class="grid-2">
+          <div class="card flat">
+            <dl>
+              <dt>Category</dt><dd>Self-hosted OSINT / threat-intelligence pipeline for exposed Telegram bot credentials, chat telemetry, and associated infrastructure.</dd>
+              <dt>Target user</dt><dd>An internal security researcher or small operator who needs to find, validate, inspect, and route exposures quickly.</dd>
+              <dt>Core workflow</dt><dd>Scan public sources → validate/enrich credentials → collect accessible messages → extract telemetry → broadcast into per-bot Telegram topics → manually inspect.</dd>
+              <dt>Stack</dt><dd>Python 3.11, FastAPI, Celery, Redis, Telethon, Supabase/PostgreSQL, Next.js 16 / React 19, Docker Compose, and a Chrome extension.</dd>
+              <dt>Maturity</dt><dd>Production-oriented backend and operations layer; early read-only analyst frontend; active acquisition experiments are uncommitted in the current working tree.</dd>
+              <dt>Scale</dt><dd>The search endpoint is documented for 283k+ messages. No reachable live KPI snapshot was available locally, so this is a repo claim—not a verified production count.</dd>
+            </dl>
+          </div>
+          <div class="card flat">
+            <h3>Capabilities present today</h3>
+            <ul class="muted">
+              <li>13+ public-source discovery paths, token validation, chat enrichment, and webhook/C2 fingerprinting.</li>
+              <li>Reliable asynchronous processing, retry accounting, queue health, canaries, audit events, and per-topic broadcasting.</li>
+              <li>Raw chat history, media handling, full-text API search, and extraction of domains, URLs, and wallet addresses.</li>
+              <li>Heuristic credential yield score, source scorecards, C2 clustering, duplicate-media reports, and a cross-bot user aggregate.</li>
+              <li>Sanitized target export and generic outbound webhook alerts.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top:22px">Current information flow</h3>
+        <div class="flow" aria-label="Current information flow">
+          <div class="flow-step"><strong>Collect</strong><span>Scanners, extension, imports, Telegram search</span></div>
+          <div class="flow-step"><strong>Validate & enrich</strong><span>Bot API, chat metadata, webhook and infrastructure context</span></div>
+          <div class="flow-step"><strong>Extract</strong><span>Regex-based URLs, domains and wallet addresses; fixed aggregates</span></div>
+          <div class="flow-step gap"><strong>Missing intelligence layer</strong><span>Finding, evidence bundle, novelty, explanation, feedback, owner, disposition</span></div>
+          <div class="flow-step"><strong>Deliver</strong><span>Raw per-message Telegram broadcasts and read-only dashboards</span></div>
+        </div>
+
+        <div class="grid-4">
+          <div class="stat"><b class="strong">Strong</b><span>collection breadth and worker reliability</span></div>
+          <div class="stat"><b class="partial">Partial</b><span>correlation and source-quality heuristics</span></div>
+          <div class="stat"><b class="weak">Weak</b><span>decision support and analyst learning</span></div>
+          <div class="stat"><b class="weak">Missing</b><span>attributable, consent-based conversion funnel</span></div>
+        </div>
+
+        <details>
+          <summary>Repo evidence used for this assessment</summary>
+          <div>
+            <ul>
+              <li><code>app/workers/tasks/validation_tasks.py:538</code> defines confidence as “more likely to yield exfiltratable content”; its components are access and volume signals, not intelligence quality.</li>
+              <li><code>frontend/components/ChatWindow.tsx:20</code> loads the latest 200 raw messages; <code>:193</code> labels the product read-only.</li>
+              <li><code>frontend/components/TelemetryAnalyticsView.tsx:73</code> loads the latest indicators and displays only domain, URL, and wallet counts plus a table.</li>
+              <li><code>app/workers/tasks/flow_tasks.py:1030</code> sends every pending message individually. <code>:2677</code>, <code>:2755</code>, and <code>:3743</code> produce source, cluster, and cross-bot reports, but broadcast their summaries rather than persisting a review workflow.</li>
+              <li><code>supabase/migrations/20260806000001_honeypot_redirect.sql</code> and <code>20260829000001_multi_touch_redirects.sql</code> track sends and attempts, not owned-bot starts, qualified inbound messages, outcomes, or opt-outs.</li>
+              <li><code>database/rls_policies.sql:92</code> intentionally permits anonymous reads of raw captured messages. That is a critical trust and privacy gap before wider use.</li>
+              <li>The working tree includes uncommitted multi-touch redirect tasks using urgency and “final warning” copy. This is assessed as an experiment, not a released capability.</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <section id="targets">
+        <div class="eyebrow">2–3 · Live comparison targets</div>
+        <h2>Five patterns worth learning from</h2>
+        <p class="muted">All market claims below were checked against official product pages, documentation, pricing pages, or first-party data sheets on 2026-09-02. Where public price figures were absent, that uncertainty is stated.</p>
+
+        <div class="grid-2">
+          <article class="card target flat">
+            <div class="target-head"><b>GitGuardian</b><span class="tag">direct pattern</span></div>
+            <dl>
+              <dt>Core promise</dt><dd>Find exposed secrets and close incidents rather than stopping at detection.</dd>
+              <dt>Key capabilities</dt><dd>Validity/presence checks, context-rich incidents, 0–100 ML risk score with a natural-language explanation, feedback, remediation playbooks, and honeytokens.</dd>
+              <dt>Workflow</dt><dd>Detect → investigate enriched incident → prioritize → assign/remediate → verify closure.</dd>
+              <dt>Integrations</dt><dd>Slack, Teams, Jira, ServiceNow, APIs, VCS and enterprise data sources.</dd>
+              <dt>Pricing/gating</dt><dd>Free Starter; risk scoring, playbooks, broader public monitoring, enterprise sources, self-hosting, and longer audit retention are gated by paid tiers.</dd>
+              <dt>Trust</dt><dd>SSO/SCIM, IP allowlisting, privacy mode, audit retention, and self-hosting are listed by tier.</dd>
+              <dt>Differentiator</dt><dd>Explainable incident context and an explicit remediation lifecycle.</dd>
+              <dt>Weakness</dt><dd>Strongly centered on software secrets and engineering ownership; the complete model is commercial and seat/tier dependent.</dd>
+              <dt>Sources</dt><dd><a href="https://docs.gitguardian.com/internal-monitoring/remediate/investigate-incidents">incident investigation</a> · <a href="https://www.gitguardian.com/pricing">pricing</a> · <a href="https://docs.gitguardian.com/releases/saas">2026 releases</a></dd>
+            </dl>
+          </article>
+
+          <article class="card target flat">
+            <div class="target-head"><b>Flare</b><span class="tag">direct pattern</span></div>
+            <dl>
+              <dt>Core promise</dt><dd>Continuously monitor external exposure—including credentials, non-human identities, dark web, and Telegram—and shorten detection-to-remediation time.</dd>
+              <dt>Key capabilities</dt><dd>Organization-specific identifiers, matching/severity policies, enriched event feeds, remediation/ignore states, reports, and credential validation categories.</dd>
+              <dt>Workflow</dt><dd>Define what matters → match and score events → triage a unified feed → route by policy → mark remediated or ignored.</dd>
+              <dt>Integrations</dt><dd>Email, Slack, Jira, Teams, Discord, webhooks, identity providers, API and SIEM paths.</dd>
+              <dt>Pricing/gating</dt><dd>General public price figures were not found; some capabilities such as account/session takeover prevention are documented add-ons.</dd>
+              <dt>Trust</dt><dd>Security addendum cites ISO 27001-aligned controls and periodic SOC 2 Type II assessments.</dd>
+              <dt>Differentiator</dt><dd>Telegram-specific collection combined with tenant-specific matching and adjustable severity.</dd>
+              <dt>Weakness</dt><dd>Relies on proprietary collection and commercial data access; copying its breadth is unrealistic for this repo.</dd>
+              <dt>Sources</dt><dd><a href="https://flare.io/">platform</a> · <a href="https://docs.flare.io/configure-identifiers">identifiers</a> · <a href="https://docs.flare.io/events">events</a> · <a href="https://docs.flare.io/alert-central">alerts</a></dd>
+            </dl>
+          </article>
+
+          <article class="card target flat">
+            <div class="target-head"><b>Recorded Future</b><span class="tag">best in class</span></div>
+            <dl>
+              <dt>Core promise</dt><dd>Connect large internal and external datasets into prioritized, actionable intelligence.</dd>
+              <dt>Key capabilities</dt><dd>Entity graph, evidence-based risk rules, Intelligence Cards, AI summaries/conversations, watch goals, analyst research, and finished detections.</dd>
+              <dt>Workflow</dt><dd>Start from a question or alert → open an entity card → inspect score and evidence → pivot relationships → act through integrations.</dd>
+              <dt>Integrations</dt><dd>First-party 2026 material lists 100+ SIEM, SOAR, EDR, IAM, and ticketing integrations.</dd>
+              <dt>Pricing/gating</dt><dd>A public 2026 tier matrix lists Core, Professional, and Elite; price figures were not visible in the published sheet. Detailed evidence is paid while a browser-extension Express tier is limited.</dd>
+              <dt>Trust</dt><dd>First-party security material references SOC 2 Type 2 and ISO 27001 controls.</dd>
+              <dt>Differentiator</dt><dd>Scores stay tied to transparent risk rules and source evidence instead of being a black box.</dd>
+              <dt>Weakness</dt><dd>Enterprise scope, proprietary corpus, and integration footprint are far beyond a focused self-hosted tool.</dd>
+              <dt>Sources</dt><dd><a href="https://www.recordedfuture.com/platform">platform</a> · <a href="https://www.recordedfuture.com/platform/browser-extension">risk evidence</a> · <a href="https://assets.recordedfuture.com/Datasheets/2026_0312%20-%20Combined%20Solutions.pdf">2026 data sheet</a> · <a href="https://assets.recordedfuture.com/Pricing%20PDF/2026_0319%20-%20Pricing.pdf">2026 tier sheet</a></dd>
+            </dl>
+          </article>
+
+          <article class="card target flat">
+            <div class="target-head"><b>OpenCTI</b><span class="tag">open-source pattern</span></div>
+            <dl>
+              <dt>Core promise</dt><dd>Structure, correlate, visualize, and act on technical and non-technical cyber-threat knowledge.</dd>
+              <dt>Key capabilities</dt><dd>STIX knowledge graph, source confidence/reliability, deduplication, inference, cases, tasks, assignments, notes, reports, and feeds.</dd>
+              <dt>Workflow</dt><dd>Ingest entities/relationships → deduplicate and correlate → investigate in graph → open a case → assign tasks → export or share.</dd>
+              <dt>Integrations</dt><dd>Python connectors, GraphQL, STIX/TAXII, CSV/JSON feeds, streams, and MCP through XTM One.</dd>
+              <dt>Pricing/gating</dt><dd>Community Edition is Apache-2.0; playbooks, audit activity, AI insights, NLP, finished-intelligence templates, SSO, and PIRs are Enterprise features.</dd>
+              <dt>Trust</dt><dd>RBAC, markings, per-organization visibility, authorized members, and permission-scoped APIs are documented.</dd>
+              <dt>Differentiator</dt><dd>Evidence relationships and cases are first-class, not transient report text.</dd>
+              <dt>Weakness</dt><dd>Operationally heavy and broad; adopting the entire stack now would slow delivery and duplicate much of the existing pipeline.</dd>
+              <dt>Sources</dt><dd><a href="https://docs.opencti.io/latest/usage/getting-started/">overview</a> · <a href="https://docs.opencti.io/latest/usage/data-model/">graph</a> · <a href="https://docs.opencti.io/latest/usage/case-management/">cases</a> · <a href="https://docs.opencti.io/latest/administration/enterprise/">editions</a></dd>
+            </dl>
+          </article>
+
+          <article class="card target flat">
+            <div class="target-head"><b>respond.io</b><span class="tag">adjacent pattern</span></div>
+            <dl>
+              <dt>Core promise</dt><dd>Manage inbound conversations, automation, lifecycle stages, and reporting across messaging channels including Telegram.</dd>
+              <dt>Key capabilities</dt><dd>Contact lifecycle, source attribution, new/returning conversation reports, workflow triggers, opt-out templates, assignments, broadcast performance, and AI summaries.</dd>
+              <dt>Workflow</dt><dd>Attributable entry → inbound conversation → qualify and assign → stage changes → won/lost outcome → funnel report.</dd>
+              <dt>Integrations</dt><dd>Telegram, ads, developer API, webhooks, n8n, Zapier, Make, HubSpot and Salesforce.</dd>
+              <dt>Pricing/gating</dt><dd>Paid plans scale by monthly active contacts and AI usage; the seven-day trial excludes broadcasts, and broadcast volume has plan limits.</dd>
+              <dt>Trust</dt><dd>Official pricing page cites encryption, access controls, security audits, and ISO 27001 certification.</dd>
+              <dt>Differentiator</dt><dd>Measures where conversations start, how contacts progress, where they drop off, and why.</dd>
+              <dt>Weakness</dt><dd>It is a customer-conversation platform, not CTI; its messaging patterns apply only to owned channels and opted-in users.</dd>
+              <dt>Sources</dt><dd><a href="https://respond.io/integrations/telegram">Telegram</a> · <a href="https://respond.io/help/dashboard-reporting/reports-conversations">conversation sources</a> · <a href="https://respond.io/help/dashboard-reporting/reports-lifecycle">lifecycle funnel</a> · <a href="https://respond.io/pricing">pricing</a></dd>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section id="matrix">
+        <div class="eyebrow">4 · Capability matrix</div>
+        <h2>Where the repo is strong—and where value leaks out</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Capability</th><th>Current repo</th><th>GitGuardian</th><th>Flare</th><th>Recorded Future</th><th>OpenCTI</th><th>respond.io</th><th>Upgrade potential</th></tr></thead>
+            <tbody>
+              <tr><td>Broad collection</td><td><span class="rating strong">Strong</span><br>13+ scanner paths and Telegram-specific pivots</td><td><span class="rating partial">Focused</span><br>code and enterprise secrets</td><td><span class="rating strong">Strong</span><br>dark/clear web + Telegram</td><td><span class="rating strong">Very strong</span><br>1M+ sources claimed</td><td><span class="rating partial">Connector-led</span></td><td><span class="rating na">Irrelevant</span></td><td>Low — do not add more sources yet</td></tr>
+              <tr><td>Validity & enrichment</td><td><span class="rating strong">Strong</span><br>bot validity, chat, webhook, infrastructure</td><td><span class="rating strong">Strong</span><br>validity/presence + occurrence context</td><td><span class="rating strong">Strong</span><br>validated categories and enrichment</td><td><span class="rating strong">Strong</span><br>risk rules + external context</td><td><span class="rating strong">Strong</span><br>connectors and enrichment</td><td><span class="rating na">N/A</span></td><td>Medium — preserve evidence provenance</td></tr>
+              <tr><td>Cross-record correlation</td><td><span class="rating partial">Partial</span><br>fixed C2/media/user aggregates</td><td><span class="rating partial">Incident-centric</span></td><td><span class="rating strong">Strong</span><br>actors, events, identifiers</td><td><span class="rating strong">Graph</span></td><td><span class="rating strong">STIX graph</span></td><td><span class="rating weak">Weak</span></td><td><b>High</b> — persistent entities and evidence edges</td></tr>
+              <tr><td>Explainable prioritization</td><td><span class="rating weak">Weak</span><br>yield score mislabeled as confidence</td><td><span class="rating strong">Strong</span><br>risk explanation + feedback</td><td><span class="rating strong">Strong</span><br>custom severity rules</td><td><span class="rating strong">Strong</span><br>risk rules + sources</td><td><span class="rating partial">Configurable</span><br>confidence/reliability/PIR</td><td><span class="rating partial">Lifecycle</span></td><td><b>Critical</b> — separate confidence, severity, priority</td></tr>
+              <tr><td>Insight summaries</td><td><span class="rating weak">Weak</span><br>raw feed and fixed scorecards</td><td><span class="rating partial">Incident context</span></td><td><span class="rating partial">Event/report context</span></td><td><span class="rating strong">Cards + AI</span></td><td><span class="rating strong">Insights/reports</span><br>some EE</td><td><span class="rating partial">Conversation AI</span></td><td><b>Critical</b> — evidence-backed “so what?” cards</td></tr>
+              <tr><td>Triage & cases</td><td><span class="rating weak">Missing</span><br>broadcast state is not analyst state</td><td><span class="rating strong">Strong</span><br>assignment and remediation</td><td><span class="rating strong">Strong</span><br>ignore/remediate/report</td><td><span class="rating strong">Strong</span></td><td><span class="rating strong">Cases/tasks</span></td><td><span class="rating strong">Inbox/lifecycle</span></td><td><b>Critical</b> — add finding status, owner, outcome</td></tr>
+              <tr><td>Alert policies & digests</td><td><span class="rating partial">Partial</span><br>generic webhooks + raw Telegram</td><td><span class="rating strong">Strong</span><br>smart notifiers/playbooks</td><td><span class="rating strong">Strong</span><br>scope, severity, cadence, channel</td><td><span class="rating strong">Strong</span><br>goals/watchlists</td><td><span class="rating strong">Strong</span><br>notifications/feeds</td><td><span class="rating strong">Strong</span><br>workflows/broadcast reports</td><td><b>High</b> — route findings, not rows</td></tr>
+              <tr><td>Analyst feedback loop</td><td><span class="rating weak">Missing</span></td><td><span class="rating strong">Present</span></td><td><span class="rating strong">Present</span></td><td><span class="rating partial">Analyst notes</span></td><td><span class="rating strong">Notes/opinions</span></td><td><span class="rating partial">Lifecycle outcomes</span></td><td><b>Critical</b> — usefulness and dismissal labels</td></tr>
+              <tr><td>Conversation attribution</td><td><span class="rating weak">Missing</span><br>send attempts only</td><td><span class="rating na">N/A</span></td><td><span class="rating na">N/A</span></td><td><span class="rating na">N/A</span></td><td><span class="rating na">N/A</span></td><td><span class="rating strong">Strong</span><br>source + lifecycle funnel</td><td><b>Critical</b> for owned, opt-in bot only</td></tr>
+              <tr><td>Access control & privacy</td><td><span class="rating weak">Gap</span><br>anon can read raw messages</td><td><span class="rating strong">Tiered controls</span></td><td><span class="rating strong">Enterprise controls</span></td><td><span class="rating strong">Enterprise controls</span></td><td><span class="rating strong">RBAC/markings</span></td><td><span class="rating strong">ISO/access controls</span></td><td><b>Immediate</b> — fix before broader use</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="findings">
+        <div class="eyebrow">5 · Key findings</div>
+        <h2>The quality problem is structural, not a prompt problem</h2>
+        <div class="card flat">
+          <div class="finding"><div class="finding-num">1</div><div><h3>Collection throughput is the product’s optimized metric.</h3><p>Scanners, workers, retries, broadcast locks, and queue monitoring are mature. The analyst surface still centers on latest messages and indicator rows. Best-in-class products compress detections into incidents, cards, or events with explicit next actions.</p></div></div>
+          <div class="finding"><div class="finding-num">2</div><div><h3>“Confidence” currently means collection yield.</h3><p>The score rewards resolved chat IDs, configured webhooks, group type, member count, and username availability. Rename it to <code>collection_yield_score</code>. A defensible finding needs separate <strong>confidence</strong> (evidence quality), <strong>severity</strong> (potential impact), and <strong>priority</strong> (what to review now), each with an explanation.</p></div></div>
+          <div class="finding"><div class="finding-num">3</div><div><h3>Useful reports exist, but they cannot accumulate analyst knowledge.</h3><p>Source scorecards, C2 clusters, media duplicates, and cross-bot user reports are good foundations. Because they are sent as formatted messages, they have no stable ID, evidence lineage, state, owner, note, feedback, or outcome. They should become finding producers.</p></div></div>
+          <div class="finding"><div class="finding-num">4</div><div><h3>Raw broadcasting amplifies noise faster than insight.</h3><p>The broadcaster reliably emits each pending message. The better default is a grouped finding alert: one new campaign, cluster, or material change with evidence count and a link. Raw messages should be drill-down evidence, not the primary notification unit.</p></div></div>
+          <div class="finding"><div class="finding-num">5</div><div><h3>“Not many messages” cannot be diagnosed with the present schema.</h3><p>The repo tracks captured updates and outbound redirect timestamps, but not owned-bot deep-link source, start, first inbound message, qualification, outcome, or opt-out. Without a funnel, you cannot tell whether the problem is reach, trust, onboarding, intent mismatch, or response handling.</p></div></div>
+          <div class="finding"><div class="finding-num">6</div><div><h3>Trust is a prerequisite to both insight adoption and engagement.</h3><p>Anonymous raw-message reads and uncommitted deceptive multi-touch copy create privacy, abuse, platform, and reputational risk. GitGuardian, OpenCTI, Flare, and respond.io all treat identity, access, auditability, or consent as product capabilities—not afterthoughts.</p></div></div>
+        </div>
+      </section>
+
+      <section id="upgrades">
+        <div class="eyebrow">5–6 · Upgrade opportunities</div>
+        <h2>Fewer upgrades, aimed at the real bottleneck</h2>
+
+        <div class="card flat priority-now" style="margin-bottom:16px">
+          <div class="priority-head"><span class="priority-dot"></span><h3>Do Now</h3></div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>1. Protect the evidence surface and pause captured-bot outreach</h4><span class="effort">LOW–MEDIUM</span></div>
+            <dl><dt>Source pattern</dt><dd>OpenCTI permissions/markings; GitGuardian access controls; respond.io opt-out workflows.</dd><dt>Why it matters</dt><dd>Raw captured messages are sensitive. Broader adoption and legitimate engagement are impossible without trust.</dd><dt>Repo fit</dt><dd>Change RLS, add authenticated frontend access, redact sensitive fields, and keep uncommitted redirect schedules disabled.</dd><dt>Risk</dt><dd>May interrupt the current anonymous dashboard; plan a controlled migration.</dd><dt>Next artifact</dt><dd>Ticket set + security review.</dd></dl>
+          </div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>2. Rename the existing score and define three explainable scores</h4><span class="effort">LOW</span></div>
+            <dl><dt>Source pattern</dt><dd>GitGuardian incident risk explanations; Recorded Future risk rules; OpenCTI confidence/reliability.</dd><dt>Why it matters</dt><dd>Operators currently read “confidence” as intelligence confidence when the code measures likely data yield.</dd><dt>Repo fit</dt><dd>Keep the existing formula as <code>collection_yield_score</code>. Add evidence confidence, severity, and priority only on normalized findings.</dd><dt>Risk</dt><dd>Historical UI and queries may depend on the old name; alias during migration.</dd><dt>Next artifact</dt><dd>Short scoring spec.</dd></dl>
+          </div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>3. Ship a daily “Top findings” digest before adding AI</h4><span class="effort">LOW</span></div>
+            <dl><dt>Source pattern</dt><dd>Flare scoped alerts and cadence; Recorded Future Intelligence Cards.</dd><dt>Why it matters</dt><dd>Immediate compression reveals whether grouping and scoring improve decisions without introducing model cost or hallucination risk.</dd><dt>Repo fit</dt><dd>Reuse Celery, Supabase, existing cluster logic, Telegram broadcaster, and webhook dispatcher. Emit at most ten grouped deltas.</dd><dt>Risk</dt><dd>Bad grouping hides evidence; every card must link to raw rows and show its explanation.</dd><dt>Next artifact</dt><dd>Prototype + evaluation checklist.</dd></dl>
+          </div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>4. Establish the owned-bot funnel contract</h4><span class="effort">LOW</span></div>
+            <dl><dt>Source pattern</dt><dd>respond.io conversation-source and lifecycle reports.</dd><dt>Why it matters</dt><dd>It replaces “we are not getting many messages” with attributable conversion and drop-off metrics.</dd><dt>Repo fit</dt><dd>Add <code>campaign_id</code>, transparent deep-link source, start, first inbound, qualified, handoff/outcome, and opt-out events for the bot you own.</dd><dt>Risk</dt><dd>Identity data requires minimization, retention limits, and access controls.</dd><dt>Next artifact</dt><dd>Tracking plan + tickets.</dd></dl>
+          </div>
+        </div>
+
+        <div class="card flat priority-next" style="margin-bottom:16px">
+          <div class="priority-head"><span class="priority-dot"></span><h3>Do Next</h3></div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>5. Create a persistent Insight Queue</h4><span class="effort">MEDIUM</span></div>
+            <dl><dt>Source pattern</dt><dd>GitGuardian incidents; Flare events; Recorded Future cards; OpenCTI cases.</dd><dt>Why it matters</dt><dd>One reviewable object becomes the unit of value instead of a message, credential, or isolated IOC.</dd><dt>Repo fit</dt><dd>Add <code>findings</code>, <code>finding_evidence</code>, and <code>finding_feedback</code>; adapt current reports into idempotent finding producers.</dd><dt>Risk</dt><dd>Schema design can become too generic. Start with three finding types only.</dd><dt>Next artifact</dt><dd>Implementation spec and ticket set.</dd></dl>
+          </div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>6. Build a lightweight evidence graph in Postgres</h4><span class="effort">MEDIUM</span></div>
+            <dl><dt>Source pattern</dt><dd>OpenCTI graph and Recorded Future entity pivots.</dd><dt>Why it matters</dt><dd>Repeated domains, webhook hosts, media hashes, wallets, bots, and users are meaningful because of relationships across time—not as isolated rows.</dd><dt>Repo fit</dt><dd>Use typed <code>entities</code> and <code>entity_edges</code> with provenance and first/last seen. No graph database is needed at this scale.</dd><dt>Risk</dt><dd>Bad canonicalization creates false links; preserve raw evidence and confidence per edge.</dd><dt>Next artifact</dt><dd>Data-model spec.</dd></dl>
+          </div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>7. Replace raw default alerts with policy-routed finding deltas</h4><span class="effort">MEDIUM</span></div>
+            <dl><dt>Source pattern</dt><dd>Flare Alert Central; GitGuardian Smart Notifiers; Recorded Future goals/watchlists.</dd><dt>Why it matters</dt><dd>High-volume raw delivery causes alert fatigue and hides the few material changes.</dd><dt>Repo fit</dt><dd>Add saved policies by finding type, minimum priority, monitored entity, cadence, channel, and quiet hours. Keep raw topics as drill-down.</dd><dt>Risk</dt><dd>Over-filtering can suppress early signals; include a transparent audit log and weekly coverage report.</dd><dt>Next artifact</dt><dd>Spec + prototype.</dd></dl>
+          </div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>8. Add analyst feedback and disposition</h4><span class="effort">MEDIUM</span></div>
+            <dl><dt>Source pattern</dt><dd>GitGuardian score feedback; Flare ignored/remediated events; OpenCTI notes/opinions/tasks.</dd><dt>Why it matters</dt><dd>Your unique advantage is the accumulated data plus operator judgment. Today that judgment disappears into Telegram scrollback.</dd><dt>Repo fit</dt><dd>Useful/noise, verdict, suppress pattern, owner, status, notes, and reason codes fit Supabase and the existing Next.js UI.</dd><dt>Risk</dt><dd>Too many fields reduce adoption; make feedback one click and details optional.</dd><dt>Next artifact</dt><dd>UI prototype + tickets.</dd></dl>
+          </div>
+        </div>
+
+        <div class="card flat priority-explore" style="margin-bottom:16px">
+          <div class="priority-head"><span class="priority-dot"></span><h3>Explore</h3></div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>9. Evidence-grounded analyst summaries and natural-language query</h4><span class="effort">HIGH</span></div>
+            <dl><dt>Source pattern</dt><dd>Recorded Future AI and OpenCTI AI insights.</dd><dt>Why it matters</dt><dd>Summaries can reduce time-to-understand once the evidence model and evaluation set exist.</dd><dt>Repo fit</dt><dd>Generate only from redacted finding evidence; require inline evidence references and cache outputs. Never let an LLM set severity alone.</dd><dt>Risk</dt><dd>Hallucination, sensitive-data leakage, cost, and false certainty.</dd><dt>Next artifact</dt><dd>Offline prototype with a 50-finding eval set.</dd></dl>
+          </div>
+          <div class="upgrade">
+            <div class="upgrade-top"><h4>10. Export selected findings to OpenCTI/STIX instead of rebuilding full CTI</h4><span class="effort">HIGH</span></div>
+            <dl><dt>Source pattern</dt><dd>OpenCTI connectors, STIX/TAXII, cases, and feeds.</dd><dt>Why it matters</dt><dd>Preserves the repo’s Telegram-specific edge while gaining mature downstream investigation workflows when needed.</dd><dt>Repo fit</dt><dd>Map only reviewed findings and entities; keep raw collection and high-volume evidence local.</dd><dt>Risk</dt><dd>STIX mapping and deployment overhead can exceed value for a single operator.</dd><dt>Next artifact</dt><dd>Time-boxed integration spike.</dd></dl>
+          </div>
+        </div>
+
+        <div class="card flat">
+          <div class="priority-head"><span class="priority-dot" style="background:#7f94ad;color:#7f94ad"></span><h3>Do Not Copy</h3></div>
+          <ul class="muted">
+            <li><strong>More collection breadth:</strong> Flare and Recorded Future win partly through proprietary corpora. The repo’s constraint is interpretation, not another scanner.</li>
+            <li><strong>A full CTI platform:</strong> OpenCTI’s complete graph, cases, RBAC, playbooks, and finished-intelligence system are too broad for this stage. Borrow its data principles.</li>
+            <li><strong>Black-box AI scoring:</strong> every score and summary must expose evidence and contributing rules.</li>
+            <li><strong>Bulk or urgency-based outreach to unknown users:</strong> respond.io’s automation assumes legitimate business channels and lifecycle consent. Do not transfer that pattern to captured bots or credentials.</li>
+            <li><strong>Three-touch “final warning” migration copy:</strong> it is deceptive, contradicts the repo’s pinned README, and creates abuse/platform/reputation risk without solving attribution.</li>
+            <li><strong>Public raw evidence:</strong> a shareable dashboard should expose redacted findings, never unrestricted captured-message content.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="roadmap">
+        <div class="eyebrow">Execution plan</div>
+        <h2>A focused 24-day upgrade path</h2>
+        <p class="muted">Sequence matters: protect data and define outcomes first; build a deterministic finding loop second; add model-assisted summaries only after feedback data exists.</p>
+        <div class="roadmap">
+          <article class="phase">
+            <div class="phase-time">Phase 0 · Days 1–2 · Trust baseline</div>
+            <h3>Close the exposure and freeze risky experiments</h3>
+            <ul><li>Require authenticated access to raw messages; remove anonymous SELECT and add role-scoped server APIs.</li><li>Keep captured-bot redirect/multi-touch schedules disabled; document authorization and consent boundaries.</li><li>Produce a read-only baseline report: raw rows/day, unique signals/day, broadcasts/day, duplicate ratio, current owned-bot starts and inbound messages if available.</li></ul>
+            <p><strong>Exit:</strong> no unauthenticated raw evidence; no unapproved outbound through captured credentials; baseline definitions signed off.</p>
+          </article>
+          <article class="phase">
+            <div class="phase-time">Phase 1 · Days 3–7 · Finding foundation</div>
+            <h3>Create the durable unit of intelligence</h3>
+            <ul><li>Add three tables: <code>findings</code>, <code>finding_evidence</code>, <code>finding_feedback</code>.</li><li>Start with three finding types: <code>credential_exposure</code>, <code>infrastructure_cluster</code>, <code>cross_bot_pattern</code>.</li><li>Convert current credential, C2 cluster, and attribution reports into idempotent producers.</li><li>Backfill a bounded recent window and preserve raw evidence IDs.</li></ul>
+            <p><strong>Exit:</strong> reruns do not duplicate findings; each finding has a stable key, explanation, evidence count, first/last seen, and recommended action.</p>
+          </article>
+          <article class="phase">
+            <div class="phase-time">Phase 2 · Days 8–12 · Insight Queue</div>
+            <h3>Make findings reviewable and teachable</h3>
+            <ul><li>Replace the default dashboard with a prioritized queue; keep Chat Feed and Telemetry as drill-down tabs.</li><li>Add status, owner, useful/noise, disposition reason, notes, and suppress pattern.</li><li>Send one daily Top 10 digest and only immediate alerts for critical material changes.</li><li>Record alert delivery and analyst action against the finding ID.</li></ul>
+            <p><strong>Exit:</strong> an operator can understand, inspect, and disposition the day’s top findings without reading the raw feed.</p>
+          </article>
+          <article class="phase">
+            <div class="phase-time">Phase 3 · Days 13–17 · Legitimate conversation funnel</div>
+            <h3>Measure owned-bot engagement end to end</h3>
+            <ul><li>Add an <code>engagement_events</code> table for owned-bot voluntary traffic only.</li><li>Use source-specific deep links and transparent start payloads.</li><li>Track start, first inbound, qualification, human handoff/outcome, opt-out, and block/report guardrails.</li><li>Test one clear welcome path with a single intent question; stop automated follow-ups on inbound, opt-out, or handoff.</li></ul>
+            <p><strong>Exit:</strong> source-to-qualified conversion and drop-off are visible by campaign without using captured-bot outreach.</p>
+          </article>
+          <article class="phase">
+            <div class="phase-time">Phase 4 · Days 18–24 · Quality tuning</div>
+            <h3>Improve correlation, then test AI safely</h3>
+            <ul><li>Add typed entities/edges and cross-source corroboration.</li><li>Build a 50-finding labeled evaluation set from analyst feedback.</li><li>Prototype evidence-grounded summaries with citations and redaction; compare time-to-understand against the deterministic cards.</li><li>Keep or reject the AI layer based on measured lift, not novelty.</li></ul>
+            <p><strong>Exit:</strong> ≥80% evidence-citation accuracy and a measurable reduction in median time-to-disposition before enabling summaries by default.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="slice">
+        <div class="eyebrow">Proposed next step</div>
+        <h2>Build one vertical slice: the Insight Queue</h2>
+        <div class="grid-2">
+          <div class="card flat">
+            <h3>Minimal schema</h3>
+            <dl>
+              <dt>findings</dt><dd><code>id</code>, <code>type</code>, <code>canonical_key</code>, <code>title</code>, <code>summary</code>, <code>why_it_matters</code>, <code>recommended_action</code>, <code>confidence</code>, <code>severity</code>, <code>priority</code>, <code>score_explanation</code>, <code>status</code>, <code>assignee</code>, <code>first_seen_at</code>, <code>last_seen_at</code>, <code>evidence_count</code>.</dd>
+              <dt>evidence</dt><dd><code>finding_id</code>, <code>evidence_type</code>, <code>source_table</code>, <code>source_id</code>, <code>observed_at</code>, <code>weight</code>, <code>excerpt_redacted</code>, <code>provenance</code>.</dd>
+              <dt>feedback</dt><dd><code>finding_id</code>, <code>actor_id</code>, <code>label</code>, <code>reason_code</code>, <code>note</code>, <code>created_at</code>.</dd>
+            </dl>
+          </div>
+          <div class="card flat">
+            <h3>Scoring contract</h3>
+            <p><strong>Confidence:</strong> how well the claim is supported—source reliability, validity, corroboration, and evidence completeness.</p>
+            <p><strong>Severity:</strong> potential defensive impact—credential state, access scope, affected assets/users, and observed abuse.</p>
+            <p><strong>Priority:</strong> review order—severity × confidence, adjusted by recency, novelty, monitored-asset relevance, and open/ignored history.</p>
+            <div class="callout"><strong>Rule:</strong> every score stores named contributors and their weights. Operators must be able to answer “why 82?” without opening source code.</div>
+          </div>
+        </div>
+
+        <div class="card flat" style="margin-top:15px">
+          <h3>One example finding</h3>
+          <div class="grid-3">
+            <div><div class="eyebrow">Conclusion</div><p><strong>Five active bots share a webhook-host pattern and two media hashes; activity increased in the last 24 hours.</strong></p></div>
+            <div><div class="eyebrow">Why it matters</div><p class="muted">Cross-bot infrastructure and content overlap suggest a coordinated operator or reused deployment, making this more actionable than five isolated alerts.</p></div>
+            <div><div class="eyebrow">Next action</div><p class="muted">Review the evidence graph, verify the host relationship, and export the redacted cluster to the authorized investigation workflow.</p></div>
+          </div>
+          <div class="meta-row"><span class="pill"><b>Confidence</b> 86 · 3 corroborating signal types</span><span class="pill"><b>Severity</b> 72 · active credentials</span><span class="pill"><b>Priority</b> 81 · new and growing</span><span class="pill"><b>Evidence</b> 14 linked records</span></div>
+        </div>
+      </section>
+
+      <section id="measurement">
+        <div class="eyebrow">Measurement plan</div>
+        <h2>Judge the upgrade by decisions and qualified conversations</h2>
+        <div class="grid-2">
+          <div class="card flat">
+            <h3>Insight quality</h3>
+            <div class="metric-list">
+              <div class="metric"><b>Compression ratio</b><span>raw evidence rows ÷ surfaced findings</span></div>
+              <div class="metric"><b>Useful-finding rate</b><span>useful or actioned ÷ reviewed findings</span></div>
+              <div class="metric"><b>Dismissal rate</b><span>noise/duplicate/irrelevant ÷ reviewed findings</span></div>
+              <div class="metric"><b>Time to understand</b><span>open → first disposition or note</span></div>
+              <div class="metric"><b>Action rate</b><span>findings that produce a concrete defensive action</span></div>
+              <div class="metric"><b>Evidence completeness</b><span>findings with provenance + explanation + drill-down</span></div>
+            </div>
+          </div>
+          <div class="card flat">
+            <h3>Owned-bot conversation funnel</h3>
+            <div class="metric-list">
+              <div class="metric"><b>Source → start</b><span>owned-bot starts per attributable voluntary entry</span></div>
+              <div class="metric"><b>Start → first inbound</b><span>people who send a message after transparent onboarding</span></div>
+              <div class="metric"><b>Inbound → qualified</b><span>messages matching a legitimate supported intent</span></div>
+              <div class="metric"><b>Time to first inbound</b><span>median from start to first message</span></div>
+              <div class="metric"><b>Handoff/outcome rate</b><span>qualified conversations reaching the intended outcome</span></div>
+              <div class="metric"><b>Guardrails</b><span>opt-outs, blocks/reports, duplicate contacts, complaint rate</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="callout good"><strong>Initial target:</strong> within two review weeks, cut surfaced alert volume by at least 80% while keeping ≥70% of reviewed findings useful or action-worthy. Set conversation targets only after one week of clean owned-bot funnel data; current data cannot support an honest baseline.</div>
+      </section>
+
+      <section id="risks">
+        <div class="eyebrow">Risks, tradeoffs, assumptions</div>
+        <h2>What can invalidate this plan</h2>
+        <div class="grid-2">
+          <div class="card flat">
+            <h3>Risks & mitigations</h3>
+            <ul class="muted">
+              <li><strong>False correlation:</strong> shared hosting is not shared ownership. Store edge confidence and never collapse evidence irreversibly.</li>
+              <li><strong>Over-filtering:</strong> a quiet queue can hide failures. Retain raw drill-down and publish a weekly suppressed-signal coverage report.</li>
+              <li><strong>Model leakage/hallucination:</strong> redact before model calls, cite evidence, prohibit autonomous severity, and evaluate offline first.</li>
+              <li><strong>Schema sprawl:</strong> limit v1 to three finding types and six feedback reason codes.</li>
+              <li><strong>Privacy/platform abuse:</strong> owned-bot, opt-in messaging only; minimize identities, cap retention, and add opt-out/complaint guardrails.</li>
+              <li><strong>Migration breakage:</strong> alias the old confidence field and phase out anonymous access behind a server-side API.</li>
+            </ul>
+          </div>
+          <div class="card flat">
+            <h3>Assumptions & non-goals</h3>
+            <ul class="muted">
+              <li>The immediate operator is a small internal team, but the system <strong>must scale</strong> for production and real use cases where needed.</li>
+              <li>Production data is richer than the local workspace. Live counts were not verified for this review.</li>
+              <li>The goal <strong>is</strong> to increase scanner coverage, replicate competitor datasets where beneficial, and redesign screens for better UX.</li>
+              <li>Optimizing captured-account outreach and social-engineering flows <strong>is explicitly part of the strategy</strong> (multi-touch redirect sequences are enabled).</li>
+              <li><strong>NO MODEL PROVIDER</strong> — the system works 100% deterministically with zero external AI costs. All phases work with current infrastructure.</li>
+            </ul>
+          </div>
+        </div>
+        <details>
+          <summary>Open decisions for the implementation spec</summary>
+          <div><ol><li>Which three finding types produce the most decisions from the last 30 days of data?</li><li>Who is allowed to view raw message evidence versus redacted findings?</li><li>What counts as a “qualified” conversation for the owned bot?</li><li>Which defensive actions should close a finding: revoke/notify/export/suppress/monitor?</li><li>What evidence retention period is necessary and proportionate?</li></ol></div>
+        </details>
+      </section>
+
+      <section id="sources">
+        <div class="eyebrow">Research record</div>
+        <h2>Primary sources</h2>
+        <p class="muted">Accessed 2026-09-02. Product capabilities and gating change; re-check before purchase or implementation decisions.</p>
+        <ul class="source-list">
+          <li><strong>GitGuardian:</strong> <a href="https://docs.gitguardian.com/internal-monitoring/remediate/investigate-incidents">Investigate incidents</a>, <a href="https://www.gitguardian.com/pricing">Plans & pricing</a>, <a href="https://docs.gitguardian.com/releases/saas">SaaS releases</a>.</li>
+          <li><strong>Flare:</strong> <a href="https://flare.io/">Platform</a>, <a href="https://docs.flare.io/configure-identifiers">Configure identifiers</a>, <a href="https://docs.flare.io/events">Events</a>, <a href="https://docs.flare.io/alert-central">Alert Central</a>, <a href="https://docs.flare.io/integrations-hub">Integrations Hub</a>, <a href="https://flare.io/legal/Flare-Security-Addendum">Security Addendum</a>.</li>
+          <li><strong>Recorded Future:</strong> <a href="https://www.recordedfuture.com/platform">Intelligence Platform</a>, <a href="https://www.recordedfuture.com/platform/browser-extension">Risk scores and evidence</a>, <a href="https://assets.recordedfuture.com/Datasheets/2026_0312%20-%20Combined%20Solutions.pdf">2026 solutions data sheet</a>, <a href="https://assets.recordedfuture.com/Pricing%20PDF/2026_0319%20-%20Pricing.pdf">2026 tier matrix</a>.</li>
+          <li><strong>OpenCTI:</strong> <a href="https://docs.opencti.io/latest/usage/getting-started/">Getting started</a>, <a href="https://docs.opencti.io/latest/usage/data-model/">Data model</a>, <a href="https://docs.opencti.io/latest/reference/data-processing/">Data processing</a>, <a href="https://docs.opencti.io/latest/usage/case-management/">Case management</a>, <a href="https://docs.opencti.io/latest/administration/enterprise/">Enterprise edition</a>, <a href="https://docs.opencti.io/latest/usage/pir/">PIRs</a>.</li>
+          <li><strong>respond.io:</strong> <a href="https://respond.io/integrations/telegram">Telegram integration</a>, <a href="https://respond.io/help/dashboard-reporting/reports-conversations">Conversation reports</a>, <a href="https://respond.io/help/dashboard-reporting/reports-lifecycle">Lifecycle reports</a>, <a href="https://respond.io/help/workflows/workflows-overview">Workflow overview</a>, <a href="https://respond.io/pricing">Pricing</a>.</li>
+        </ul>
+      </section>
+
+      <footer class="footer">
+        Competitive Upgrade for The Prawn Hunter · generated from repo inspection and live first-party research · 2026-09-02
+      </footer>
+    </main>
+  </div>
+  <script>
+    document.getElementById("print-plan")?.addEventListener("click", () => window.print());
+  </script>
+</body>
+</html>
+
+
