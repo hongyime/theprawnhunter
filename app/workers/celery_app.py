@@ -311,6 +311,25 @@ app.conf.update(
             "task": "flow.honeypot_redirect_sweep",
             "schedule": 30.0,
         },
+        # Level 2: Multi-touch redirect reminder sweeps (every 24h).
+        # Sends second and third reminder messages to users who didn't migrate.
+        # Touch 2: users who received redirect_1 but not redirect_2 (24h+ ago)
+        "honeypot-redirect-touch2-daily": {
+            "task": "flow.honeypot_redirect_touch2",
+            "schedule": crontab(minute=0, hour=9),  # Daily @ 09:00 UTC
+        },
+        # Touch 3: users who received redirect_2 but not redirect_3 (24h+ ago)
+        "honeypot-redirect-touch3-daily": {
+            "task": "flow.honeypot_redirect_touch3",
+            "schedule": crontab(minute=0, hour=10),  # Daily @ 10:00 UTC
+        },
+        # Level 5: Proactive outreach via captured bot (every 6h).
+        # Sends inline mode request to users who haven't been redirected.
+        # Option A only (inline mode first approach).
+        "honeypot-proactive-outreach-6h": {
+            "task": "flow.honeypot_proactive_outreach",
+            "schedule": crontab(minute=30, hour="*/6"),  # Every 6h @ :30
+        },
         # C2 operator clusters — daily @ 08:00 UTC. Ranks hosted-service
         # tenants (railway/onrender/etc), Shodan orgs, and hostname operators.
         "cluster-c2-operators-daily": {

