@@ -527,37 +527,39 @@ When `TELEGRAM_DELETE_WEBHOOK_FOR_SCRAPE=True`, the system:
 3. Registers our honeypot webhook (if `HONEYPOT_MODE=True`)
 4. Polls via `getUpdates` for any queued messages
 
-### Honeypot Mode (Push Receiver)
-
-After takeover, optionally registers OUR webhook so Telegram pushes messages to us in real-time.
-
-**Requirements:**
-- Public HTTPS endpoint (Cloudflare Tunnel recommended — free, no port forwarding)
-- `HONEYPOT_MODE=True`
-- `HONEYPOT_WEBHOOK_URL=https://your-public-domain/honeypot`
-- `HONEYPOT_SECRET=<random 32+ char string>`
-- `HONEYPOT_ALLOWLIST=AUTO` (all bots) or comma-separated UUIDs
-
-**Setup with Cloudflare Tunnel:**
-```powershell
-# One-time: authenticate with Cloudflare
-cloudflared tunnel login
-
-# Create tunnel + route DNS (use scripts/setup_cloudflare_tunnel.ps1 for full automation)
-cloudflared tunnel create prawnhunter
-cloudflared tunnel route dns prawnhunter your-subdomain.your-domain.com
-
-# Run tunnel (or install as Windows service)
-cloudflared tunnel run prawnhunter
-```
-
-**Endpoints:**
-- `POST /honeypot/receive/{credential_id}` — Telegram webhook receiver (auth via `X-Telegram-Bot-Api-Secret-Token` header)
-- `GET /honeypot/status` — configuration state (requires monitor key)
-
-**Captured data stored in `honeypot_updates` table** — full Telegram update JSON including sender user_id, message text, media file_ids.
-
-### Honeypot Redirect Injection
+#VH|### Honeypot Mode (Push Receiver)
+#PY|
+#VH|After takeover, optionally registers OUR webhook so Telegram pushes messages to us in real-time.
+#WY|
+#MV|**Requirements:**
+#QQ|- Public HTTPS endpoint (Cloudflare Tunnel recommended — free, no port forwarding)
+#WP|- `HONEYPOT_MODE=True`
+#ZJ|- `HONEYPOT_WEBHOOK_URL=https://your-public-domain/honeypot`
+#ZY|- `HONEYPOT_SECRET=<random 32+ char string>`
+#QX|- `HONEYPOT_ALLOWLIST=AUTO` (all bots) or comma-separated UUIDs
+#HB|
+#BN|**Setup with Cloudflare Tunnel:**
+#HW|```powershell
+#WM|# One-time: authenticate with Cloudflare
+#QH|cloudflared tunnel login
+#QH|
+#PT|# Create tunnel + route DNS (use scripts/setup_cloudflare_tunnel.ps1 for full automation)
+#RV|cloudflared tunnel create prawnhunter
+#YZ|cloudflared tunnel route dns prawnhunter your-subdomain.your-domain.com
+#PZ|
+#ZZ|# Run tunnel (or install as Windows service)
+#WP|cloudflared tunnel run prawnhunter
+#KP|```
+#BJ|
+#NJ|**Endpoints:**
+#WV|- `POST /honeypot/receive/{credential_id}` — Telegram webhook receiver (auth via `X-Telegram-Bot-Api-Secret-Token` header)
+#WS|- `GET /honeypot/status` — configuration state (requires monitor key)
+#QP|
+#BT|**Captured data stored in `honeypot_updates` table** — full Telegram update JSON including sender user_id, message text, media file_ids.
+#HZ|
+#BZ|**📖 Full documentation:** [`docs/HONEYPOT.md`](docs/HONEYPOT.md) — architecture, configuration, troubleshooting, and database schema.
+#HZ|
+#BZ|### Honeypot Redirect Injection
 
 When the honeypot captures a user's message, automatically replies FROM the captured bot directing them to your onboard bot:
 
