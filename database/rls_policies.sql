@@ -172,8 +172,9 @@ FROM exfiltrated_messages;
 
 -- The view is owned by the role that ran this script (typically postgres). Because
 -- security_invoker=false (definer semantics), it can read the base table on behalf
--- of anon without RLS blocking. Grant read to anon + authenticated.
-GRANT SELECT ON public.evidence_redacted TO anon;
+-- of anon without RLS blocking. ANON ACCESS REVOKED per Plan Item 1 requirements.
+-- Only authenticated operators may read even the redacted surface.
+-- GRANT SELECT ON public.evidence_redacted TO anon;  -- REMOVED
 GRANT SELECT ON public.evidence_redacted TO authenticated;
 
 COMMENT ON VIEW public.evidence_redacted IS

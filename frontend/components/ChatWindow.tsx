@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { ChevronDown, ChevronUp, FileDown, Globe2, LucideSend, Server, TerminalSquare } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { ChevronDown, ChevronUp, FileDown, Globe2, LucideSend, Server, TerminalSquare, LogIn, LogOut } from "lucide-react";
 import type { Credential, InfrastructureContext } from "@/app/page";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8011";
 
 export default function ChatWindow({ credential }: { credential: Credential | null }) {
+    const { user, session, loading: authLoading, error: authCtxError, signIn, signOut } = useAuth();
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [isProfileExpanded, setIsProfileExpanded] = useState(true);
     const [loading, setLoading] = useState(false);
@@ -24,9 +26,17 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             setLoading(true);
             setAuthError(null);
             setMessages([]); // clear stale state on credential change / auth failure
-            // Load latest 200 messages — prevents unbounded data transfer for active bots.
+            
+            // Gate: must be authenticated to read evidence
+            if (!session) {
+                setAuthError("Sign in required to view exfiltrated messages.");
+                setLoading(false);
+                return;
+            }
+            
+            // Authenticated query to evidence_redacted view (truncated content, no sensitive fields)
             const { data, error } = await supabase
-                .from("exfiltrated_messages")
+                .from("evidence_redacted")
                 .select("*")
                 .eq("credential_id", credentialId)
                 .order("telegram_msg_id", { ascending: false })
@@ -35,7 +45,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             if (cancelled) return;
 
             if (error) {
-                // RLS blocks anon SELECT on exfiltrated_messages — 401/403/PGRST come back as errors.
+                // RLS blocks unauthenticated SELECT — 401/403/PGRST come back as errors.
                 const code = (error as { code?: string; status?: number }).code;
                 const status = (error as { status?: number }).status;
                 const isAuth =
@@ -84,7 +94,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             cancelled = true;
             supabase.removeChannel(channel);
         };
-    }, [credentialId]);
+    }, [credentialId, session]);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
