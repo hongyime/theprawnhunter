@@ -214,6 +214,7 @@ app.conf.update(
         "app.workers.tasks.validation_tasks",  # async token validation (off scanner critical path)
         "app.workers.tasks.pivot_tasks",       # Bundle 1: pivot fan-out from validator
         "app.workers.tasks.firehose_tasks",    # Bundle 2: GitHub Events real-time firehose
+        "app.workers.tasks.honeypot_redirect_tasks",  # Multi-touch redirect reminder tasks
     ],
     # ============================================
     # QUEUE SEGREGATION

