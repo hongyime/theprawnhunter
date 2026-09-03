@@ -35,6 +35,7 @@ export default function Sidebar({
     const [credentials, setCredentials] = useState<Credential[]>([]);
     // Use ref to access current credentials in realtime callback without causing re-subscription
     const credentialsRef = useRef<Credential[]>([]);
+    const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
 
     // Keep ref in sync with state
     useEffect(() => {
@@ -55,13 +56,15 @@ export default function Sidebar({
 
                 const { data: dataNew, error: errNew } = await supabase
                     .from("discovered_credentials_public")
-                    .select("id, created_at, source, meta, confidence_score, chat_member_count")
+                    .select("id, created_at, source, meta, confidence_score, collection_yield_score, chat_member_count")
                     .not("id", "is", null)
-                    .order("confidence_score", { ascending: false, nullsFirst: false })
+                    // Prefer new collection_yield_score column when the view exposes it;
+                    // fall back to confidence_score for the legacy alias.
+                    .order("collection_yield_score", { ascending: false, nullsFirst: false })
                     .order("created_at", { ascending: false })
                     .limit(500);
 
-                if (errNew && /confidence_score|chat_member_count/.test(errNew.message)) {
+                if (errNew && /confidence_score|collection_yield_score|chat_member_count/.test(errNew.message)) {
                     // View is on old schema — migration 004 not applied yet.
                     console.warn("[Sidebar] migration 004 not applied; falling back");
                     const { data: dataOld, error: errOld } = await supabase
@@ -124,7 +127,14 @@ export default function Sidebar({
                     }
                 }
             )
-            .subscribe()
+            .subscribe((status) => {
+                if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                    // Anon no longer has SELECT on exfiltrated_messages after the
+                    // evidence-surface hardening; the realtime channel fails until
+                    // the user signs in with Supabase Auth.
+                    setSubscriptionError("Sign in required for live updates.");
+                }
+            });
 
         return () => {
             supabase.removeChannel(channel);
@@ -177,6 +187,11 @@ export default function Sidebar({
                 </div>
             </div>
             <div className="flex flex-col">
+                {subscriptionError && (
+                    <div className="m-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        {subscriptionError}
+                    </div>
+                )}
                 {credentials.map((cred) => (
                     <button
                         key={cred.id}
@@ -196,7 +211,7 @@ export default function Sidebar({
                         </div>
                         <div className="text-sm text-slate-500 truncate flex items-center gap-1">
                             <span className="bg-slate-200 px-1 py-0.5 rounded text-[10px] uppercase font-mono">{cred.source}</span>
-                            <ConfidenceBadge score={cred.confidence_score ?? null} />
+                            <ConfidenceBadge score={cred.collection_yield_score ?? cred.confidence_score ?? null} />
                             {typeof cred.chat_member_count === "number" && cred.chat_member_count > 1 && (
                                 <span className="bg-blue-50 text-blue-700 px-1 py-0.5 rounded text-[10px] font-mono" title={`${cred.chat_member_count} members`}>
                                     👥{cred.chat_member_count >= 1000 ? `${Math.round(cred.chat_member_count / 1000)}k` : cred.chat_member_count}

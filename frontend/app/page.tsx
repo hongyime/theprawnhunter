@@ -27,6 +27,8 @@ export interface Credential {
   id: string;
   created_at: string;
   source: string;
+  collection_yield_score?: number | null;
+  /** @deprecated legacy alias for collection_yield_score */
   confidence_score?: number | null;
   chat_member_count?: number | null;
   meta?: {

@@ -299,7 +299,11 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
                 merged_meta["webhook_url"] = webhook_url
             if chat_enrichment:
                 merged_meta.update(chat_enrichment)
+            # Write both keys during rename transition: collection_yield_score is
+            # the canonical name; confidence_score is retained as a legacy alias.
+            merged_meta["collection_yield_score"] = confidence_score
             merged_meta["confidence_score"] = confidence_score
+            merged_meta["collection_yield_reasons"] = confidence_reasons
             merged_meta["confidence_reasons"] = confidence_reasons
             update_data = {
                 "chat_id": chat_id,
@@ -345,7 +349,10 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
                 "chat_type": chat_type,
                 **({"webhook_url": webhook_url} if webhook_url else {}),
                 **(chat_enrichment or {}),
+                # Write both keys during rename transition (see migration 20260903000003).
+                "collection_yield_score": confidence_score,
                 "confidence_score": confidence_score,
+                "collection_yield_reasons": confidence_reasons,
                 "confidence_reasons": confidence_reasons,
             },
         }
@@ -621,13 +628,14 @@ def _scraper_srv_is_monitor(token: str) -> bool:
 
 
 # ============================================================
-# Backfill: score + enrich all active rows missing confidence_score
+# Backfill: score + enrich all active rows missing collection_yield_score
 # ============================================================
 
 @app.task(name="validation.backfill_scoring", queue="validation")
 def backfill_scoring(batch_size: int = 50):
-    """Re-run getChat enrichment + confidence scoring on active rows
-    that have a chat_id but no confidence_score in meta yet.
+    """Re-run getChat enrichment + yield scoring on active rows
+    that have a chat_id but no collection_yield_score in meta yet.
+    (Also covers legacy rows keyed only under confidence_score.)
 
     Does NOT call getMe (token already confirmed live).
     Runs in batches — safe to call repeatedly via beat or manually.
@@ -645,7 +653,7 @@ async def _backfill_scoring_async(batch_size: int):
         .select("id, bot_token, chat_id, chat_type, bot_username, meta")
         .eq("status", "active")
         .not_.is_("chat_id", "null")
-        .is_("meta->>confidence_score", "null")
+        .or_("meta->>collection_yield_score.is.null,meta->>confidence_score.is.null")
         .order("updated_at", desc=False)
         .limit(batch_size)
     )
@@ -674,7 +682,12 @@ async def _backfill_scoring_async(batch_size: int):
                     bot_username=row.get("bot_username"),
                 )
                 new_meta = {**(row.get("meta") or {}), **enrichment,
-                            "confidence_score": score, "confidence_reasons": reasons}
+                    # Write both keys during rename transition.
+                    "collection_yield_score": score,
+                    "confidence_score": score,
+                    "collection_yield_reasons": reasons,
+                    "confidence_reasons": reasons,
+                }
                 await async_execute(
                     db.table("discovered_credentials")
                     .update({
