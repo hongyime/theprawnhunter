@@ -3885,6 +3885,8 @@ def honeypot_redirect_sweep():
 async def _honeypot_redirect_sweep_logic() -> dict:
     if not settings.HONEYPOT_REDIRECT_MODE:
         return {"status": "disabled"}
+    if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
+        return {"status": "skipped", "reason": "not_authorized"}
 
     try:
         # Get un-redirected message-type updates

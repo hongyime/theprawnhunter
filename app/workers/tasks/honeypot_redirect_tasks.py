@@ -7,8 +7,9 @@ from datetime import datetime, timezone, timedelta
 from app.workers.celery_app import app, get_worker_loop
 from app.core.config import settings
 from app.core.database import db
-from app.workers.async_execute import async_execute
-from app.core.logger import logger
+from app.workers.tasks.flow_tasks import async_execute
+from app.core.logger import get_logger
+logger = get_logger(__name__)
 from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
 
 
@@ -26,6 +27,8 @@ async def _redirect_touch2_logic() -> dict:
     Find users who received redirect_1 but not redirect_2.
     Send second message (urgent tone).
     """
+    if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
+        return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
@@ -99,6 +102,8 @@ def honeypot_redirect_touch3():
 
 async def _redirect_touch3_logic() -> dict:
     """Send third and final message (last notice tone)."""
+    if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
+        return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
@@ -168,6 +173,8 @@ async def _proactive_outreach_logic() -> dict:
     Find ALL unique users across all captured bots who haven't been redirected yet.
     Send proactive message asking them to use inline mode.
     """
+    if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
+        return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     
     # Find users who triggered honeypot BUT were not redirected yet

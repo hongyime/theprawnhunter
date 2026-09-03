@@ -10,23 +10,52 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8011";
 export default function ChatWindow({ credential }: { credential: Credential | null }) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [isProfileExpanded, setIsProfileExpanded] = useState(true);
+    const [loading, setLoading] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const credentialId = credential?.id;
 
     useEffect(() => {
         if (!credentialId) return;
 
+        let cancelled = false;
+
         async function fetchMsgs() {
+            setLoading(true);
+            setAuthError(null);
+            setMessages([]); // clear stale state on credential change / auth failure
             // Load latest 200 messages — prevents unbounded data transfer for active bots.
-            const { data } = await supabase
+            const { data, error } = await supabase
                 .from("exfiltrated_messages")
                 .select("*")
                 .eq("credential_id", credentialId)
                 .order("telegram_msg_id", { ascending: false })
                 .limit(200);
 
+            if (cancelled) return;
+
+            if (error) {
+                // RLS blocks anon SELECT on exfiltrated_messages — 401/403/PGRST come back as errors.
+                const code = (error as { code?: string; status?: number }).code;
+                const status = (error as { status?: number }).status;
+                const isAuth =
+                    status === 401 ||
+                    status === 403 ||
+                    code === "PGRST301" || // JWT expired / missing
+                    code === "42501" ||     // insufficient privilege
+                    /permission|denied|jwt|auth|rls/i.test(error.message);
+                setAuthError(
+                    isAuth
+                        ? "Sign in required to view exfiltrated messages."
+                        : `Failed to load messages: ${error.message}`
+                );
+                setLoading(false);
+                return;
+            }
+
             // Reverse to show oldest-first in the chat view
             if (data) setMessages((data as ChatMessage[]).reverse());
+            setLoading(false);
         }
 
         fetchMsgs();
@@ -45,9 +74,14 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                     setMessages((prev) => [...prev, payload.new as ChatMessage]);
                 }
             )
-            .subscribe();
+            .subscribe((status) => {
+                if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                    setAuthError("Realtime subscription failed — sign in required.");
+                }
+            });
 
         return () => {
+            cancelled = true;
             supabase.removeChannel(channel);
         };
     }, [credentialId]);
@@ -165,6 +199,18 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 flex flex-col space-y-3">
+                {authError && (
+                    <div className="self-center max-w-md rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-sm">
+                        <div className="font-semibold mb-1">Authentication required</div>
+                        <div className="text-xs">{authError}</div>
+                    </div>
+                )}
+                {loading && !authError && (
+                    <div className="self-center text-xs text-slate-500 italic">Loading messages…</div>
+                )}
+                {!loading && !authError && messages.length === 0 && (
+                    <div className="self-center text-xs text-slate-500 italic">No messages captured for this bot yet.</div>
+                )}
                 {messages.map((msg) => (
                     <div
                         key={msg.id}

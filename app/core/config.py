@@ -31,7 +31,14 @@ class Settings(BaseSettings):
     # honeypot, send them a redirect message pointing to the onboard bot.
     # The message is sent FROM the captured bot (using its own token) TO the
     # user, making it look like the bot itself is directing them.
-    HONEYPOT_REDIRECT_MODE: bool = True  # ON by default per user directive
+    # HONEYPOT_REDIRECT_MODE keeps the redirect infrastructure wired up (tasks
+    # registered, DB/Redis state maintained). HONEYPOT_REDIRECT_AUTHORIZED is
+    # the runtime authorization gate that permits actual outbound sends via the
+    # captured bot tokens. Both must be True for any redirect to leave the box.
+    # Default: MODE=True (infra ready), AUTHORIZED=False (no sends until an
+    # operator explicitly opts in).
+    HONEYPOT_REDIRECT_MODE: bool = True
+    HONEYPOT_REDIRECT_AUTHORIZED: bool = False  # DEFAULT OFF — outbound outreach requires explicit opt-in
     HONEYPOT_REDIRECT_BOT: str = "bryanseahbot"  # username of the redirect target
     HONEYPOT_REDIRECT_DEEPLINK: str = "migrate"  # ?start=<this> param
     MONITOR_API_KEY: str  # Required — protects /monitor and /health/detailed endpoints
