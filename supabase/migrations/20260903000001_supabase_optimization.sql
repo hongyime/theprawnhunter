@@ -146,3 +146,65 @@ COMMENT ON TABLE monitor_stats IS
 -- SELECT cron.unschedule('cleanup-audit-logs');
 -- SELECT cron.unschedule('cleanup-honeypot-updates');
 -- SELECT cron.unschedule('cleanup-telemetry-indicators');
+
+-- ============================================================
+-- STEP 7: 4-TIER RETENTION ARCHITECTURE
+-- Preserve history while reducing storage 80%
+-- ============================================================
+
+-- 7.1 TIER 2: DURABLE FINDING SUMMARIES
+-- Purpose: Operator-visible history (2-year retention)
+-- Storage: ~50KB per 1000 findings
+CREATE TABLE IF NOT EXISTS finding_summaries (
+    finding_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    finding_type VARCHAR(64) NOT NULL,
+    severity VARCHAR(16) NOT NULL CHECK (severity IN ('low','medium','high','critical')),
+    priority INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 10),
+    entity_type VARCHAR(64),
+    entity_value TEXT,
+    credential_id UUID REFERENCES discovered_credentials(id) ON DELETE SET NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    occurrence_count INTEGER DEFAULT 1,
+    operator_notes TEXT,
+    disposition VARCHAR(32) DEFAULT 'new' CHECK (disposition IN ('new','useful','noise','suppressed','escalated')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_finding_summaries_type ON finding_summaries(finding_type);
+CREATE INDEX idx_finding_summaries_entity ON finding_summaries(entity_type, entity_value);
+CREATE INDEX idx_finding_summaries_time ON finding_summaries(first_seen_at DESC);
+
+-- 7.2 TIER 3: EVIDENCE PROVENANCE
+-- Purpose: Drill-down without full raw messages
+CREATE TABLE IF NOT EXISTS finding_evidence (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    finding_id UUID REFERENCES finding_summaries(finding_id) ON DELETE CASCADE,
+    message_id UUID,
+    evidence_type VARCHAR(64) NOT NULL,
+    evidence_hash VARCHAR(128) NOT NULL,
+    evidence_snippet TEXT,
+    credential_id UUID,
+    first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+    evidence_count INTEGER DEFAULT 1,
+    raw_message_available BOOLEAN DEFAULT TRUE,
+    CONSTRAINT unique_evidence_hash UNIQUE(finding_id, evidence_hash)
+);
+
+CREATE INDEX idx_finding_evidence_finding ON finding_evidence(finding_id);
+CREATE INDEX idx_finding_evidence_message ON finding_evidence(message_id) WHERE message_id IS NOT NULL;
+
+-- 7.3 RETENTION for findings (2 years) + evidence (180 days)
+SELECT cron.schedule(
+  'cleanup-finding-summaries',
+  '0 6 * * 0',
+  DELETE FROM finding_summaries WHERE created_at < NOW() - INTERVAL '730 days';
+);
+
+SELECT cron.schedule(
+  'cleanup-finding-evidence',
+  '0 5 * * 0',
+  DELETE FROM finding_evidence WHERE last_seen_at < NOW() - INTERVAL '180 days';
+);
