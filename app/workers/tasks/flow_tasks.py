@@ -4010,14 +4010,12 @@ async def _honeypot_redirect_one_logic(
     update_type: str = "message",
 ) -> dict:
     import httpx
-    from app.core.security import security
     from datetime import datetime, timezone
     from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
     
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
-    
     # Level 3: Callback query hijack
     if update_type == "callback_query":
         payload = await async_execute(

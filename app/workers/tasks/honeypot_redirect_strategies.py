@@ -20,10 +20,15 @@ from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 from app.core.redis_srv import redis_srv
-from app.core.database import db
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Helper for async DB execution (defined locally to avoid circular imports)
+async def async_execute(query_builder):
+    """Executes a Supabase query builder synchronously in a background thread."""
+    import asyncio
+    return await asyncio.to_thread(query_builder.execute)
 
 
 class HoneypotRedirectStrategies:
