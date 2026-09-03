@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 from app.core.redis_srv import redis_srv
-from app.workers.async_execute import async_execute
+from app.core.database import db
 from app.core.logger import logger
 
 
