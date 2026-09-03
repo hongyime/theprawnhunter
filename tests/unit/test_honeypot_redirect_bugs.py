@@ -265,12 +265,15 @@ async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
             return {"ok": True, "result": {"message_id": 42}}
 
     class FakeClient:
+        def __init__(self, **kwargs):
+            pass  # Accept timeout and other httpx arguments
+        
         async def __aenter__(self):
             return self
-
+        
         async def __aexit__(self, *_):
             pass
-
+        
         async def post(self, *_a, **_kw):
             return FakeResponse()
 
