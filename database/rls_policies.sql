@@ -95,28 +95,29 @@ WITH CHECK (
 -- STEP 4: exfiltrated_messages TABLE  (HARDENED)
 -- ============================================
 --
--- CHANGED (Plan Item 1): Evidence surface protection
---   - ANON access is FULLY REVOKED. The captured message corpus is investigative
---     evidence, not public content. Making it anon-readable was a data-exfiltration
---     surface for anyone who scraped the anon key.
---   - SERVICE_ROLE bypasses RLS (workers, ingest, broadcaster unchanged).
---   - AUTHENTICATED operators (frontend users signed into Supabase Auth) can SELECT
---     the raw table. UI must obtain a session via supabase.auth before querying.
---   - Public / anon consumers should use the public.evidence_redacted VIEW (below)
---     which strips high-risk fields (raw content > 500 chars, file_meta, broadcast_error).
+-- SECURITY MODEL: Evidence surface protection (Plan Item 1)
+--   - RAW ACCESS: service_role ONLY (bypasses RLS, workers unchanged)
+--   - ANON access: FULLY REVOKED (no raw table, no view)
+--   - AUTHENTICATED access: FULLY REVOKED on raw table
+--   - REDACTED ACCESS: authenticated operators use evidence_redacted view
+--
+-- RATIONALE:
+--   - Captured messages are investigative evidence, not public content.
+--   - Raw content, sender identity, and message IDs can leak tokens/secrets.
+--   - Authenticated operators must use the redacted view for safety.
 --
 -- WHO ACCESSES THIS TABLE:
 --   - Backend workers/API      → SERVICE_ROLE key → bypasses RLS, full access
---   - Frontend (authenticated) → user JWT         → SELECT on raw table via policy below
---   - Frontend (anon / public) → anon key         → SELECT ONLY via evidence_redacted view
+--   - Frontend (authenticated) → user JWT         → NO raw access, use evidence_redacted
+--   - Frontend (anon / public) → anon key         → NO access at all
 
 ALTER TABLE exfiltrated_messages ENABLE ROW LEVEL SECURITY;
 
--- Explicitly revoke any lingering direct grant to anon.
+-- Revoke ALL raw access from both anon and authenticated
 REVOKE ALL ON exfiltrated_messages FROM anon;
+REVOKE ALL ON exfiltrated_messages FROM authenticated;
 
--- Service role: explicit ALL policy for clarity (service_role bypasses RLS by default,
--- but stating it here documents the contract and survives any future BYPASS-RLS revocation).
+-- Service role: explicit ALL policy for clarity (documents the contract)
 CREATE POLICY "Service Role Full Access"
 ON exfiltrated_messages
 FOR ALL
@@ -124,16 +125,50 @@ TO service_role
 USING (true)
 WITH CHECK (true);
 
--- Authenticated operators (dashboards signed into Supabase Auth): read-only access.
-CREATE POLICY "Authenticated Read Access"
-ON exfiltrated_messages
-FOR SELECT
-TO authenticated
-USING (true);
+-- NO POLICIES for anon or authenticated - they must use evidence_redacted
 
--- No anon SELECT / INSERT / UPDATE / DELETE. Anon reaches evidence only through
--- the redacted view defined below.
+-- ============================================
+-- STEP 4b: evidence_redacted VIEW
+-- ============================================
+-- Authenticated-only redacted projection for safe operator review.
+-- Strips/truncates fields that leak secrets or PII:
+--   - content: truncated to 500 chars, token patterns masked
+--   - sender_name: pseudonymized to first 3 chars
+--   - file_meta: omitted (media file IDs, hashes)
+--   - broadcast_error: omitted (bot tokens, chat IDs, stack traces)
+--
+-- Authenticated operators MUST query this view, not the raw table.
 
+DROP VIEW IF EXISTS public.evidence_redacted;
+
+CREATE VIEW public.evidence_redacted
+WITH (security_invoker = false) AS
+SELECT
+    id,
+    credential_id,
+    telegram_msg_id,
+    CASE
+        WHEN sender_name IS NULL THEN NULL
+        WHEN char_length(sender_name) > 3 THEN left(sender_name, 3) || '...'
+        ELSE sender_name
+    END AS sender_name,
+    CASE
+        WHEN content IS NULL THEN NULL
+        WHEN char_length(content) > 500 THEN
+            regexp_replace(left(content, 500) || '…', '\d{8,10}:[A-Za-z0-9_-]{30,}', '[TOKEN]', 'g')
+        ELSE
+            regexp_replace(content, '\d{8,10}:[A-Za-z0-9_-]{30,}', '[TOKEN]', 'g')
+    END AS content,
+    media_type,
+    is_broadcasted,
+    created_at
+FROM exfiltrated_messages;
+
+-- Authenticated-only access to the redacted view
+GRANT SELECT ON public.evidence_redacted TO authenticated;
+
+COMMENT ON VIEW public.evidence_redacted IS
+    'Redacted evidence view for authenticated operators: content truncated + token-masked, sender pseudonymized, file_meta and broadcast_error omitted. AUTHENTICATED-ONLY. See database/rls_policies.sql and supabase/migrations/20260903000004_rls_hardening.sql.';
 -- ============================================
 -- STEP 4b: evidence_redacted VIEW
 -- ============================================

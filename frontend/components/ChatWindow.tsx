@@ -69,30 +69,10 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
         }
 
         fetchMsgs();
-
-        const channel = supabase
-            .channel(`chat-${credentialId}`)
-            .on(
-                "postgres_changes",
-                {
-                    event: "INSERT",
-                    schema: "public",
-                    table: "exfiltrated_messages",
-                    filter: `credential_id=eq.${credentialId}`,
-                },
-                (payload) => {
-                    setMessages((prev) => [...prev, payload.new as ChatMessage]);
-                }
-            )
-            .subscribe((status) => {
-                if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-                    setAuthError("Realtime subscription failed — sign in required.");
-                }
-            });
+        // NO realtime subscription - poll-based refresh only for redacted view
 
         return () => {
             cancelled = true;
-            supabase.removeChannel(channel);
         };
     }, [credentialId, session]);
 
