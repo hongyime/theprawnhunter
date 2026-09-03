@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatWindow from "@/components/ChatWindow";
 import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
-import { LucideMenu, LucideX } from "lucide-react";
+import { LucideMenu, LucideX, LogOut } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 export type DashboardView = "chat" | "botTelemetry" | "globalTelemetry";
 
@@ -42,6 +43,7 @@ export interface Credential {
 }
 
 export default function Home() {
+  const { session, loading: authLoading, error: authError, signOut } = useAuth();
   const [selected, setSelected] = useState<Credential | null>(null);
   const [activeView, setActiveView] = useState<DashboardView>("chat");
   const [isMobile, setIsMobile] = useState(false);
@@ -64,6 +66,39 @@ export default function Home() {
     if (isMobile) setSidebarOpen(false);
   };
 
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
+  // Show loading state
+  if (authLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-100">
+        <div className="text-slate-600">Authenticating...</div>
+      </div>
+    );
+  }
+
+  // Gate: redirect to sign-in if not authenticated
+  if (!session) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-slate-100 gap-4">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">Telegram Hunter</h1>
+          <p className="text-slate-600 mb-4">
+            {authError || "Sign in required to access the dashboard"}
+          </p>
+          <a
+            href="/signin"
+            className="inline-block px-6 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700 font-medium"
+          >
+            Sign In
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="flex h-screen w-full overflow-hidden bg-white">
       {isMobile && (
@@ -83,6 +118,13 @@ export default function Home() {
                 ? `@${selected.meta.bot_username}`
                 : "Prawn Hunter"}
             </span>
+            <button
+              onClick={handleSignOut}
+              className="ml-auto rounded p-1.5 text-slate-700 hover:bg-slate-100"
+              aria-label="Sign out"
+            >
+              <LogOut className="h-5 w-5" />
+            </button>
           </div>
           {/* Backdrop */}
           {sidebarOpen && (
@@ -98,36 +140,83 @@ export default function Home() {
       <div
         className={
           isMobile
-            ? `fixed inset-y-0 left-0 z-30 w-4/5 max-w-xs transform bg-white shadow-xl transition-transform duration-200 ${
+            ? `fixed inset-y-0 left-0 z-20 w-64 transform transition-transform duration-200 ease-in-out ${
                 sidebarOpen ? "translate-x-0" : "-translate-x-full"
               }`
-            : "w-1/3 min-w-75 shrink-0"
+            : "w-80 flex-shrink-0 border-r"
         }
       >
         <Sidebar
-          selected={selected}
-          activeView={activeView}
-          onViewChange={(v) => {
-            setActiveView(v);
-            if (isMobile) setSidebarOpen(false);
-          }}
+          selectedCredentialId={selected?.id ?? null}
           onSelect={handleSelect}
+          onSignOut={!isMobile ? handleSignOut : undefined}
         />
       </div>
 
-      {/* Main content */}
-      <div
-        className={`flex flex-1 flex-col overflow-hidden ${
-          isMobile ? "pt-12" : ""
-        }`}
-      >
-        {activeView === "globalTelemetry" ? (
-          <TelemetryAnalyticsView scope="global" />
-        ) : activeView === "botTelemetry" ? (
-          <TelemetryAnalyticsView scope="credential" credential={selected} />
-        ) : (
-          <ChatWindow credential={selected} />
+      {/* Main content area */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {/* Desktop header */}
+        {!isMobile && (
+          <div className="flex items-center justify-between border-b px-4 py-2 bg-slate-50">
+            <span className="text-sm text-slate-600">
+              Signed in as <strong>{session.user?.email}</strong>
+            </span>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-2 rounded px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-200"
+            >
+              <LogOut className="h-4 w-4" />
+              Sign Out
+            </button>
+          </div>
         )}
+        
+        {/* View tabs */}
+        <div className="flex items-center gap-1 border-b bg-white px-4 py-1">
+          <button
+            onClick={() => setActiveView("chat")}
+            className={`px-3 py-2 rounded text-sm font-medium ${
+              activeView === "chat"
+                ? "bg-cyan-100 text-cyan-800"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Chat
+          </button>
+          <button
+            onClick={() => setActiveView("botTelemetry")}
+            className={`px-3 py-2 rounded text-sm font-medium ${
+              activeView === "botTelemetry"
+                ? "bg-cyan-100 text-cyan-800"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Bot Telemetry
+          </button>
+          <button
+            onClick={() => setActiveView("globalTelemetry")}
+            className={`px-3 py-2 rounded text-sm font-medium ${
+              activeView === "globalTelemetry"
+                ? "bg-cyan-100 text-cyan-800"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Global Stats
+          </button>
+        </div>
+
+        {/* Active view */}
+        <div className="flex-1 overflow-hidden">
+          {activeView === "chat" && <ChatWindow credential={selected} />}
+          {activeView === "botTelemetry" && selected && (
+            <TelemetryAnalyticsView credential={selected} />
+          )}
+          {activeView === "globalTelemetry" && (
+            <div className="flex h-full items-center justify-center bg-slate-100 text-slate-600">
+              Global telemetry coming soon
+            </div>
+          )}
+        </div>
       </div>
     </main>
   );

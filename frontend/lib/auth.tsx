@@ -9,18 +9,11 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   error: string | null;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  session: null,
-  loading: true,
-  error: null,
-  signIn: async () => {},
-  signOut: async () => {},
-});
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -29,50 +22,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) {
-        setError(error.message);
+    let mounted = true;
+
+    async function initSession() {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (!mounted) return;
+        
+        if (error) {
+          setError(error.message);
+          setLoading(false);
+          return;
+        }
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        setError(null);
+        setLoading(false);
+      } catch (err) {
+        if (!mounted) return;
+        setError(err instanceof Error ? err.message : "Failed to get session");
+        setLoading(false);
       }
+    }
+
+    initSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
       setSession(session);
       setUser(session?.user ?? null);
+      setError(null);
       setLoading(false);
     });
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string): Promise<{ error: Error | null }> => {
     setError(null);
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) {
-      setError(error.message);
+    
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+        return { error: new Error(error.message) };
+      }
+      
+      // onAuthStateChange will handle setting user/session and setLoading(false)
+      return { error: null };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Sign in failed";
+      setError(errorMsg);
       setLoading(false);
+      return { error: new Error(errorMsg) };
     }
-    // onAuthStateChange will handle setting user/session
   };
 
   const signOut = async () => {
     setError(null);
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      setError(error.message);
-    } else {
-      setUser(null);
-      setSession(null);
+    setLoading(true);
+    
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        setError(error.message);
+      } else {
+        setUser(null);
+        setSession(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign out failed");
+    } finally {
+      setLoading(false);
     }
   };
 

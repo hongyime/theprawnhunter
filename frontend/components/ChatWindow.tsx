@@ -3,13 +3,11 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
-import { ChevronDown, ChevronUp, FileDown, Globe2, LucideSend, Server, TerminalSquare, LogIn, LogOut } from "lucide-react";
+import { ChevronDown, ChevronUp, FileDown, Globe2, LucideSend, Server, TerminalSquare } from "lucide-react";
 import type { Credential, InfrastructureContext } from "@/app/page";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8011";
-
 export default function ChatWindow({ credential }: { credential: Credential | null }) {
-    const { user, session, loading: authLoading, error: authCtxError, signIn, signOut } = useAuth();
+    const { session } = useAuth();
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [isProfileExpanded, setIsProfileExpanded] = useState(true);
     const [loading, setLoading] = useState(false);
@@ -25,7 +23,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
         async function fetchMsgs() {
             setLoading(true);
             setAuthError(null);
-            setMessages([]); // clear stale state on credential change / auth failure
+            setMessages([]);
             
             // Gate: must be authenticated to read evidence
             if (!session) {
@@ -34,25 +32,24 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 return;
             }
             
-            // Authenticated query to evidence_redacted view (truncated content, no sensitive fields)
+            // Authenticated query to evidence_redacted view (truncated + masked content)
             const { data, error } = await supabase
                 .from("evidence_redacted")
                 .select("*")
                 .eq("credential_id", credentialId)
-                .order("telegram_msg_id", { ascending: false })
+                .order("created_at", { ascending: true })
                 .limit(200);
 
             if (cancelled) return;
 
             if (error) {
-                // RLS blocks unauthenticated SELECT — 401/403/PGRST come back as errors.
                 const code = (error as { code?: string; status?: number }).code;
                 const status = (error as { status?: number }).status;
                 const isAuth =
                     status === 401 ||
                     status === 403 ||
-                    code === "PGRST301" || // JWT expired / missing
-                    code === "42501" ||     // insufficient privilege
+                    code === "PGRST301" ||
+                    code === "42501" ||
                     /permission|denied|jwt|auth|rls/i.test(error.message);
                 setAuthError(
                     isAuth
@@ -63,8 +60,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 return;
             }
 
-            // Reverse to show oldest-first in the chat view
-            if (data) setMessages((data as ChatMessage[]).reverse());
+            if (data) setMessages((data as ChatMessage[]));
             setLoading(false);
         }
 
@@ -84,6 +80,27 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
         return (
             <div className="flex-1 flex items-center justify-center bg-slate-200 text-slate-600">
                 Select a chat to view exfiltrated messages
+            </div>
+        );
+    }
+
+    if (authError) {
+        return (
+            <div className="flex-1 flex items-center justify-center bg-slate-200 text-slate-600">
+                <div className="text-center">
+                    <p className="text-red-600 mb-2">{authError}</p>
+                    <a href="/signin" className="text-cyan-600 hover:underline">
+                        Sign in
+                    </a>
+                </div>
+            </div>
+        );
+    }
+
+    if (loading) {
+        return (
+            <div className="flex-1 flex items-center justify-center bg-slate-200 text-slate-600">
+                Loading messages...
             </div>
         );
     }
@@ -138,192 +155,111 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                             )}
                         </button>
                         {isProfileExpanded && (
-                            <div className="grid grid-cols-3 gap-3 border-t border-slate-200 px-3 py-3 text-xs">
-                                <div className="min-w-0 space-y-1">
-                                    <div className="flex items-center gap-1.5 font-semibold uppercase text-slate-500">
-                                        <Globe2 className="h-3.5 w-3.5" />
-                                        Gateway
+                            <div className="px-3 pb-3 space-y-1 text-xs">
+                                {gatewayTelemetry?.configured_webhook_url && (
+                                    <div className="flex items-center gap-2">
+                                        <Globe2 className="h-3 w-3 text-slate-400" />
+                                        <span className="text-slate-600">Webhook:</span>
+                                        <code className="font-mono text-cyan-600 truncate">
+                                            {gatewayTelemetry.configured_webhook_url}
+                                        </code>
                                     </div>
-                                    <div className="truncate font-mono text-slate-800" title={gatewayTelemetry?.configured_webhook_url || undefined}>
-                                        {gatewayTelemetry?.configured_webhook_url || "No remote endpoint"}
-                                    </div>
-                                    {gatewayTelemetry?.resolved_ip_address && (
-                                        <div className="font-mono text-slate-500">
+                                )}
+                                {gatewayTelemetry?.resolved_ip_address && (
+                                    <div className="flex items-center gap-2">
+                                        <Server className="h-3 w-3 text-slate-400" />
+                                        <span className="text-slate-600">IP:</span>
+                                        <code className="font-mono text-cyan-600">
                                             {gatewayTelemetry.resolved_ip_address}
+                                        </code>
+                                    </div>
+                                )}
+                                {commands.length > 0 && (
+                                    <div className="flex items-start gap-2">
+                                        <TerminalSquare className="h-3 w-3 text-slate-400 mt-0.5" />
+                                        <span className="text-slate-600">Commands:</span>
+                                        <div className="flex flex-wrap gap-1">
+                                            {commands.slice(0, 20).map((cmd, i) => (
+                                                <code
+                                                    key={i}
+                                                    className="px-1 rounded bg-slate-100 text-slate-700 font-mono"
+                                                >
+                                                    {cmd}
+                                                </code>
+                                            ))}
                                         </div>
-                                    )}
-                                </div>
-                                <div className="min-w-0 space-y-2">
-                                    <div className="flex items-center gap-1.5 font-semibold uppercase text-slate-500">
-                                        <TerminalSquare className="h-3.5 w-3.5" />
-                                        Commands
                                     </div>
-                                    <div className="flex flex-wrap gap-1">
-                                        {commands.length > 0 ? commands.slice(0, 8).map((command) => (
-                                            <span key={command} className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-white">
-                                                /{command.replace(/^\//, "")}
-                                            </span>
-                                        )) : (
-                                            <span className="text-slate-500">No commands indexed</span>
-                                        )}
+                                )}
+                                {infrastructureEndpoints.length > 0 && (
+                                    <div className="flex items-start gap-2">
+                                        <LucideSend className="h-3 w-3 text-slate-400 mt-0.5" />
+                                        <span className="text-slate-600">Endpoints:</span>
+                                        <div className="flex flex-wrap gap-1">
+                                            {infrastructureEndpoints.map((endpoint, i) => (
+                                                <a
+                                                    key={i}
+                                                    href={endpoint}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="px-1 rounded bg-slate-100 text-cyan-600 hover:underline font-mono text-[10px]"
+                                                >
+                                                    {endpoint}
+                                                </a>
+                                            ))}
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="min-w-0 space-y-2">
-                                    <div className="font-semibold uppercase text-slate-500">
-                                        Repository Constants
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                        {infrastructureEndpoints.length > 0 ? infrastructureEndpoints.slice(0, 6).map((endpoint) => (
-                                            <span key={endpoint} className="max-w-full truncate rounded bg-cyan-50 px-1.5 py-0.5 font-mono text-[10px] text-cyan-800" title={endpoint}>
-                                                {endpoint}
-                                            </span>
-                                        )) : (
-                                            <span className="text-slate-500">No adjacent endpoints indexed</span>
-                                        )}
-                                    </div>
-                                </div>
+                                )}
                             </div>
                         )}
                     </div>
                 )}
             </div>
-
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col space-y-3">
-                {authError && (
-                    <div className="self-center max-w-md rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-sm">
-                        <div className="font-semibold mb-1">Authentication required</div>
-                        <div className="text-xs">{authError}</div>
-                    </div>
-                )}
-                {loading && !authError && (
-                    <div className="self-center text-xs text-slate-500 italic">Loading messages…</div>
-                )}
-                {!loading && !authError && messages.length === 0 && (
-                    <div className="self-center text-xs text-slate-500 italic">No messages captured for this bot yet.</div>
-                )}
-                {messages.map((msg) => (
-                    <div
-                        key={msg.id}
-                        className={`flex flex-col max-w-[70%] p-2 rounded-lg shadow-sm ${msg.sender_name === "me" || msg.sender_name?.toLowerCase().includes("bot")
-                            ? "self-end bg-[#DCF8C6] rounded-tr-none"
-                            : "self-start bg-white rounded-tl-none"
-                            }`}
-                    >
-                        <span className="text-xs font-bold text-sky-600 mb-0.5">
-                            {msg.sender_name || "Unknown"}
-                        </span>
-                        <MediaRenderer msg={msg} />
-                        <p className="text-sm text-slate-800 whitespace-pre-wrap leading-snug break-all">
-                            {msg.content}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {messages.filter(m => m.content).map((message, i) => (
+                    <div key={message.id || i} className="bg-white rounded-lg p-2 shadow-sm">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-semibold text-slate-800">
+                                {message.sender_pseudonym || "Unknown"}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                                {new Date(message.created_at).toLocaleString()}
+                            </span>
+                        </div>
+                        <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                            {message.content}
                         </p>
-                        <span className="text-[10px] text-slate-400 self-end mt-1">
-                            {msg.created_at
-                                ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                : ""}
-                        </span>
+                        {message.media_type && message.media_type !== "text" && (
+                            <div className="mt-1 text-xs text-cyan-600 flex items-center gap-1">
+                                <FileDown className="h-3 w-3" />
+                                {message.media_type}
+                            </div>
+                        )}
                     </div>
                 ))}
                 <div ref={bottomRef} />
-            </div>
-
-            {/* Input area (ReadOnly) */}
-            <div className="p-3 bg-white border-t flex items-center gap-2 text-slate-400 text-sm italic justify-center">
-                <LucideSend className="w-4 h-4" />
-                <span>Read-only Mode (Exfiltrated Data)</span>
             </div>
         </div>
     );
 }
 
-type ChatMessage = {
-    id: string;
-    sender_name?: string | null;
-    content?: string | null;
-    created_at?: string | null;
-    media_type?: string | null;
-    file_meta?: Record<string, unknown> | null;
-};
-
-function MediaRenderer({ msg }: { msg: ChatMessage }) {
-    const mediaType = msg.media_type;
-    const fileId = (msg.file_meta as Record<string, unknown>)?.file_id;
-
-    if (!mediaType || mediaType === "text" || !fileId) return null;
-
-    const mediaUrl = `${API_BASE_URL}/media/${msg.id}`;
-
-    if (mediaType === "photo") {
-        return (
-            <img
-                src={mediaUrl}
-                alt="Attached photo"
-                className="rounded-md max-w-full max-h-64 object-cover mb-1.5 cursor-pointer"
-                loading="lazy"
-                onClick={() => window.open(mediaUrl, "_blank")}
-                onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                }}
-            />
-        );
+function collectInfrastructureEndpoints(context: InfrastructureContext | undefined): string[] {
+    if (!context) return [];
+    const endpoints: string[] = [];
+    if (context.api_urls) {
+        endpoints.push(...context.api_urls.filter((u): u is string => Boolean(u)));
     }
-
-    if (mediaType === "video") {
-        return (
-            <video
-                src={mediaUrl}
-                controls
-                className="rounded-md max-w-full max-h-64 mb-1.5"
-                preload="metadata"
-            />
-        );
+    if (context.webhook_urls) {
+        endpoints.push(...context.webhook_urls.filter((u): u is string => Boolean(u)));
     }
-
-    if (mediaType === "audio") {
-        return (
-            <audio src={mediaUrl} controls className="w-full mb-1.5" preload="metadata" />
-        );
-    }
-
-    // document / other
-    const fileName = (msg.file_meta as Record<string, unknown>)?.file_name;
-    return (
-        <a
-            href={mediaUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-slate-100 rounded-md px-3 py-2 mb-1.5 text-sm text-sky-700 hover:bg-slate-200 transition-colors"
-        >
-            <FileDown className="h-4 w-4 shrink-0" />
-            <span className="truncate">{(fileName as string) || "Download document"}</span>
-        </a>
-    );
+    return [...new Set(endpoints)];
 }
 
-function collectInfrastructureEndpoints(context?: InfrastructureContext): string[] {
-    if (!context) {
-        return [];
-    }
-
-    const endpoints = new Set<string>();
-    context.co_located_endpoints?.forEach((value) => {
-        if (value) endpoints.add(value);
-    });
-
-    Object.entries(context).forEach(([key, value]) => {
-        if (!/(?:_HOST|_DOMAIN|_URL|_IP|HOST|DOMAIN|URL|IP)$/i.test(key)) {
-            return;
-        }
-        if (typeof value === "string" && value.trim()) {
-            endpoints.add(value.trim());
-        }
-        if (Array.isArray(value)) {
-            value.forEach((item) => {
-                if (typeof item === "string" && item.trim()) {
-                    endpoints.add(item.trim());
-                }
-            });
-        }
-    });
-
-    return Array.from(endpoints).sort();
+interface ChatMessage {
+    id: string;
+    credential_id: string;
+    sender_pseudonym: string | null;
+    content: string | null;
+    media_type: string | null;
+    is_broadcasted: boolean;
+    created_at: string;
 }
