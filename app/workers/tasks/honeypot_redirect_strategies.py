@@ -21,7 +21,9 @@ from app.core.database import db
 from app.core.security import security
 from app.core.redis_srv import redis_srv
 from app.core.database import db
-from app.core.logger import logger
+from app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class HoneypotRedirectStrategies:

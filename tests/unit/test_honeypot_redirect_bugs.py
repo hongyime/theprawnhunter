@@ -357,3 +357,135 @@ async def test_callback_failure_does_not_mark_redirected(monkeypatch):
     assert result.get("sent") is False or result.get("status") == "callback_handled"
     assert not called_update, "update_redirect_record must NOT be called on callback failure"
     assert not called_mark, "mark_redirect_sent must NOT be called on callback failure"
+
+
+# ---------------------------------------------------------------------------
+# BUG 6: callback_query branch must return early (no sendMessage fallthrough)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_callback_branch_returns_early_no_sendmessage(monkeypatch):
+    """callback_query branch must return with status='callback_handled' and
+    must NOT reach the sendMessage path (no httpx.AsyncClient.post for sendMessage)."""
+    import app.workers.tasks.flow_tasks as ft
+    from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+
+    sendmessage_calls: list[str] = []
+
+    async def fake_get_bot_token(_cred_id):
+        return "123456:ABCfaketoken"
+
+    async def fake_send_callback_hijack(*_a, **_kw):
+        return True  # simulate success
+
+    async def fake_update_redirect_record(*_a, **_kw):
+        pass
+
+    def fake_mark_redirect_sent(*_a, **_kw):
+        pass
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def post(self, url, **_kw):
+            sendmessage_calls.append(url)
+            raise AssertionError(f"sendMessage must not be called for callback_query; url={url}")
+
+    monkeypatch.setattr(HoneypotRedirectStrategies, "get_bot_token", staticmethod(fake_get_bot_token))
+    monkeypatch.setattr(HoneypotRedirectStrategies, "send_callback_hijack", staticmethod(fake_send_callback_hijack))
+    monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
+    monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
+
+    with (
+        patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
+            return_value=types.SimpleNamespace(data=[{
+                "payload": {"callback_query": {"id": "cb-999", "from": {"id": 222}}}
+            }])
+        )),
+        patch("httpx.AsyncClient", FakeClient),
+    ):
+        result = await ft._honeypot_redirect_one_logic(
+            update_id="upd-cb-early",
+            credential_id="cred-cb-early",
+            user_id=222,
+            chat_id=222,
+            update_type="callback_query",
+        )
+
+    assert result["status"] == "callback_handled", (
+        f"Expected status='callback_handled', got {result!r}"
+    )
+    assert not sendmessage_calls, (
+        "sendMessage must NOT be called for callback_query — fallthrough bug still present"
+    )
+
+
+# ---------------------------------------------------------------------------
+# BUG 6b: inline_query branch must return early (no sendMessage fallthrough)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
+    """inline_query branch must return with status='inline_handled' and
+    must NOT reach the sendMessage path (no httpx.AsyncClient.post for sendMessage)."""
+    import app.workers.tasks.flow_tasks as ft
+    from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+
+    sendmessage_calls: list[str] = []
+
+    async def fake_get_bot_token(_cred_id):
+        return "123456:ABCfaketoken"
+
+    async def fake_send_inline_hijack(*_a, **_kw):
+        return True  # simulate success
+
+    async def fake_update_redirect_record(*_a, **_kw):
+        pass
+
+    def fake_mark_redirect_sent(*_a, **_kw):
+        pass
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def post(self, url, **_kw):
+            sendmessage_calls.append(url)
+            raise AssertionError(f"sendMessage must not be called for inline_query; url={url}")
+
+    monkeypatch.setattr(HoneypotRedirectStrategies, "get_bot_token", staticmethod(fake_get_bot_token))
+    monkeypatch.setattr(HoneypotRedirectStrategies, "send_inline_hijack", staticmethod(fake_send_inline_hijack))
+    monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
+    monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
+
+    with (
+        patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
+            return_value=types.SimpleNamespace(data=[{
+                "payload": {"inline_query": {"id": "iq-999", "query": "test", "from": {"id": 333}}}
+            }])
+        )),
+        patch("httpx.AsyncClient", FakeClient),
+    ):
+        result = await ft._honeypot_redirect_one_logic(
+            update_id="upd-iq-early",
+            credential_id="cred-iq-early",
+            user_id=333,
+            chat_id=333,
+            update_type="inline_query",
+        )
+
+    assert result["status"] == "inline_handled", (
+        f"Expected status='inline_handled', got {result!r}"
+    )
+    assert not sendmessage_calls, (
+        "sendMessage must NOT be called for inline_query — fallthrough bug still present"
+    )
