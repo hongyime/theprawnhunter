@@ -296,6 +296,12 @@ app.conf.update(
             "schedule": crontab(minute=20, hour=3),
             "kwargs": {"max_credentials": 500},
         },
+        # Persistent Insight Queue producers — bounded and idempotent.
+        "produce-findings-15min": {
+            "task": "flow.produce_findings",
+            "schedule": crontab(minute="*/15"),
+            "kwargs": {"credential_limit": 2000, "message_limit": 50000},
+        },
         # Source quality scorecard — weekly on Mondays @ 07:30 UTC
         "source-quality-weekly": {
             "task": "flow.source_quality_report",

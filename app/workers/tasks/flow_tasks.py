@@ -2674,6 +2674,31 @@ async def _reclassify_dark_matter_logic(max_credentials: int) -> dict:
     }
 
 
+@app.task(name="flow.produce_findings")
+def produce_findings(credential_limit: int = 2000, message_limit: int = 50000):
+    """Idempotently compress a bounded recent window into persistent findings."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(
+        _produce_findings_logic(credential_limit, message_limit)
+    )
+
+
+async def _produce_findings_logic(
+    credential_limit: int = 2000, message_limit: int = 50000
+) -> dict:
+    from app.services.findings import produce_recent_findings
+
+    try:
+        return await produce_recent_findings(
+            credential_limit=credential_limit,
+            message_limit=message_limit,
+        )
+    except Exception as exc:
+        logger.exception("[Findings] producer run failed")
+        return {"status": "failed", "error": str(exc)[:300]}
+
+
 @app.task(name="flow.source_quality_report")
 def source_quality_report():
     """Rank OSINT sources by validated + live + message-rich yield.
@@ -2769,12 +2794,28 @@ async def _cluster_c2_operators_logic() -> dict:
     try:
         res = await async_execute(
             db.table("discovered_credentials")
-            .select("id, bot_username, meta")
+            .select(
+                "id,bot_username,status,source,meta,created_at,updated_at,"
+                "collection_yield_score,chat_member_count"
+            )
             .not_.is_("meta->>webhook_url", "null")
             .limit(2000)
         )
     except Exception as e:
         return {"status": "db_lookup_failed", "error": str(e)[:200]}
+
+    finding_count = 0
+    try:
+        from app.services.findings import (
+            infrastructure_cluster_candidates,
+            persist_candidates,
+        )
+
+        cluster_findings = infrastructure_cluster_candidates(res.data or [])
+        await persist_candidates(cluster_findings)
+        finding_count = len(cluster_findings)
+    except Exception as exc:
+        logger.warning("[C2Clusters] persistent finding upsert failed: %s", exc)
 
     by_san: dict = defaultdict(list)
     by_org: dict = defaultdict(list)
@@ -2832,6 +2873,7 @@ async def _cluster_c2_operators_logic() -> dict:
         "san_clusters": len([k for k, v in by_san.items() if len(v) >= 2]),
         "org_clusters": len([k for k, v in by_org.items() if len(v) >= 2]),
         "hostname_clusters": len([k for k, v in by_hostname.items() if len(v) >= 2]),
+        "findings_upserted": finding_count,
     }
 
 
@@ -3755,12 +3797,17 @@ def attribution_graph_report():
 
 async def _attribution_graph_report_logic() -> dict:
     from collections import defaultdict
+    from app.services.findings import (
+        cross_bot_pattern_candidates,
+        persist_candidates,
+        pseudonymize_subject,
+    )
 
     # Pull sender_user_id → credential_id pairs (all-time, bounded to recent 50k rows)
     try:
         res = await async_execute(
             db.table("exfiltrated_messages")
-            .select("sender_user_id, credential_id")
+            .select("id,sender_user_id,credential_id,created_at")
             .not_.is_("sender_user_id", "null")
             .order("created_at", desc=True)
             .limit(50000)
@@ -3771,6 +3818,14 @@ async def _attribution_graph_report_logic() -> dict:
     rows = res.data or []
     if not rows:
         return {"status": "no_data_with_sender_user_id"}
+
+    finding_count = 0
+    try:
+        cross_bot_findings = cross_bot_pattern_candidates(rows)
+        await persist_candidates(cross_bot_findings)
+        finding_count = len(cross_bot_findings)
+    except Exception as exc:
+        logger.warning("[AttributionGraph] persistent finding upsert failed: %s", exc)
 
     # Group: user_id → set of credential_ids they've interacted with
     user_bots: dict = defaultdict(set)
@@ -3837,6 +3892,7 @@ async def _attribution_graph_report_logic() -> dict:
         "**Top cross-bot users:**",
     ]
     for uid, creds in ranked[:10]:
+        subject_pseudonym = pseudonymize_subject(uid)
         bot_names = [cred_c2.get(c, {}).get("bot", c[:8]) for c in list(creds)[:5]]
         c2_hosts = set()
         for c in creds:
@@ -3849,7 +3905,7 @@ async def _attribution_graph_report_logic() -> dict:
                     pass
         c2_str = f" → C2: {', '.join(list(c2_hosts)[:3])}" if c2_hosts else ""
         lines.append(
-            f"• `user:{uid}` × {len(creds)} bots "
+            f"• `subject:{subject_pseudonym}` × {len(creds)} bots "
             f"({', '.join(bot_names[:3])}{'...' if len(bot_names) > 3 else ''})"
             f"{c2_str}"
         )
@@ -3866,6 +3922,7 @@ async def _attribution_graph_report_logic() -> dict:
         "unique_users": len(user_bots),
         "multi_bot_users": len(multi_bot_users),
         "top_user_bots_count": len(ranked[0][1]) if ranked else 0,
+        "findings_upserted": finding_count,
     }
 
 
