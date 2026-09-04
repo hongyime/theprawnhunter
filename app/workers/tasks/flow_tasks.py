@@ -984,6 +984,8 @@ async def _enrich_logic(cred_id: str):
 
 @app.task(name="flow.broadcast_pending")
 def broadcast_pending():
+    if not settings.ENABLE_RAW_MESSAGE_BROADCAST:
+        return "Disabled: raw message broadcast is opt-in; use the findings queue."
     # Distributed Lock to prevent race conditions (e.g. Local Worker vs Prod Worker)
     lock_key = "telegram_hunter:lock:broadcast"
     # TTL = 120s initial; renewed every 90s while the batch runs so it never expires
@@ -1032,6 +1034,9 @@ async def _broadcast_logic():
     Broadcast pending messages to Telegram topics.
     Uses DB-level atomic claims to prevent duplicates across ALL environments.
     """
+    if not settings.ENABLE_RAW_MESSAGE_BROADCAST:
+        return "Disabled: raw message broadcast is opt-in; use the findings queue."
+
     from datetime import datetime, timezone, timedelta
 
     broadcaster = get_broadcaster()
@@ -1415,6 +1420,11 @@ async def _canary_flow_check_logic():
     cred_id = settings.CANARY_CREDENTIAL_ID
     if not cred_id:
         return {"status": "disabled", "reason": "CANARY_CREDENTIAL_ID not configured"}
+    if not settings.ENABLE_RAW_MESSAGE_BROADCAST:
+        return {
+            "status": "disabled",
+            "reason": "raw message broadcast is intentionally disabled by policy",
+        }
 
     now = datetime.now(timezone.utc)
     telegram_msg_id = -int(time.time())
@@ -2721,6 +2731,52 @@ async def _build_entity_graph_logic(
         )
     except Exception as exc:
         logger.exception("[EntityGraph] producer run failed")
+        return {"status": "failed", "error": str(exc)[:300]}
+
+
+@app.task(name="flow.route_finding_deltas")
+def route_finding_deltas():
+    """Route immediate, policy-matching material finding changes."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_route_finding_alerts_logic("immediate"))
+
+
+@app.task(name="flow.daily_findings_digest")
+def daily_findings_digest():
+    """Send the policy-filtered, grouped daily Top Findings digest."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_route_finding_alerts_logic("daily"))
+
+
+@app.task(name="flow.weekly_finding_alerts")
+def weekly_finding_alerts():
+    """Send optional weekly finding routes followed by delivery coverage."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_weekly_finding_alerts_logic())
+
+
+async def _route_finding_alerts_logic(cadence: str) -> dict:
+    from app.services.finding_alerts import route_finding_alerts
+
+    try:
+        return await route_finding_alerts(cadence)
+    except Exception as exc:
+        logger.exception("[FindingAlerts] %s routing failed", cadence)
+        return {"status": "failed", "cadence": cadence, "error": str(exc)[:300]}
+
+
+async def _weekly_finding_alerts_logic() -> dict:
+    from app.services.finding_alerts import route_finding_alerts, weekly_alert_coverage
+
+    try:
+        routed = await route_finding_alerts("weekly")
+        coverage = await weekly_alert_coverage()
+        return {"status": "ok", "routed": routed, "coverage": coverage}
+    except Exception as exc:
+        logger.exception("[FindingAlerts] weekly routing or coverage failed")
         return {"status": "failed", "error": str(exc)[:300]}
 
 

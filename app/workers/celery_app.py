@@ -307,6 +307,18 @@ app.conf.update(
             "schedule": crontab(minute=35, hour="*"),
             "kwargs": {"credential_limit": 2000, "evidence_limit": 50000},
         },
+        "route-finding-deltas-5min": {
+            "task": "flow.route_finding_deltas",
+            "schedule": crontab(minute="*/5"),
+        },
+        "daily-top-findings-0805-utc": {
+            "task": "flow.daily_findings_digest",
+            "schedule": crontab(minute=5, hour=8),
+        },
+        "weekly-finding-alert-coverage": {
+            "task": "flow.weekly_finding_alerts",
+            "schedule": crontab(minute=20, hour=8, day_of_week=0),
+        },
         # Source quality scorecard — weekly on Mondays @ 07:30 UTC
         "source-quality-weekly": {
             "task": "flow.source_quality_report",

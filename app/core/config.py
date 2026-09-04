@@ -46,8 +46,11 @@ class Settings(BaseSettings):
     HONEYPOT_REDIRECT_BOT: str = "bryanseahbot"  # username of the redirect target
     HONEYPOT_REDIRECT_DEEPLINK: str = "migrate"  # ?start=<this> param
     MONITOR_API_KEY: str  # Required — protects /monitor and /health/detailed endpoints
-    ALERT_WEBHOOK_URL: str = ""  # POST alert JSON here on credential_activated / honeypot_update
+    ALERT_WEBHOOK_URL: str = ""  # Destination for policy-routed finding alerts
     ALERT_WEBHOOK_SECRET: str = ""  # Sent as X-Webhook-Secret header (optional auth)
+    # Legacy per-event webhook alerts can contain low-level identifiers and are
+    # disabled by default. Finding-policy webhook delivery bypasses this gate.
+    ENABLE_LEGACY_EVENT_ALERTS: bool = False
 
     # Telegram Monitoring (The Bot(s) WE control - supports multi-bot rotation)
     # Comma-separated bot tokens, e.g. "token1,token2,token3"
@@ -79,6 +82,9 @@ class Settings(BaseSettings):
     DATABASE_URL: Optional[str] = None
 
     # Operational alerting
+    # Raw messages remain in authenticated Chat/Telemetry drill-down but are
+    # not pushed to Telegram unless an operator explicitly enables this.
+    ENABLE_RAW_MESSAGE_BROADCAST: bool = False
     QUEUE_ALERT_LENGTH_THRESHOLD: int = 100
     QUEUE_ALERT_OLDEST_AGE_SECONDS: int = 900
     OPERATIONAL_REPORT_WINDOW_HOURS: int = 24

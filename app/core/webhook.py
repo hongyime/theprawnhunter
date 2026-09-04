@@ -1,10 +1,9 @@
 """
 Outbound alert webhook dispatcher.
-POSTs a structured JSON payload to ALERT_WEBHOOK_URL on key pipeline events.
+POSTs structured JSON payloads to ALERT_WEBHOOK_URL.
 Fire-and-forget: failures are logged at WARNING level and never raised.
 """
 import logging
-from datetime import datetime, timezone
 
 import httpx
 
@@ -13,15 +12,19 @@ from app.core.config import settings
 logger = logging.getLogger("webhook")
 
 
-async def dispatch_alert(payload: dict) -> None:
+async def dispatch_alert(payload: dict, *, policy_routed: bool = False) -> bool:
     """
     POST payload as JSON to ALERT_WEBHOOK_URL.
-    No-op when ALERT_WEBHOOK_URL is unset.
+    Legacy per-event alerts are default-off. Policy-routed finding alerts are
+    allowed whenever ALERT_WEBHOOK_URL is configured.
     All exceptions are caught and logged — never propagates.
     """
     url = settings.ALERT_WEBHOOK_URL
     if not url:
-        return
+        return False
+    if not policy_routed and not settings.ENABLE_LEGACY_EVENT_ALERTS:
+        logger.debug("[Webhook] Legacy event alert suppressed by default-off gate")
+        return False
 
     headers = {"Content-Type": "application/json"}
     if settings.ALERT_WEBHOOK_SECRET:
@@ -39,5 +42,7 @@ async def dispatch_alert(payload: dict) -> None:
             r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             logger.debug(f"[Webhook] Alert dispatched to {host} → {r.status_code}")
+            return True
     except Exception as exc:
         logger.warning(f"[Webhook] Dispatch to {host} failed: {exc}")
+        return False
