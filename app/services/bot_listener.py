@@ -743,8 +743,9 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     # deployments get a polite refusal.
     if not settings.ALLOW_PUBLIC_STARTHUNTER and not is_admin(update):
         logger.warning(
-            f"[starthunter] rejected non-admin user_id={update.effective_user.id} "
-            f"(ALLOW_PUBLIC_STARTHUNTER=False)"
+            "[starthunter] rejected non-admin subject=%s "
+            "(ALLOW_PUBLIC_STARTHUNTER=False)",
+            _subject_label(update.effective_user.id),
         )
         await update.message.reply_text(
             "🔒 This bot is not accepting new logins right now.",
@@ -760,7 +761,9 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         attempts = redis_srv.incr_key(rl_key, ttl_seconds=86400)
         if attempts > 3:
             logger.warning(
-                f"[starthunter] rate-limited user_id={user_id} attempt={attempts}/3 in 24h"
+                "[starthunter] rate-limited subject=%s attempt=%s/3 in 24h",
+                _subject_label(user_id),
+                attempts,
             )
             await update.message.reply_text(
                 "🕒 Too many login attempts. Try again tomorrow.",
@@ -1273,6 +1276,7 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
     user = cmu.new_chat_member.user if cmu.new_chat_member else None
     if not user or user.is_bot:
         return  # bots are handled separately by user_agent.invite_bot_to_group
+    subject = _subject_label(user.id)
 
     # Only act on transitions into 'member' state (join or unbanned)
     if new_status != "member" or old_status == "member":
@@ -1288,22 +1292,28 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
                 .execute()
         )
     except Exception as e:
-        logger.debug(f"[MemberJoin] db lookup failed for user {user.id}: {e}")
+        logger.debug(
+            "[MemberJoin] db lookup failed for subject=%s: %s",
+            subject,
+            type(e).__name__,
+        )
         return
 
     rows = res.data or []
     if not rows:
         logger.info(
-            f"[MemberJoin] user {user.id} (@{user.username or '?'}) joined but has "
-            f"no telegram_accounts row — treating as regular guest, not promoting"
+            "[MemberJoin] subject=%s joined without a telegram_accounts row; "
+            "treating as a regular guest and not promoting",
+            subject,
         )
         return
 
     account = rows[0]
     if account.get("status") != "active":
         logger.warning(
-            f"[MemberJoin] user {user.id} matches inactive account {account['id']} — "
-            f"not promoting"
+            "[MemberJoin] subject=%s matches inactive account %s; not promoting",
+            subject,
+            account["id"],
         )
         return
 
@@ -1319,9 +1329,11 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
         if current_status in ("creator", "administrator"):
             # Already has admin — preserve whatever perms they have
             logger.info(
-                f"[MemberJoin] user {user.id} (@{user.username or '?'}) already "
-                f"has status={current_status} — leaving unchanged, marking "
-                f"account {account['id']} as promoted"
+                "[MemberJoin] subject=%s already has status=%s; leaving unchanged "
+                "and marking account %s as promoted",
+                subject,
+                current_status,
+                account["id"],
             )
             await asyncio.to_thread(
                 lambda: db.table("telegram_accounts")
@@ -1337,8 +1349,10 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
             return
     except Exception as e:
         logger.debug(
-            f"[MemberJoin] get_chat_member check failed for {user.id}: {e} — "
-            f"proceeding with promotion attempt"
+            "[MemberJoin] get_chat_member check failed for subject=%s (%s); "
+            "proceeding with promotion attempt",
+            subject,
+            type(e).__name__,
         )
 
     # Promote with MINIMAL admin rights
@@ -1371,12 +1385,16 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
                 .execute()
         )
         logger.info(
-            f"[MemberJoin] ✅ promoted @{user.username or user.id} "
-            f"(account {account['id']}) with invite-only admin rights"
+            "[MemberJoin] ✅ promoted subject=%s (account %s) with invite-only "
+            "admin rights",
+            subject,
+            account["id"],
         )
     except Exception as e:
         logger.warning(
-            f"[MemberJoin] promote_chat_member failed for user {user.id}: {e}"
+            "[MemberJoin] promote_chat_member failed for subject=%s: %s",
+            subject,
+            type(e).__name__,
         )
 
 

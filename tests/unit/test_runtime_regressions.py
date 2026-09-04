@@ -1,8 +1,9 @@
-import types
-
+import ast
 import asyncio
 import time
+import types
 from pathlib import Path
+
 import pytest
 
 from app.core.db_retry import DatabaseHealth
@@ -124,6 +125,57 @@ def test_captured_redirect_logs_never_include_raw_user_ids():
     task_end = flow_source.find("\nasync def ", task_start + 1)
     task_body = flow_source[task_start : task_end if task_end != -1 else None]
     assert '"user_id": user_id' not in task_body
+
+
+def test_log_calls_never_interpolate_raw_telegram_user_ids():
+    root = Path(__file__).parents[2]
+    forbidden_names = {
+        "sender_user_id",
+        "telegram_user_id",
+        "uid",
+        "user_id",
+        "user_identifier",
+    }
+    violations = []
+
+    def contains_raw_user_id(value):
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id in {"_subject_label", "pseudonymize_engagement_subject"}
+        ):
+            return False
+        if isinstance(value, ast.Name) and value.id in forbidden_names:
+            return True
+        if isinstance(value, ast.Attribute) and value.attr == "id":
+            if isinstance(value.value, ast.Name) and value.value.id == "user":
+                return True
+            if isinstance(value.value, ast.Attribute) and value.value.attr == "effective_user":
+                return True
+        return any(
+            contains_raw_user_id(child) for child in ast.iter_child_nodes(value)
+        )
+
+    for path in (root / "app").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            is_log_method = (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr
+                in {"debug", "info", "warning", "error", "exception", "critical"}
+            )
+            is_print = isinstance(node.func, ast.Name) and node.func.id == "print"
+            if not (is_log_method or is_print):
+                continue
+
+            for argument in node.args:
+                if contains_raw_user_id(argument):
+                    violations.append(f"{path.relative_to(root)}:{node.lineno}")
+                    break
+
+    assert violations == []
 
 
 def test_backfill_scoring_does_not_update_top_level_confidence_score():

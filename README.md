@@ -309,7 +309,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-**176 tests** (168 unit + 5 integration + 3 top-level) across unit, integration, API, security, and Supabase R/W suites — plus scrape classification, broadcast retry accounting, queue monitor, canary probe, and Telethon lifecycle coverage added by the reliability rebuild.
+**383 tests** (317 unit + 7 integration + 59 top-level) across unit, integration, API, security, and Supabase R/W suites — plus scrape classification, broadcast retry accounting, queue monitor, canary probe, and Telethon lifecycle coverage added by the reliability rebuild.
 
 ### Run specific suites
 

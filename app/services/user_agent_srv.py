@@ -909,13 +909,19 @@ class UserAgentService:
                     other=True, manage_topics=True, anonymous=anonymous
                 )
                 await self.client(EditAdminRequest(channel=group_entity, user_id=user_entity, admin_rights=admin_rights, rank=title))
-                logger.info(f"    👑 [UserAgent] Promoted {user_identifier} to admin (anon={anonymous}) in group.")
+                logger.info(
+                    "    👑 [UserAgent] Promoted account to admin (anon=%s) in group.",
+                    anonymous,
+                )
                 return True
             except errors.FloodWaitError as e:
                 await self._handle_flood_error(e)
                 return False
             except Exception as e:
-                logger.error(f"    ❌ [UserAgent] Promote failed for {user_identifier}: {e}")
+                logger.error(
+                    "    ❌ [UserAgent] Promote failed: %s",
+                    type(e).__name__,
+                )
                 return False
             finally: await self._disconnect()
 

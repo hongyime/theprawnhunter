@@ -3824,11 +3824,15 @@ async def _audit_user_agent_group_membership_logic() -> dict:
                             pass
                 else:
                     logger.debug(
-                        f"[MembershipAudit] getChatMember non-ok for user_id={user_id}: "
-                        f"{r.status_code} {r.text[:200]}"
+                        "[MembershipAudit] getChatMember returned HTTP %s for "
+                        "an account record",
+                        r.status_code,
                     )
             except Exception as e:
-                logger.debug(f"[MembershipAudit] check failed for {user_id}: {e}")
+                logger.debug(
+                    "[MembershipAudit] check failed for an account record: %s",
+                    type(e).__name__,
+                )
                 continue
 
     lines = [
