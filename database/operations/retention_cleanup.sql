@@ -42,6 +42,11 @@ BEGIN
     v_results := v_results || jsonb_build_object('keepalive_log', v_count);
 
     SELECT COUNT(*) INTO v_count
+    FROM public.engagement_events AS engagement
+    WHERE engagement.expires_at < v_now;
+    v_results := v_results || jsonb_build_object('engagement_events', v_count);
+
+    SELECT COUNT(*) INTO v_count
     FROM public.telemetry_indicators AS indicator
     WHERE indicator.first_seen_at < v_now - INTERVAL '180 days'
        OR EXISTS (
@@ -188,6 +193,19 @@ BEGIN
     INSERT INTO public.retention_archive (
         source_table, source_id, source_recorded_at, payload, archived_at, archive_batch_id
     )
+    SELECT 'engagement_events', engagement.id::text, engagement.occurred_at,
+           to_jsonb(engagement), v_now, v_batch_id
+    FROM public.engagement_events AS engagement
+    WHERE engagement.expires_at < v_now
+    ON CONFLICT (source_table, source_id) DO UPDATE SET
+        source_recorded_at = EXCLUDED.source_recorded_at,
+        payload = EXCLUDED.payload,
+        archived_at = EXCLUDED.archived_at,
+        archive_batch_id = EXCLUDED.archive_batch_id;
+
+    INSERT INTO public.retention_archive (
+        source_table, source_id, source_recorded_at, payload, archived_at, archive_batch_id
+    )
     SELECT 'finding_summaries', finding.finding_id::text, finding.last_seen_at,
            to_jsonb(finding), v_now, v_batch_id
     FROM public.finding_summaries AS finding
@@ -261,6 +279,13 @@ BEGIN
       AND archive.source_id = keepalive.id::text
       AND archive.payload = to_jsonb(keepalive)
       AND keepalive.created_at < v_now - INTERVAL '7 days';
+
+    DELETE FROM public.engagement_events AS engagement
+    USING public.retention_archive AS archive
+    WHERE archive.source_table = 'engagement_events'
+      AND archive.source_id = engagement.id::text
+      AND archive.payload = to_jsonb(engagement)
+      AND engagement.expires_at < v_now;
 
     DELETE FROM public.finding_summaries AS finding
     USING public.retention_archive AS archive

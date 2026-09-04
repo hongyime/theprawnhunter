@@ -2699,6 +2699,31 @@ async def _produce_findings_logic(
         return {"status": "failed", "error": str(exc)[:300]}
 
 
+@app.task(name="flow.build_entity_graph")
+def build_entity_graph(credential_limit: int = 2000, evidence_limit: int = 50000):
+    """Idempotently materialize the bounded typed evidence graph."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(
+        _build_entity_graph_logic(credential_limit, evidence_limit)
+    )
+
+
+async def _build_entity_graph_logic(
+    credential_limit: int = 2000, evidence_limit: int = 50000
+) -> dict:
+    from app.services.entities import produce_entity_graph
+
+    try:
+        return await produce_entity_graph(
+            credential_limit=credential_limit,
+            evidence_limit=evidence_limit,
+        )
+    except Exception as exc:
+        logger.exception("[EntityGraph] producer run failed")
+        return {"status": "failed", "error": str(exc)[:300]}
+
+
 @app.task(name="flow.source_quality_report")
 def source_quality_report():
     """Rank OSINT sources by validated + live + message-rich yield.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -74,10 +75,16 @@ def canonicalize_hostname(value: str | None) -> str | None:
         return None
 
 
-def pseudonymize_subject(subject: Any) -> str:
+def pseudonymize_subject(subject: Any, secret: str | None = None) -> str:
     """Create a stable one-way label without persisting the raw Telegram user ID."""
+    if secret is None:
+        from app.core.config import settings
+
+        secret = settings.PSEUDONYMIZATION_KEY or settings.ENCRYPTION_KEY
+    if not secret:
+        raise ValueError("PSEUDONYMIZATION_KEY or ENCRYPTION_KEY is required")
     material = f"{_SUBJECT_NAMESPACE}:{subject}".encode()
-    return hashlib.sha256(material).hexdigest()[:16]
+    return hmac.new(secret.encode(), material, hashlib.sha256).hexdigest()[:24]
 
 
 def _evidence_key(evidence_type: str, source_table: str, source_id: str) -> str:

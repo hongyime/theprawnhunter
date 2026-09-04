@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # decrypt ciphertext that predates the current ENCRYPTION_KEY. See
     # app/core/security.py for rotation runbook.
     ENCRYPTION_KEY_LEGACY: str = ""
+    # Stable HMAC secret for pseudonymous analyst/funnel identifiers. Keep this
+    # stable across encryption-key rotations; falls back to ENCRYPTION_KEY for
+    # backward-compatible deployments.
+    PSEUDONYMIZATION_KEY: str = ""
 
     # If False (default), /starthunter is only usable by whitelisted admins
     # in DM. If True, ANY Telegram user can DM the login bot and add their
@@ -215,6 +219,13 @@ class Settings(BaseSettings):
         # Fernet keys are 44 characters (32 bytes base64 encoded)
         if len(v) != 44:
             raise ValueError('ENCRYPTION_KEY must be 44 characters (Fernet key)')
+        return v
+
+    @field_validator('PSEUDONYMIZATION_KEY')
+    @classmethod
+    def validate_pseudonymization_key(cls, v: str) -> str:
+        if v and len(v) < 32:
+            raise ValueError('PSEUDONYMIZATION_KEY must be at least 32 characters when set')
         return v
 
     model_config = SettingsConfigDict(

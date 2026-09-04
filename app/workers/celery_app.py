@@ -302,6 +302,11 @@ app.conf.update(
             "schedule": crontab(minute="*/15"),
             "kwargs": {"credential_limit": 2000, "message_limit": 50000},
         },
+        "build-entity-graph-hourly": {
+            "task": "flow.build_entity_graph",
+            "schedule": crontab(minute=35, hour="*"),
+            "kwargs": {"credential_limit": 2000, "evidence_limit": 50000},
+        },
         # Source quality scorecard — weekly on Mondays @ 07:30 UTC
         "source-quality-weekly": {
             "task": "flow.source_quality_report",

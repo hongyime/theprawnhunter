@@ -72,6 +72,7 @@ def test_every_source_delete_requires_matching_current_archive_snapshot():
         "audit_logs": "id",
         "honeypot_updates": "id",
         "keepalive_log": "id",
+        "engagement_events": "id",
         "finding_summaries": "finding_id",
     }
     for table, identifier in expected_tables.items():

@@ -158,7 +158,7 @@ def is_admin(update: Update) -> bool:
             )
             return True
         logger.warning(
-            f"[is_admin] anonymous-admin id={user.id} outside monitor group "
+            "[is_admin] anonymous-admin outside monitor group "
             f"(chat_id={chat_id}) — rejected"
         )
         return False
@@ -174,14 +174,28 @@ def is_admin(update: Update) -> bool:
             f"(usernames are reassignable, insecure): {non_numeric}"
         )
 
-    logger.info(f"🔍 Checking admin for {user.id} (@{user.username}). Whitelist: {numeric_whitelist}")
+    subject = _subject_label(user.id)
+    logger.info(
+        "🔍 Checking admin for subject=%s against %d numeric whitelist entries.",
+        subject,
+        len(numeric_whitelist),
+    )
 
     # 2. Check numeric ID
     if str(user.id) in numeric_whitelist:
-        logger.info(f"✅ User ID {user.id} matched in whitelist.")
+        logger.info("✅ subject=%s matched the numeric whitelist.", subject)
         return True
 
     return False
+
+def _subject_label(user_id: object) -> str:
+    try:
+        from app.services.engagement import pseudonymize_engagement_subject
+
+        return pseudonymize_engagement_subject(user_id)[:12]
+    except Exception:
+        return "redacted"
+
 
 def _get_other_bot_usernames(current_bot_username: str) -> list[str]:
     """Returns usernames of OTHER available bots (excluding current and locked ones)."""
@@ -199,9 +213,16 @@ def _get_all_bot_usernames_except(current_bot_username: str) -> list[str]:
     ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"📥 Received /start from {update.effective_user.id} (@{update.effective_user.username})")
+    subject = _subject_label(update.effective_user.id)
+    try:
+        from app.services.engagement import track_owned_bot_start
+
+        tracking = await track_owned_bot_start(update, context)
+        logger.info("📥 Received /start from subject=%s tracking=%s", subject, tracking["status"])
+    except Exception as exc:
+        logger.warning("[Engagement] /start tracking failed for subject=%s: %s", subject, exc)
     if not is_admin(update):
-        logger.info(f"🚫 User {update.effective_user.id} is NOT an admin. Sending guest start.")
+        logger.info("🚫 subject=%s is not an admin. Sending guest start.", subject)
         await update.message.reply_text(
             "👋 **Welcome to Telegram Hunter Bot**\n\n"
             "This bot is used for OSINT and account management.\n"
@@ -209,8 +230,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN
         )
         return
-    logger.info(f"✅ User {update.effective_user.id} IS an admin. Sending admin start.")
+    logger.info("✅ subject=%s is an admin. Sending admin start.", subject)
     await update.message.reply_text("🤖 **Telegram Hunter Bot** is online.\nUse /help to see all available commands.")
+
+
+async def track_private_inbound(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Record funnel progress without retaining private message content."""
+    if context.user_data.get("owned_bot_first_inbound_tracked"):
+        return
+    try:
+        from app.services.engagement import track_owned_bot_first_inbound
+
+        await track_owned_bot_first_inbound(update, context)
+        context.user_data["owned_bot_first_inbound_tracked"] = True
+    except Exception as exc:
+        logger.warning(
+            "[Engagement] first-inbound tracking failed for subject=%s: %s",
+            _subject_label(update.effective_user.id),
+            exc,
+        )
+
+
+async def opt_out_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Honor an explicit opt-out on every monitor bot owned by this deployment."""
+    try:
+        from app.services.engagement import track_owned_bot_opt_out
+
+        await track_owned_bot_opt_out(update, context)
+    except Exception as exc:
+        logger.warning(
+            "[Engagement] opt-out tracking failed for subject=%s: %s",
+            _subject_label(update.effective_user.id),
+            exc,
+        )
+    await update.message.reply_text(
+        "You are opted out. This bot will not send automated follow-ups. "
+        "You can still contact an administrator directly if you need support."
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_user_admin = is_admin(update)
@@ -1327,10 +1383,21 @@ def _build_application(token: str) -> Application:
     application = ApplicationBuilder().token(token).request(request).build()
     application.bot_data['_bot_token'] = token
 
+    # Owned-bot voluntary funnel tracking. This handler stores only an HMAC
+    # pseudonym and event metadata; private message content is never persisted.
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            track_private_inbound,
+        ),
+        group=-2,
+    )
+
     # Group -1 runs before other handlers
     application.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler(["stop", "optout", "unsubscribe"], opt_out_command))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("pause", pause))
     application.add_handler(CommandHandler("resume", resume))
