@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { BarChart3, MessageSquareText, LucideTarget, Radar } from "lucide-react";
+import { BarChart3, ListChecks, MessageSquareText, LucideTarget, Radar } from "lucide-react";
 import type { Credential, DashboardView } from "@/app/page";
 
 function ConfidenceBadge({ score }: { score: number | null }) {
@@ -96,9 +96,21 @@ export default function Sidebar({
         <div className="w-full h-full flex flex-col bg-slate-50 overflow-y-auto border-r">
             <div className="p-4 border-b bg-white sticky top-0 z-10">
                 <h2 className="font-bold text-lg flex items-center gap-2 text-slate-800">
-                    <LucideTarget className="text-red-600" /> Discovered Bots
+                    <LucideTarget className="text-red-600" /> Prawn Hunter
                 </h2>
-                <div className="mt-3 grid grid-cols-3 gap-1 rounded-md bg-slate-100 p-1">
+                <div className="mt-3 grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1">
+                    <button
+                        type="button"
+                        onClick={() => onViewChange("findings")}
+                        className={`flex min-w-0 items-center justify-center gap-1 rounded px-1.5 py-1.5 text-xs font-semibold transition-colors ${
+                            activeView === "findings"
+                                ? "bg-white text-slate-900 shadow-sm"
+                                : "text-slate-500 hover:text-slate-800"
+                        }`}
+                    >
+                        <ListChecks className="h-3.5 w-3.5" />
+                        <span className="truncate">Findings</span>
+                    </button>
                     <button
                         type="button"
                         onClick={() => onViewChange("chat")}
@@ -136,6 +148,9 @@ export default function Sidebar({
                         <span className="truncate">All Telemetry</span>
                     </button>
                 </div>
+            </div>
+            <div className="border-b bg-slate-100 px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                Drill-down targets
             </div>
             <div className="flex flex-col">
                 {credentials.map((cred) => (

@@ -18,13 +18,20 @@ vi.mock('../lib/supabase', () => ({
       signInWithPassword: mockSignInWithPassword,
       signOut: mockSignOut,
     },
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        order: vi.fn(() => ({
-          limit: vi.fn(() => Promise.resolve({ data: [], error: null })),
-        })),
-      })),
-    })),
+    from: vi.fn(() => {
+      const builder = {
+        select: vi.fn(),
+        eq: vi.fn(),
+        limit: vi.fn(),
+      };
+      builder.select.mockReturnValue(builder);
+      builder.eq.mockReturnValue(builder);
+      builder.limit.mockResolvedValue({
+        data: [{ id: 'test-uuid', created_at: '2024-01-01', source: 'test' }],
+        error: null,
+      });
+      return builder;
+    }),
   },
 }));
 
@@ -64,6 +71,19 @@ vi.mock('@/components/Sidebar', () => ({
 vi.mock('@/components/ChatWindow', () => ({
   default: () => (
     <div data-testid="chat-window">Chat Window</div>
+  ),
+}));
+
+vi.mock('@/components/FindingsQueue', () => ({
+  default: ({ onDrilldown }: {
+    onDrilldown?: (credentialId: string, view: 'chat' | 'botTelemetry') => void;
+  }) => (
+    <div data-testid="findings-queue">
+      Findings Queue
+      <button data-testid="findings-drilldown" onClick={() => onDrilldown?.('test-uuid', 'chat')}>
+        Open Chat
+      </button>
+    </div>
   ),
 }));
 
@@ -161,7 +181,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('sidebar')).toBeDefined();
-      expect(screen.getByTestId('chat-window')).toBeDefined();
+      expect(screen.getByTestId('findings-queue')).toBeDefined();
     });
 
     // Should show user email
@@ -270,6 +290,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
     // CRITICAL: Sidebar and ChatWindow should NOT be in the DOM
     expect(screen.queryByTestId('sidebar')).toBeNull();
     expect(screen.queryByTestId('chat-window')).toBeNull();
+    expect(screen.queryByTestId('findings-queue')).toBeNull();
     expect(screen.queryByTestId('telemetry-view')).toBeNull();
   });
 
@@ -293,7 +314,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
 
       // Assert activeView prop passed
       const activeViewEl = screen.getByTestId('sidebar-activeView');
-      expect(activeViewEl.textContent).toBe('chat');
+      expect(activeViewEl.textContent).toBe('findings');
 
       // Assert callback props are wired (buttons enabled)
       const viewChangeBtn = screen.getByTestId('sidebar-view-change');

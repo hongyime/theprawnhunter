@@ -15,14 +15,16 @@ touch the header at all.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
+from uuid import UUID
 
 from fastapi import Header, HTTPException, status
 
 from app.core.config import settings
 
 
-def require_monitor_key(x_monitor_key: str | None = Header(default=None)) -> None:
+def require_monitor_key(x_monitor_key: str | None = Header(default=None)) -> UUID:
     """FastAPI dependency: reject if X-Monitor-Key header is missing or wrong.
 
     - 503 if MONITOR_API_KEY is unset on the server (fail-closed).
@@ -47,3 +49,8 @@ def require_monitor_key(x_monitor_key: str | None = Header(default=None)) -> Non
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid or missing monitor API key",
         )
+
+    # A stable, non-reversible actor ID lets mutating monitor endpoints create
+    # useful audit records without persisting or returning the API key itself.
+    digest = hashlib.sha256(f"theprawnhunter:monitor-api:v1:{provided}".encode()).digest()
+    return UUID(bytes=digest[:16], version=4)

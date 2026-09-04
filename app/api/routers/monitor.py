@@ -13,7 +13,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.core.audit import AuditEvent, AuditLogger
 from app.core.auth import require_monitor_key
 from app.core.database import db
-from app.schemas.models import CredentialOut, MessageOut, StatsOut
+from app.schemas.models import (
+    CredentialOut,
+    EngagementLifecycleIn,
+    FindingDetailOut,
+    FindingEvidenceOut,
+    FindingFeedbackIn,
+    FindingFeedbackOut,
+    FindingOut,
+    FindingStatus,
+    FindingType,
+    MessageOut,
+    StatsOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +192,158 @@ async def list_messages(limit: int = 100):
         return res.data
     except Exception as exc:
         logger.exception("monitor/messages query failed")
+        raise HTTPException(status_code=500, detail="Internal error") from exc
+
+
+@router.get("/findings", response_model=list[FindingOut])
+def list_findings(
+    finding_type: FindingType | None = Query(None),
+    status: FindingStatus | None = Query(None),
+    min_priority: int = Query(1, ge=1, le=10),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Return the priority-first Insight Queue without raw message content."""
+    try:
+        query = (
+            db.table("findings")
+            .select("*")
+            .gte("priority", min_priority)
+        )
+        if finding_type:
+            query = query.eq("type", finding_type)
+        if status:
+            query = query.eq("status", status)
+        else:
+            query = query.in_("status", ["new", "triaged", "in_progress"])
+        result = (
+            query.order("priority", desc=True)
+            .order("last_material_change_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        logger.exception("monitor/findings query failed")
+        raise HTTPException(status_code=500, detail="Internal error") from exc
+
+
+def _finding_evidence_rows(finding_id: UUID, limit: int = 200) -> list[dict[str, Any]]:
+    result = (
+        db.table("finding_evidence")
+        .select(
+            "id,finding_id,evidence_key,evidence_type,source_table,source_id,"
+            "observed_at,weight,excerpt_redacted,provenance,message_id,credential_id"
+        )
+        .eq("finding_id", str(finding_id))
+        .order("observed_at", desc=True)
+        .limit(max(1, min(limit, 500)))
+        .execute()
+    )
+    return list(result.data or [])
+
+
+@router.get(
+    "/findings/{finding_id}/evidence",
+    response_model=list[FindingEvidenceOut],
+)
+def get_finding_evidence(finding_id: UUID, limit: int = Query(200, ge=1, le=500)):
+    """Return redacted provenance for a finding; raw content stays in drill-down."""
+    try:
+        return _finding_evidence_rows(finding_id, limit)
+    except Exception as exc:
+        logger.exception("monitor/findings evidence query failed")
+        raise HTTPException(status_code=500, detail="Internal error") from exc
+
+
+@router.get("/findings/{finding_id}", response_model=FindingDetailOut)
+def get_finding(finding_id: UUID):
+    """Return one finding with bounded redacted evidence."""
+    try:
+        result = (
+            db.table("findings")
+            .select("*")
+            .eq("id", str(finding_id))
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Finding not found")
+        return {**rows[0], "evidence": _finding_evidence_rows(finding_id)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("monitor/findings detail query failed")
+        raise HTTPException(status_code=500, detail="Internal error") from exc
+
+
+@router.post(
+    "/findings/{finding_id}/feedback",
+    response_model=FindingFeedbackOut,
+)
+def record_finding_feedback_api(
+    finding_id: UUID,
+    payload: FindingFeedbackIn,
+    actor_id: UUID = Depends(require_monitor_key),
+):
+    """Atomically append analyst feedback and apply its optional disposition."""
+    try:
+        result = db.rpc(
+            "record_finding_feedback_service",
+            {
+                "p_actor_id": str(actor_id),
+                "p_finding_id": str(finding_id),
+                "p_label": payload.label,
+                "p_reason_code": payload.reason_code,
+                "p_note": payload.note,
+                "p_status": payload.status,
+                "p_assignee": payload.assignee,
+                "p_suppress_pattern": payload.suppress_pattern,
+            },
+        ).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Finding not found")
+        return {
+            "feedback_id": result.data,
+            "finding_id": finding_id,
+            "status": payload.status,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if "finding not found" in str(exc).lower():
+            raise HTTPException(status_code=404, detail="Finding not found") from exc
+        logger.exception("monitor/findings feedback failed")
+        raise HTTPException(status_code=500, detail="Internal error") from exc
+
+
+@router.post("/engagement/lifecycle")
+async def record_engagement_lifecycle(payload: EngagementLifecycleIn):
+    """Record qualified/handoff/outcome stages for voluntary owned-bot traffic.
+
+    ``subject_reference`` is HMAC-pseudonymized in-process and never stored.
+    """
+    from app.services.engagement import CampaignAttribution, record_engagement_event
+
+    try:
+        metadata = {
+            "entry": "monitor_api",
+            "qualification_code": payload.qualification_code,
+            "outcome_code": payload.outcome_code,
+            "reason_code": payload.reason_code,
+        }
+        return await record_engagement_event(
+            owned_bot_id=payload.owned_bot_id,
+            subject_id=payload.subject_reference,
+            event_type=payload.event_type,
+            attribution=CampaignAttribution(
+                payload.campaign_id, payload.campaign_source, True
+            ),
+            metadata={key: value for key, value in metadata.items() if value is not None},
+            occurred_at=payload.occurred_at,
+        )
+    except Exception as exc:
+        logger.exception("monitor/engagement lifecycle record failed")
         raise HTTPException(status_code=500, detail="Internal error") from exc
 
 

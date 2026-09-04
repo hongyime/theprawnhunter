@@ -3,11 +3,13 @@
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatWindow from "@/components/ChatWindow";
+import FindingsQueue from "@/components/FindingsQueue";
 import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
 import { LucideMenu, LucideX, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
 
-export type DashboardView = "chat" | "botTelemetry" | "globalTelemetry";
+export type DashboardView = "findings" | "chat" | "botTelemetry" | "globalTelemetry";
 
 export type GatewayTelemetry = {
   configured_webhook_url?: string | null;
@@ -45,7 +47,7 @@ export interface Credential {
 export default function Home() {
   const { session, loading: authLoading, error: authError, signOut } = useAuth();
   const [selected, setSelected] = useState<Credential | null>(null);
-  const [activeView, setActiveView] = useState<DashboardView>("chat");
+  const [activeView, setActiveView] = useState<DashboardView>("findings");
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -68,6 +70,23 @@ export default function Home() {
 
   const handleSignOut = async () => {
     await signOut();
+  };
+
+  const handleFindingDrilldown = async (
+    credentialId: string,
+    view: Extract<DashboardView, "chat" | "botTelemetry">,
+  ) => {
+    const { data, error } = await supabase
+      .from("discovered_credentials_public")
+      .select(
+        "id,created_at,source,meta,confidence_score,collection_yield_score,chat_member_count",
+      )
+      .eq("id", credentialId)
+      .limit(1);
+    if (!error && data?.[0]) {
+      setSelected(data[0] as Credential);
+      setActiveView(view);
+    }
   };
 
   // Show loading state
@@ -114,7 +133,9 @@ export default function Home() {
               {sidebarOpen ? <LucideX className="h-5 w-5" /> : <LucideMenu className="h-5 w-5" />}
             </button>
             <span className="truncate text-sm font-semibold text-slate-800">
-              {selected?.meta?.bot_username
+              {activeView === "findings"
+                ? "Findings queue"
+                : selected?.meta?.bot_username
                 ? `@${selected.meta.bot_username}`
                 : "Prawn Hunter"}
             </span>
@@ -179,7 +200,9 @@ export default function Home() {
           </div>
         )}
         
-        {activeView === "globalTelemetry" ? (
+        {activeView === "findings" ? (
+          <FindingsQueue onDrilldown={handleFindingDrilldown} />
+        ) : activeView === "globalTelemetry" ? (
           <TelemetryAnalyticsView scope="global" />
         ) : activeView === "botTelemetry" ? (
           <TelemetryAnalyticsView scope="credential" credential={selected} />
