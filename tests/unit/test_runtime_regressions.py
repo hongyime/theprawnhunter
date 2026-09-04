@@ -59,7 +59,9 @@ async def test_log_update_uses_async_monitor_guard(monkeypatch):
     def fake_log(_message):
         calls["logged"] += 1
 
-    monkeypatch.setattr("app.services.scraper_srv._resolve_monitor_group_ids_async", fake_resolve)
+    monkeypatch.setattr(
+        "app.services.scraper_srv._resolve_monitor_group_ids_async", fake_resolve
+    )
     monkeypatch.setattr("app.services.scraper_srv._is_monitor_group", fail_sync_guard)
     monkeypatch.setattr(bot_listener.logger, "info", fake_log)
 
@@ -73,6 +75,55 @@ async def test_log_update_uses_async_monitor_guard(monkeypatch):
 
     assert calls["async_guard"] == 1
     assert calls["logged"] == 0
+
+
+@pytest.mark.asyncio
+async def test_log_update_never_logs_raw_identity_or_content(monkeypatch):
+    logged = []
+
+    async def fake_resolve():
+        return {"123"}
+
+    monkeypatch.setattr("app.services.scraper_srv._resolve_monitor_group_ids_async", fake_resolve)
+    monkeypatch.setattr(bot_listener, "_subject_label", lambda _user_id: "subject-hash")
+    monkeypatch.setattr(
+        bot_listener.logger,
+        "info",
+        lambda message, *args: logged.append(message % args),
+    )
+
+    update = types.SimpleNamespace(
+        effective_chat=types.SimpleNamespace(id=456, type="group"),
+        effective_user=types.SimpleNamespace(id=987654321),
+        message=types.SimpleNamespace(text="private payload value", caption=None),
+    )
+
+    await bot_listener.log_update(update, context=None)
+
+    assert logged == ["🔄 Update from subject=subject-hash kind=text"]
+    assert "987654321" not in logged[0]
+    assert "private payload value" not in logged[0]
+    assert "456" not in logged[0]
+
+
+def test_captured_redirect_logs_never_include_raw_user_ids():
+    root = Path(__file__).parents[2]
+    redirect_source = (
+        root / "app/workers/tasks/honeypot_redirect_tasks.py"
+    ).read_text(encoding="utf-8")
+    flow_source = (root / "app/workers/tasks/flow_tasks.py").read_text(
+        encoding="utf-8"
+    )
+    source = f"{redirect_source}\n{flow_source}"
+
+    assert "sent to user:{user_id}" not in source
+    assert "FAILED for user:{user_id}" not in source
+    assert "hijacked user:{user_id}" not in source
+
+    task_start = flow_source.index("async def _honeypot_redirect_one_logic")
+    task_end = flow_source.find("\nasync def ", task_start + 1)
+    task_body = flow_source[task_start : task_end if task_end != -1 else None]
+    assert '"user_id": user_id' not in task_body
 
 
 def test_backfill_scoring_does_not_update_top_level_confidence_score():

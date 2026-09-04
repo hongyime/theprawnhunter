@@ -1206,7 +1206,7 @@ async def _conversation_timeout(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 async def log_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Logs every incoming update for debugging — skips hub group messages to reduce noise."""
+    """Log a content-free update marker, skipping private and hub messages."""
     chat = update.effective_chat
     chat_id = chat.id if chat else None
 
@@ -1226,13 +1226,20 @@ async def log_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     user = update.effective_user
-    # update.message.text is None for photo/sticker/voice/document updates.
-    # Fall back to caption (photos), then "No text".
-    if update.message:
-        text = update.message.text or update.message.caption or "No text"
-    else:
-        text = "No text"
-    logger.info(f"🔄 Update from {user.id if user else 'Unknown'} in {chat_id}: {text}")
+    message = update.message
+    update_kind = "non_message"
+    if message:
+        if message.text:
+            update_kind = "text"
+        elif message.caption:
+            update_kind = "caption"
+        else:
+            update_kind = "media"
+    logger.info(
+        "🔄 Update from subject=%s kind=%s",
+        _subject_label(user.id) if user else "redacted",
+        update_kind,
+    )
 
 async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Auto-promote joining user-agent session accounts with MINIMAL admin rights.

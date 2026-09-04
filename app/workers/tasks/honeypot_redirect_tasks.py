@@ -82,7 +82,7 @@ async def _redirect_touch2_logic() -> dict:
                 # Mark in Redis with 24h TTL
                 HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 2)
                 sent += 1
-                logger.info(f"🔀 [Touch2] sent to user:{user_id} cred:{credential_id[:8]}...")
+                logger.info(f"🔀 [Touch2] sent cred:{credential_id[:8]}...")
         
         return {"status": "ok", "sent": sent, "candidates": len(candidates)}
         
@@ -150,7 +150,7 @@ async def _redirect_touch3_logic() -> dict:
                 
                 HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 3)
                 sent += 1
-                logger.info(f"🔀 [Touch3] sent to user:{user_id} cred:{credential_id[:8]}...")
+                logger.info(f"🔀 [Touch3] sent cred:{credential_id[:8]}...")
         
         return {"status": "ok", "sent": sent, "candidates": len(candidates)}
         
@@ -234,7 +234,7 @@ async def _proactive_outreach_logic() -> dict:
                     pass
                 
                 sent += 1
-                logger.info(f"🔗 [Proactive] sent to user:{user_id} cred:{credential_id[:8]}...")
+                logger.info(f"🔗 [Proactive] sent cred:{credential_id[:8]}...")
         
         return {"status": "ok", "sent": sent, "candidates": len(candidates)}
         
