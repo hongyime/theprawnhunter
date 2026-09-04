@@ -70,6 +70,8 @@ COMMENT ON COLUMN public.discovered_credentials.confidence_score IS
 
 -- ------------------------------------------------------------
 -- 2. Public view — expose both column names during transition
+--    Preserve existing column order, append new column last.
+--    Security: REVOKE from PUBLIC/anon, GRANT to authenticated only.
 -- ------------------------------------------------------------
 CREATE OR REPLACE VIEW public.discovered_credentials_public AS
 SELECT
@@ -79,11 +81,14 @@ SELECT
     status,
     meta,
     confidence_score,
-    collection_yield_score,
-    chat_member_count
+    chat_member_count,
+    collection_yield_score
 FROM public.discovered_credentials;
 
-GRANT SELECT ON public.discovered_credentials_public TO anon;
+REVOKE SELECT ON public.discovered_credentials_public FROM PUBLIC;
+REVOKE SELECT ON public.discovered_credentials_public FROM anon;
+GRANT SELECT ON public.discovered_credentials_public TO authenticated;
+
 
 
 -- ------------------------------------------------------------
@@ -122,24 +127,70 @@ END $$;
 ALTER TABLE public.finding_summaries
     ADD COLUMN IF NOT EXISTS confidence REAL NOT NULL DEFAULT 0.5;
 
--- explanation: human-readable justification. Required at app layer;
--- empty-string default keeps ALTER cheap for empty tables.
+-- explanation: human-readable justification (required).
+-- Idempotent four-step sequence: add nullable → backfill → set NOT NULL → add CHECK.
+-- Step 1: Add column nullable if missing.
 ALTER TABLE public.finding_summaries
-    ADD COLUMN IF NOT EXISTS explanation TEXT NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS explanation TEXT;
 
--- Add CHECK for confidence range if not already present.
+-- Step 2: Backfill NULL/blank legacy rows with deterministic explanation.
+-- Uses available finding fields to construct a human-readable message.
+UPDATE public.finding_summaries
+SET explanation = format(
+    'Finding %s: %s (entity=%s, severity=%s, priority=%s, confidence=%s, occurrences=%s)',
+    finding_type,
+    COALESCE(entity_value, 'unknown'),
+    COALESCE(entity_type, 'unknown'),
+    severity,
+    priority,
+    COALESCE(confidence::text, '0.5'),
+    COALESCE(occurrence_count::text, '1')
+)
+WHERE explanation IS NULL OR btrim(explanation) = '';
+
+-- Step 3: Drop the default before making the column NOT NULL.
+-- This prevents invalid rows from being created with DEFAULT ''.
+ALTER TABLE public.finding_summaries
+    ALTER COLUMN explanation DROP DEFAULT;
+
+-- Step 3.5: Make the column NOT NULL after backfill and dropping default.
+ALTER TABLE public.finding_summaries
+    ALTER COLUMN explanation SET NOT NULL;
+
+-- Step 4: Add CHECK constraint enforcing non-blank content.
+-- Constraint name is schema/table-scoped: public.finding_summaries_explanation_required.
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'finding_summaries_confidence_range'
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+        WHERE n.nspname = 'public'
+          AND c.conname = 'finding_summaries_explanation_required'
+          AND c.conrelid = 'public.finding_summaries'::regclass
+    ) THEN
+        ALTER TABLE public.finding_summaries
+        ADD CONSTRAINT finding_summaries_explanation_required
+        CHECK (btrim(explanation) <> '');
+    END IF;
+END $$;
+
+-- Add CHECK for confidence range if not already present (schema-scoped guard).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+        WHERE n.nspname = 'public'
+          AND c.conname = 'finding_summaries_confidence_range'
+          AND c.conrelid = 'public.finding_summaries'::regclass
     ) THEN
         ALTER TABLE public.finding_summaries
         ADD CONSTRAINT finding_summaries_confidence_range
         CHECK (confidence >= 0.0 AND confidence <= 1.0);
     END IF;
 END $$;
-
 COMMENT ON COLUMN public.finding_summaries.confidence IS
     'Evidence-quality confidence in [0.0, 1.0]. This is intelligence '
     'confidence — NOT collection yield (see discovered_credentials.'
@@ -208,13 +259,19 @@ BEGIN
     END IF;
 
     -- Base priority anchored on finding_type family.
+    -- Canonical required finding types: credential_exposure,
+    -- infrastructure_cluster, cross_bot_pattern.
+    -- Legacy aliases retained for backwards compatibility.
     v_base := CASE p_finding_type
-        WHEN 'active_credential'      THEN 8
-        WHEN 'exposed_credential'     THEN 7
+        WHEN 'credential_exposure'   THEN 8  -- canonical
+        WHEN 'active_credential'      THEN 8  -- legacy alias
+        WHEN 'exposed_credential'     THEN 7  -- legacy alias
         WHEN 'webhook_hijack'         THEN 7
         WHEN 'honeypot_capture'       THEN 6
         WHEN 'operator_cluster'       THEN 6
-        WHEN 'infrastructure_reuse'   THEN 5
+        WHEN 'infrastructure_cluster' THEN 5  -- canonical
+        WHEN 'infrastructure_reuse'   THEN 5  -- legacy alias
+        WHEN 'cross_bot_pattern'      THEN 4  -- canonical
         WHEN 'media_duplicate'        THEN 4
         WHEN 'attribution_link'       THEN 4
         WHEN 'passive_indicator'      THEN 3
@@ -255,4 +312,6 @@ $$;
 COMMENT ON FUNCTION public.calculate_finding_priority(TEXT, TEXT, INTEGER, REAL) IS
     'Deterministic finding scorer. Given finding_type, entity_type, '
     'evidence_count, confidence[0..1], returns (severity, priority, '
-    'explanation). Same inputs always produce same outputs. IMMUTABLE.';
+    'explanation). Same inputs always produce same outputs. IMMUTABLE. '
+    'Canonical finding types: credential_exposure, infrastructure_cluster, '
+    'cross_bot_pattern. Legacy aliases retained for backwards compatibility.';

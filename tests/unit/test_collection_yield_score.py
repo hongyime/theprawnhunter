@@ -52,17 +52,39 @@ class TestMigrationStructure:
             r"DROP\s+COLUMN\s+confidence_score", migration_sql, re.IGNORECASE
         ), "confidence_score must NOT be dropped — it is a backwards-compat alias"
 
-    def test_public_view_exposes_both_columns(self, migration_sql: str):
-        # The public view must expose both names during transition.
-        view_block = re.search(
+    def test_public_view_has_one_backward_compatible_definition(
+        self, migration_sql: str
+    ):
+        # CREATE OR REPLACE may only append columns without renaming existing ones.
+        view_blocks = re.findall(
             r"CREATE OR REPLACE VIEW public\.discovered_credentials_public AS(.+?);",
             migration_sql,
             re.DOTALL,
         )
-        assert view_block, "public view must be redefined"
-        body = view_block.group(1)
-        assert "confidence_score" in body
-        assert "collection_yield_score" in body
+        assert len(view_blocks) == 1, "public view must have exactly one definition"
+
+        select = re.search(r"\bSELECT\b(.+?)\bFROM\b", view_blocks[0], re.DOTALL)
+        assert select, "public view SELECT list not found"
+        columns = [column.strip() for column in select.group(1).split(",")]
+        assert columns == [
+            "id",
+            "created_at",
+            "source",
+            "status",
+            "meta",
+            "confidence_score",
+            "chat_member_count",
+            "collection_yield_score",
+        ]
+
+    def test_public_view_access_is_authenticated_only(self, migration_sql: str):
+        view = r"public\.discovered_credentials_public"
+        assert re.search(rf"REVOKE\s+SELECT\s+ON\s+{view}\s+FROM\s+PUBLIC", migration_sql)
+        assert re.search(rf"REVOKE\s+SELECT\s+ON\s+{view}\s+FROM\s+anon", migration_sql)
+        assert re.search(
+            rf"GRANT\s+SELECT\s+ON\s+{view}\s+TO\s+authenticated", migration_sql
+        )
+        assert not re.search(rf"GRANT\s+SELECT\s+ON\s+{view}\s+TO\s+anon\b", migration_sql)
 
 
 # ============================================================
@@ -106,11 +128,34 @@ class TestFindingSummariesFields:
             migration_sql,
         ), "confidence must be bounded to [0, 1] via CHECK constraint"
 
-    def test_explanation_column_added_not_null(self, migration_sql: str):
+    def test_explanation_converges_safely_for_existing_rows(self, migration_sql: str):
+        add = migration_sql.index("ADD COLUMN IF NOT EXISTS explanation TEXT")
+        backfill = migration_sql.index("UPDATE public.finding_summaries", add)
+        drop_default = migration_sql.index(
+            "ALTER COLUMN explanation DROP DEFAULT", backfill
+        )
+        not_null = migration_sql.index("ALTER COLUMN explanation SET NOT NULL", drop_default)
+        assert add < backfill < drop_default < not_null
         assert re.search(
-            r"ADD COLUMN IF NOT EXISTS explanation TEXT NOT NULL",
+            r"WHERE\s+explanation\s+IS\s+NULL\s+OR\s+"
+            r"btrim\(explanation\)\s*=\s*''",
             migration_sql,
         )
+        assert "CHECK (btrim(explanation) <> '')" in migration_sql
+
+    def test_finding_constraints_are_schema_and_table_scoped(self, migration_sql: str):
+        for constraint in (
+            "finding_summaries_explanation_required",
+            "finding_summaries_confidence_range",
+        ):
+            guard = re.search(
+                rf"n\.nspname\s*=\s*'public'.+?"
+                rf"c\.conname\s*=\s*'{constraint}'.+?"
+                r"c\.conrelid\s*=\s*'public\.finding_summaries'::regclass",
+                migration_sql,
+                re.DOTALL,
+            )
+            assert guard, f"{constraint} guard must be schema/table scoped"
 
     def test_severity_bucket_check_in_create_table(self, migration_sql: str):
         # Table create (for cold envs) must carry the severity bucket check.
@@ -155,6 +200,20 @@ class TestCalculateFindingPriority:
         # All four severity buckets must be reachable through CASE-style logic.
         for level in ("critical", "high", "medium", "low"):
             assert f"'{level}'" in migration_sql, f"severity band '{level}' missing"
+
+    def test_recognizes_canonical_finding_types(self, migration_sql: str):
+        function = re.search(
+            r"CREATE OR REPLACE FUNCTION public\.calculate_finding_priority.+?\$\$;",
+            migration_sql,
+            re.DOTALL,
+        )
+        assert function, "finding priority function not found"
+        for finding_type in (
+            "credential_exposure",
+            "infrastructure_cluster",
+            "cross_bot_pattern",
+        ):
+            assert f"WHEN '{finding_type}'" in function.group(0)
 
 
 # ============================================================
