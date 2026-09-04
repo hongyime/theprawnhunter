@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
@@ -78,7 +78,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: new Error(error.message) };
       }
       
-      // onAuthStateChange will handle setting user/session and setLoading(false)
+      // Treat missing session as authentication failure
+      if (!data.session) {
+        const errorMsg = "Authentication failed: no session returned";
+        setSession(null);
+        setUser(null);
+        setError(errorMsg);
+        setLoading(false);
+        return { error: new Error(errorMsg) };
+      }
+
+      setSession(data.session);
+      setUser(data.user || data.session.user);
+      setError(null);
+      setLoading(false);
       return { error: null };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Sign in failed";

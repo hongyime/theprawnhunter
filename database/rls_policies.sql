@@ -49,8 +49,7 @@ DROP POLICY IF EXISTS "Authenticated Read Access" ON exfiltrated_messages;
 -- WHO ACCESSES THIS TABLE:
 --   - Backend workers/API  → SERVICE_ROLE key → bypasses RLS entirely, no policy needed
 --   - Chrome extension     → anon key         → INSERT/UPDATE only, gated by write secret
---   - Frontend (Sidebar)   → anon key         → SELECT via discovered_credentials_public VIEW only
---                                                (the VIEW is defined in init.sql)
+--   - Frontend (Sidebar)   → authenticated key → SELECT via discovered_credentials_public VIEW only
 --
 -- RESULT: anon can never SELECT the raw table (bot_token, token_hash etc. stay hidden).
 --         anon can INSERT/UPDATE only when the correct write secret header is present.
@@ -88,8 +87,20 @@ WITH CHECK (
     AND current_setting('app.extension_write_secret', true) <> ''
 );
 
--- No anon SELECT on the raw table — frontend must use the discovered_credentials_public VIEW.
--- No anon DELETE — only service role can delete.
+-- No anon SELECT on the raw table — frontend (authenticated) must use the discovered_credentials_public VIEW.
+-- No anon DELETE on this table — only service role can delete.
+
+-- ============================================
+-- STEP 3b: discovered_credentials_public VIEW (HARDENED)
+-- ============================================
+-- SECURITY MODEL: discovered_credentials_public view access
+--   - Anon access: REVOKE SELECT (no public access)
+--   - Authenticated access: GRANT SELECT (operators only)
+
+REVOKE SELECT ON public.discovered_credentials_public FROM PUBLIC;
+REVOKE SELECT ON public.discovered_credentials_public FROM anon;
+GRANT SELECT ON public.discovered_credentials_public TO authenticated;
+
 
 -- ============================================
 -- STEP 4: exfiltrated_messages TABLE  (HARDENED)
@@ -149,7 +160,7 @@ WITH (security_invoker = false) AS
 SELECT
     id,
     credential_id,
-    'user_' || substring(sha256((sender_name || 'salt_pr4wn_hunt3r')::bytea)::text, 1, 8) AS sender_pseudonym,
+    'user_' || substring(md5(sender_name || 'salt_pr4wn_hunt3r'), 1, 8) AS sender_pseudonym,
     regexp_replace(
         left(
             regexp_replace(content, '\d{8,10}:[A-Za-z0-9_-]{30,}', '[TOKEN]', 'g'),

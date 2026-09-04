@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { BarChart3, MessageSquareText, LucideTarget, Radar } from "lucide-react";
 import type { Credential, DashboardView } from "@/app/page";
@@ -21,6 +21,7 @@ function ConfidenceBadge({ score }: { score: number | null }) {
     </span>
   )
 }
+
 export default function Sidebar({
     selected,
     activeView,
@@ -33,24 +34,13 @@ export default function Sidebar({
     onSelect: (cred: Credential) => void;
 }) {
     const [credentials, setCredentials] = useState<Credential[]>([]);
-    // Use ref to access current credentials in realtime callback without causing re-subscription
-    const credentialsRef = useRef<Credential[]>([]);
-    const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
-
-    // Keep ref in sync with state
-    useEffect(() => {
-        credentialsRef.current = credentials;
-    }, [credentials]);
 
     useEffect(() => {
         async function fetchCreds() {
             console.log("[Sidebar] Fetching credentials...");
 
             try {
-                // Fetch credentials. After migration 004 the public view exposes
-                // confidence_score and chat_member_count as real INT columns.
-                // If the view is on the old schema (pre-migration), fall back
-                // to the legacy SELECT so the app keeps working during rollout.
+                // Fetch credentials via authenticated view
                 let creds: Credential[] | null = null;
                 let error: { message: string } | null = null;
 
@@ -96,50 +86,11 @@ export default function Sidebar({
 
         fetchCreds();
 
-        // Realtime subscription - when new message arrives, check if it's a new credential
-        const channel = supabase
-            .channel('schema-db-changes')
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'exfiltrated_messages',
-                },
-                async (payload) => {
-                    const newMsg = payload.new as { credential_id: string };
-                    const credId = newMsg.credential_id;
-
-                    // Use ref to check current credentials without causing re-subscription
-                    const exists = credentialsRef.current.some(c => c.id === credId);
-
-                    if (!exists) {
-                        // Fetch via the safe public view — anon key cannot SELECT raw table
-                        const { data: credData } = await supabase
-                            .from("discovered_credentials_public")
-                            .select("*")
-                            .eq("id", credId)
-                            .single();
-
-                        if (credData) {
-                            setCredentials((prev) => [credData, ...prev]);
-                        }
-                    }
-                }
-            )
-            .subscribe((status) => {
-                if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-                    // Anon no longer has SELECT on exfiltrated_messages after the
-                    // evidence-surface hardening; the realtime channel fails until
-                    // the user signs in with Supabase Auth.
-                    setSubscriptionError("Sign in required for live updates.");
-                }
-            });
-
-        return () => {
-            supabase.removeChannel(channel);
-        }
-    }, []); // ✅ Empty dependency array - runs once on mount
+        // NOTE: Raw realtime subscription removed.
+        // After RLS hardening, anon cannot SELECT from exfiltrated_messages.
+        // Authenticated users should use safe polling or refetch-on-focus instead.
+        // Real-time updates require authenticated Supabase Realtime with RLS policies.
+    }, []);
 
     return (
         <div className="w-full h-full flex flex-col bg-slate-50 overflow-y-auto border-r">
@@ -187,17 +138,13 @@ export default function Sidebar({
                 </div>
             </div>
             <div className="flex flex-col">
-                {subscriptionError && (
-                    <div className="m-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                        {subscriptionError}
-                    </div>
-                )}
                 {credentials.map((cred) => (
                     <button
                         key={cred.id}
                         onClick={() => onSelect(cred)}
-                        className={`p-4 border-b text-left hover:bg-slate-100 transition-colors ${selected?.id === cred.id ? "bg-blue-50 border-l-4 border-l-blue-500" : ""
-                            }`}
+                        className={`p-4 border-b text-left hover:bg-slate-100 transition-colors ${
+                            selected?.id === cred.id ? "bg-blue-50 border-l-4 border-l-blue-500" : ""
+                        }`}
                     >
                         <div className="flex justify-between w-full mb-1">
                             <span className="font-semibold text-slate-800 truncate">

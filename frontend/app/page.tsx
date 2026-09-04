@@ -140,22 +140,30 @@ export default function Home() {
       <div
         className={
           isMobile
-            ? `fixed inset-y-0 left-0 z-20 w-64 transform transition-transform duration-200 ease-in-out ${
+            ? `fixed inset-y-0 left-0 z-30 w-4/5 max-w-xs transform bg-white shadow-xl transition-transform duration-200 ${
                 sidebarOpen ? "translate-x-0" : "-translate-x-full"
               }`
-            : "w-80 flex-shrink-0 border-r"
+            : "w-1/3 min-w-75 shrink-0"
         }
       >
         <Sidebar
-          selectedCredentialId={selected?.id ?? null}
+          selected={selected}
+          activeView={activeView}
+          onViewChange={(v) => {
+            setActiveView(v);
+            if (isMobile) setSidebarOpen(false);
+          }}
           onSelect={handleSelect}
-          onSignOut={!isMobile ? handleSignOut : undefined}
         />
       </div>
 
-      {/* Main content area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Desktop header */}
+      {/* Main content */}
+      <div
+        className={`flex flex-1 flex-col overflow-hidden ${
+          isMobile ? "pt-12" : ""
+        }`}
+      >
+        {/* Desktop header with sign-out */}
         {!isMobile && (
           <div className="flex items-center justify-between border-b px-4 py-2 bg-slate-50">
             <span className="text-sm text-slate-600">
@@ -171,52 +179,13 @@ export default function Home() {
           </div>
         )}
         
-        {/* View tabs */}
-        <div className="flex items-center gap-1 border-b bg-white px-4 py-1">
-          <button
-            onClick={() => setActiveView("chat")}
-            className={`px-3 py-2 rounded text-sm font-medium ${
-              activeView === "chat"
-                ? "bg-cyan-100 text-cyan-800"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            Chat
-          </button>
-          <button
-            onClick={() => setActiveView("botTelemetry")}
-            className={`px-3 py-2 rounded text-sm font-medium ${
-              activeView === "botTelemetry"
-                ? "bg-cyan-100 text-cyan-800"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            Bot Telemetry
-          </button>
-          <button
-            onClick={() => setActiveView("globalTelemetry")}
-            className={`px-3 py-2 rounded text-sm font-medium ${
-              activeView === "globalTelemetry"
-                ? "bg-cyan-100 text-cyan-800"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            Global Stats
-          </button>
-        </div>
-
-        {/* Active view */}
-        <div className="flex-1 overflow-hidden">
-          {activeView === "chat" && <ChatWindow credential={selected} />}
-          {activeView === "botTelemetry" && selected && (
-            <TelemetryAnalyticsView credential={selected} />
-          )}
-          {activeView === "globalTelemetry" && (
-            <div className="flex h-full items-center justify-center bg-slate-100 text-slate-600">
-              Global telemetry coming soon
-            </div>
-          )}
-        </div>
+        {activeView === "globalTelemetry" ? (
+          <TelemetryAnalyticsView scope="global" />
+        ) : activeView === "botTelemetry" ? (
+          <TelemetryAnalyticsView scope="credential" credential={selected} />
+        ) : (
+          <ChatWindow credential={selected} />
+        )}
       </div>
     </main>
   );

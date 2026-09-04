@@ -29,8 +29,8 @@ def test_migration_file_exists():
         content = f.read()
     
     # Must revoke from both anon and authenticated
-    assert "REVOKE ALL ON exfiltrated_messages FROM anon" in content
-    assert "REVOKE ALL ON exfiltrated_messages FROM authenticated" in content
+    assert "REVOKE ALL ON public.exfiltrated_messages FROM anon" in content
+    assert "REVOKE ALL ON public.exfiltrated_messages FROM authenticated" in content
     
     # Must drop the authenticated raw policy
     assert 'DROP POLICY IF EXISTS "Authenticated Read Access"' in content
@@ -80,9 +80,10 @@ def test_redacted_view_pseudonymizes_sender():
         with open(migration, "r") as f:
             content = f.read()
     
-    # Must truncate sender_name
-    assert "left(sender_name, 3)" in content or "sender_name, 3" in content
-    assert "..." in content
+    # Must use md5 for irreversible pseudonym
+    assert "md5(sender_name" in content
+    assert "AS sender_pseudonym" in content
+    assert "AS sender_name" not in content
 
 
 def test_redacted_view_grant_authenticated_only():
@@ -198,3 +199,38 @@ def test_signin_page_exists():
     
     # Must redirect on success
     assert 'router.push' in content
+
+def test_discovered_credentials_public_migration_revokes_anon():
+    """discovered_credentials_public migration must revoke from anon and PUBLIC."""
+    import glob
+    migrations = glob.glob("supabase/migrations/*discovered_credentials_public*.sql")
+    assert len(migrations) >= 1, "Expected at least one discovered_credentials_public migration"
+    contents = []
+    for migration in migrations:
+        with open(migration, "r") as f:
+            contents.append(f.read())
+    combined = "".join(contents)
+    assert "REVOKE SELECT ON public.discovered_credentials_public FROM anon" in combined
+    assert "REVOKE SELECT ON public.discovered_credentials_public FROM PUBLIC" in combined
+
+
+def test_discovered_credentials_public_migration_grants_authenticated():
+    """discovered_credentials_public migration must grant to authenticated."""
+    import glob
+    migrations = glob.glob("supabase/migrations/*discovered_credentials_public*.sql")
+    assert len(migrations) >= 1, "Expected at least one discovered_credentials_public migration"
+    contents = []
+    for migration in migrations:
+        with open(migration, "r") as f:
+            contents.append(f.read())
+    combined = "".join(contents)
+    assert "GRANT SELECT ON public.discovered_credentials_public TO authenticated" in combined
+
+
+def test_canonical_rls_mirrors_discovered_credentials_public_hardening():
+    """Canonical script must include Plan Item 1 discovered_credentials_public hardening."""
+    with open("database/rls_policies.sql", "r") as f:
+        content = f.read()
+    assert "REVOKE SELECT ON public.discovered_credentials_public FROM anon" in content
+    assert "REVOKE SELECT ON public.discovered_credentials_public FROM PUBLIC" in content
+    assert "GRANT SELECT ON public.discovered_credentials_public TO authenticated" in content

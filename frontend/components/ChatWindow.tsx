@@ -245,11 +245,11 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
 function collectInfrastructureEndpoints(context: InfrastructureContext | undefined): string[] {
     if (!context) return [];
     const endpoints: string[] = [];
-    if (context.api_urls) {
-        endpoints.push(...context.api_urls.filter((u): u is string => Boolean(u)));
+    if (context.api_urls && Array.isArray(context.api_urls)) {
+        endpoints.push(...context.api_urls.filter((u): u is string => typeof u === 'string' && u.length > 0));
     }
-    if (context.webhook_urls) {
-        endpoints.push(...context.webhook_urls.filter((u): u is string => Boolean(u)));
+    if (context.webhook_urls && Array.isArray(context.webhook_urls)) {
+        endpoints.push(...context.webhook_urls.filter((u): u is string => typeof u === 'string' && u.length > 0));
     }
     return [...new Set(endpoints)];
 }

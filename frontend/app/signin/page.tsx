@@ -15,11 +15,12 @@ export default function SignInPage() {
         e.preventDefault();
         setLocalError(null);
         
-        try {
-            await signIn(email, password);
+        const { error: signInError } = await signIn(email, password);
+
+        if (signInError) {
+            setLocalError(signInError.message);
+        } else {
             router.push("/");
-        } catch (err) {
-            setLocalError(err instanceof Error ? err.message : "Sign in failed");
         }
     };
 
