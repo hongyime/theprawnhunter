@@ -44,3 +44,38 @@ def test_parse_payload_canonicalizes_url_variants_before_deduplication():
     assert indicators.count(
         {"type": "canonical_url", "value": "https://example.com/Path"}
     ) == 1
+
+
+def test_parse_payload_extracts_contact_and_network_indicators_once():
+    indicators = TelemetryEntityParser.parse_payload(
+
+            "Contact Admin@Example.COM or @support_bot at +65 9123 4567. "
+            "Internal host 192.168.1.10; repeat admin@example.com and @support_bot."
+
+    )
+
+    assert indicators.count(
+        {"type": "email_address", "value": "admin@example.com"}
+    ) == 1
+    assert indicators.count(
+        {"type": "telegram_username", "value": "@support_bot"}
+    ) == 1
+    assert {"type": "telegram_username", "value": "@Example"} not in indicators
+    assert {"type": "phone_number", "value": "+65 9123 4567"} in indicators
+    assert {"type": "ip_address", "value": "192.168.1.10"} in indicators
+
+
+def test_parse_payload_rejects_malformed_contact_and_ip_values():
+    indicators = TelemetryEntityParser.parse_payload(
+        "Ignore a@b, @abc, 999.999.999.999, and +00 123 456."
+    )
+
+    assert not any(
+        indicator["type"] in {
+            "email_address",
+            "telegram_username",
+            "phone_number",
+            "ip_address",
+        }
+        for indicator in indicators
+    )
