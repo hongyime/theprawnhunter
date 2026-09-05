@@ -37,8 +37,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 .from("evidence_redacted")
                 .select("*")
                 .eq("credential_id", credentialId)
-                .order("created_at", { ascending: true })
-                .limit(200);
+                .order("created_at", { ascending: false })
 
             if (cancelled) return;
 
@@ -60,7 +59,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 return;
             }
 
-            if (data) setMessages((data as ChatMessage[]));
+            if (data) setMessages((data as ChatMessage[]).reverse());
             setLoading(false);
         }
 
