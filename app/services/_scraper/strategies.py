@@ -216,7 +216,7 @@ class WebhookStateService:
                 f"({webhook_url}) — resuming polling"
             )
             try:
-                from app.core.audit import AuditLogger, AuditEvent
+                from app.core.audit import AuditEvent, AuditLogger
 
                 AuditLogger.log(
                     AuditEvent.WEBHOOK_TAKEOVER,

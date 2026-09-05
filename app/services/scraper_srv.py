@@ -1,19 +1,25 @@
-from typing import Any, Dict, List, Tuple, TypedDict
 import asyncio
-from datetime import datetime, timezone
-from telethon.tl.types import Message, MessageMediaPhoto, MessageMediaDocument
+import logging
+from datetime import UTC, datetime
+from typing import Any, TypedDict
+
+import httpx
 from telethon.errors import (
-    FloodWaitError,
     AuthKeyUnregisteredError,
+    FloodWaitError,
     UserDeactivatedBanError,
 )
+from telethon.tl.types import Message, MessageMediaDocument, MessageMediaPhoto
+
 from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
-import logging
-import httpx
-from app.utils.http_client import get_async_http_client
-from app.services._scraper.results import ScrapeReason, ScrapeResult, ScrapeResultClassifier, StrategyAttempt
+from app.services._scraper.results import (
+    ScrapeReason,
+    ScrapeResult,
+    ScrapeResultClassifier,
+    StrategyAttempt,
+)
 from app.services._scraper.strategies import (
     BotApiUpdateReader,
     BotPreflightService,
@@ -24,19 +30,22 @@ from app.services._scraper.strategies import (
     WebhookStateService,
     unique_append,
 )
+from app.utils.http_client import get_async_http_client
 
 logger = logging.getLogger("scraper")
 
 # Monitor guard globals and helpers extracted to _scraper/monitor_guard.py.
 # Re-exported here so all existing importers (flow_tasks, bot_listener,
 # audit_tasks) continue to work without modification.
+import contextlib
+
 from app.services._scraper.monitor_guard import (  # noqa: F401
     _MONITOR_GROUP_IDS,
     _MONITOR_GROUP_IDS_RESOLVED,
-    _resolve_monitor_group_ids_sync,
-    _resolve_monitor_group_ids_async,
     _get_monitor_group_ids,
     _is_monitor_group,
+    _resolve_monitor_group_ids_async,
+    _resolve_monitor_group_ids_sync,
 )
 
 
@@ -50,14 +59,14 @@ async def _async_execute(query_builder):
     return await asyncio.to_thread(query_builder.execute)
 
 
-def _copy_if_present(target: Dict[str, Any], source: Dict[str, Any], source_key: str, target_key: str | None = None) -> None:
+def _copy_if_present(target: dict[str, Any], source: dict[str, Any], source_key: str, target_key: str | None = None) -> None:
     value = source.get(source_key)
     if value is not None:
         target[target_key or source_key] = value
 
 
-def _bot_api_media_info(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    file_meta: Dict[str, Any] = {}
+def _bot_api_media_info(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    file_meta: dict[str, Any] = {}
     file_meta["source"] = "bot_api"
 
     if isinstance(payload.get("photo"), list) and payload["photo"]:
@@ -83,11 +92,11 @@ def _bot_api_media_info(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return "text", file_meta
 
 
-def _telethon_media_info(message: Message) -> Tuple[str, Dict[str, Any]]:
+def _telethon_media_info(message: Message) -> tuple[str, dict[str, Any]]:
     if not getattr(message, "media", None):
         return "text", {}
 
-    file_meta: Dict[str, Any] = {}
+    file_meta: dict[str, Any] = {}
     file_meta["source"] = "telethon"
     try:
         from telethon import utils as telethon_utils
@@ -203,10 +212,10 @@ class ScraperService:
                 next_action="skip_monitor_group",
             )
 
-        scraped_messages: List[ScrapedMessage] = []
+        scraped_messages: list[ScrapedMessage] = []
         unique_ids: set[int] = set()
         attempts: list[StrategyAttempt] = []
-        evidence: Dict[str, Any] = {"chat_id": chat_id, "limit": limit}
+        evidence: dict[str, Any] = {"chat_id": chat_id, "limit": limit}
 
         # Pre-flight: ensure bot access and classify terminal invite constraints.
         if not self.is_monitor_bot(bot_token):
@@ -338,7 +347,7 @@ class ScraperService:
 
     async def _scrape_via_forwarding(
         self, bot_token: str, from_chat_id: int, to_chat_id: int, start_id: int, limit: int
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Matkap-style: Forces bot to forward messages to a sink chat (Forum Topic).
         1. Creates a topic: '💀 @bot_username'
@@ -431,7 +440,7 @@ class ScraperService:
 
     async def _scrape_via_id_bruteforce(
         self, bot_token: str, chat_id: int, start_id: int, limit: int
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Fetches messages by ID batches (GetMessages) instead of listing history (GetHistory).
         Bypasses 'API restricted' error for listing history.
@@ -490,7 +499,7 @@ class ScraperService:
             raise
         return msgs
 
-    async def _scrape_via_telethon(self, bot_token: str, chat_id: int, limit: int) -> List[Dict]:
+    async def _scrape_via_telethon(self, bot_token: str, chat_id: int, limit: int) -> list[dict]:
         from app.services.bot_manager_srv import bot_manager
 
         msgs = []
@@ -597,10 +606,8 @@ class ScraperService:
                 logger.warning(
                     f"    🛡️ [Scraper] Bot Restricted ({err_str}). Falling back to UserAgent..."
                 )
-                try:
+                with contextlib.suppress(Exception):
                     redis_srv.set_cooldown(f"bot_restricted:{chat_id}", 21600)
-                except Exception:
-                    pass
 
                 from app.services.user_agent_srv import user_agent
 
@@ -714,7 +721,7 @@ class ScraperService:
             logger.warning(f"    ⚠️ [Scraper] Auto-invite error: {e}")
             return False
 
-    async def _scrape_via_bot_api(self, bot_token: str) -> List[Dict]:
+    async def _scrape_via_bot_api(self, bot_token: str) -> list[dict]:
         """
         Fallback: Use httpx to hit https://api.telegram.org/bot<token>/getUpdates
         If webhook is active, only delete it when policy allows.
@@ -730,7 +737,7 @@ class ScraperService:
             )
         return outcome.messages
 
-    async def discover_chats(self, bot_token: str) -> (Dict, List[Dict]):
+    async def discover_chats(self, bot_token: str) -> (dict, list[dict]):
         """
         Validates a bot token and discovers chats using Telegram Bot API.
         Returns: (bot_info, discovered_chats)
@@ -919,8 +926,8 @@ class ScraperService:
                     return_exceptions=True,
                 )
 
-            webhook_data: Dict[str, Any] = {}
-            commands_list: List[Dict[str, Any]] = []
+            webhook_data: dict[str, Any] = {}
+            commands_list: list[dict[str, Any]] = []
             bio_description = None
 
             if isinstance(wh_res, httpx.Response) and wh_res.status_code == 200:
@@ -955,7 +962,7 @@ class ScraperService:
                 "last_error_info": webhook_data.get("last_error_message"),
                 "last_error_date": webhook_data.get("last_error_date"),
                 "allowed_updates": webhook_data.get("allowed_updates"),
-                "probed_at": datetime.now(timezone.utc).isoformat(),
+                "probed_at": datetime.now(UTC).isoformat(),
             }
 
             await _async_execute(
@@ -971,7 +978,7 @@ class ScraperService:
         except Exception as e:
             logger.debug(f"[GatewayTelemetry] Probe failed for {cred_id}: {e}")
 
-    async def _http_preflight_check(self, auth_token: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any], bool]:
+    async def _http_preflight_check(self, auth_token: str) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
         """
         Lightweight HTTP-only check to verify token validity, fetch webhook info,
         and retrieve recent updates before committing to a full Telethon scrape.
@@ -990,7 +997,7 @@ class ScraperService:
                 if resp.status_code == 401:
                     return ([], {}, True)
 
-                meta_dict: Dict[str, Any] = {}
+                meta_dict: dict[str, Any] = {}
                 if resp.status_code == 200:
                     webhook_url = resp.json().get("result", {}).get("url")
                     if webhook_url:
@@ -1001,7 +1008,7 @@ class ScraperService:
                     f"https://api.telegram.org/bot{auth_token}/getUpdates",
                     params={"limit": 100},
                 )
-                formatted_updates: List[Dict[str, Any]] = []
+                formatted_updates: list[dict[str, Any]] = []
                 if resp.status_code == 200:
                     updates = resp.json().get("result", [])
                     last_update_id = None
@@ -1031,7 +1038,7 @@ class ScraperService:
                             "file_meta": file_meta,
                         })
                     if updates:
-                        meta_dict["last_live_seen_at"] = datetime.now(timezone.utc).isoformat()
+                        meta_dict["last_live_seen_at"] = datetime.now(UTC).isoformat()
                     if last_update_id is not None:
                         meta_dict["last_update_id"] = last_update_id
                     meta_dict["last_live_failure_reason"] = None

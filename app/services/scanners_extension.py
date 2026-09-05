@@ -3,14 +3,17 @@ Extension scanner services: GithubGistService, GrepAppService, PublicWwwService,
 BitbucketService, PastebinService, GoogleSearchService.
 Imports shared utilities (TOKEN_PATTERN, _is_valid_token, _perform_active_deep_scan) from scanners.py.
 """
-import html as htmlmod
-import httpx
-from app.utils.http_client import get_async_http_client
 import asyncio
-import re
-from typing import List, Dict, Any
+import contextlib
+import html as htmlmod
 import logging
+import re
+from typing import Any
+
+import httpx
+
 from app.core.config import settings
+from app.utils.http_client import get_async_http_client
 
 logger = logging.getLogger("scanners")
 
@@ -25,8 +28,8 @@ class GithubGistService:
         else:
             self.token = settings.GITHUB_TOKEN
         self.base_url = "https://api.github.com/gists/public"
-        
-    async def search(self) -> List[Dict[str, Any]]:
+
+    async def search(self) -> list[dict[str, Any]]:
         # Gists public endpoint shows recently created gists.
         # We fetch the recent 100 and look for tokens.
         if not self.token:
@@ -39,17 +42,17 @@ class GithubGistService:
                 'Accept': 'application/vnd.github.v3+json'
             }
             params = {"per_page": 100}
-            
+
             async with httpx.AsyncClient(timeout=30.0) as client:
                 res = await client.get(self.base_url, headers=headers, params=params)
                 res.raise_for_status()
                 items = res.json()
-            
+
             results = []
             async with httpx.AsyncClient(verify=False, timeout=10.0) as raw_client:
                 tasks = []
                 sem = asyncio.Semaphore(10)
-                
+
                 async def process_gist(gist):
                     from app.services.scanners import TOKEN_PATTERN, _is_valid_token
                     async with sem:
@@ -70,15 +73,15 @@ class GithubGistService:
                                         })
                                 except Exception: pass
                         return local_res
-                
+
                 for item in items:
                     tasks.append(process_gist(item))
-                
+
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
                 for batch in scan_results:
                     if batch and isinstance(batch, list):
                         results.extend(batch)
-                        
+
             return results
 
         except Exception as e:
@@ -95,7 +98,7 @@ class GrepAppService:
     def _strip_html(self, html: str) -> str:
         return htmlmod.unescape(re.sub(r"<[^>]+>", "", html))
 
-    async def search(self) -> List[Dict[str, Any]]:
+    async def search(self) -> list[dict[str, Any]]:
         query = r"api\.telegram\.org/bot\d{8,15}:[A-Za-z0-9_-]{35}"
 
         try:
@@ -140,17 +143,17 @@ class PublicWwwService:
     def __init__(self):
         self.key = settings.PUBLICWWW_KEY
         self.base_url = "https://publicwww.com/websites/"
-        
-    async def search(self, query: str = '"api.telegram.org/bot"') -> List[Dict[str, Any]]:
+
+    async def search(self, query: str = '"api.telegram.org/bot"') -> list[dict[str, Any]]:
         if not self.key:
             logger.warning("    [PublicWWW] Missing PUBLICWWW_KEY")
             return []
-            
+
         try:
             # PublicWWW format: https://publicwww.com/websites/"query"/?export=csv&key=API_KEY
             url = f"{self.base_url}{query}/"
             params = {"export": "json", "key": self.key, "limit": 100}
-            
+
             async with httpx.AsyncClient(timeout=30.0) as client:
                 res = await client.get(url, params=params)
                 if res.status_code == 403:
@@ -159,12 +162,12 @@ class PublicWwwService:
                 res.raise_for_status()
                 # Returns list of domains
                 domains = res.json()
-                
+
             results = []
             async with httpx.AsyncClient(verify=False, timeout=10.0) as scan_client:
                 tasks = []
                 sem = asyncio.Semaphore(15)
-                
+
                 async def scan_domain(domain):
                     from app.services.scanners import _perform_active_deep_scan
                     async with sem:
@@ -173,10 +176,10 @@ class PublicWwwService:
                             items = await _perform_active_deep_scan(target, client=scan_client)
                             return target, items
                         except Exception: return None
-                
+
                 for d in domains:
                     tasks.append(scan_domain(d))
-                    
+
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
                 for res_item in scan_results:
                     if not res_item or isinstance(res_item, Exception): continue
@@ -198,12 +201,12 @@ class GoogleSearchService:
         self.key = settings.GOOGLE_SEARCH_KEY
         self.cse_id = settings.GOOGLE_CSE_ID
         self.base_url = "https://www.googleapis.com/customsearch/v1"
-        
-    async def search(self, dork: str = r'site:pastebin.com "api.telegram.org/bot"') -> List[Dict[str, Any]]:
+
+    async def search(self, dork: str = r'site:pastebin.com "api.telegram.org/bot"') -> list[dict[str, Any]]:
         if not self.key or not self.cse_id:
             logger.warning("    [GoogleSearch] Missing GOOGLE_SEARCH_KEY or GOOGLE_CSE_ID")
             return []
-            
+
         try:
             params = {
                 "key": self.key,
@@ -215,25 +218,25 @@ class GoogleSearchService:
                 res = await client.get(self.base_url, params=params)
                 res.raise_for_status()
                 data = res.json()
-                
+
             results = []
             from app.services.scanners import _perform_active_deep_scan
             items = data.get("items", [])
-            
+
             async with httpx.AsyncClient(verify=False, timeout=10.0) as scan_client:
                 tasks = []
                 sem = asyncio.Semaphore(5)
-                
+
                 async def scan_url(link):
                     async with sem:
                         try:
                             found = await _perform_active_deep_scan(link, client=scan_client)
                             return link, found
                         except Exception: return None
-                
+
                 for item in items:
                     tasks.append(scan_url(item.get("link")))
-                    
+
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
                 for res_item in scan_results:
                     if not res_item or isinstance(res_item, Exception): continue
@@ -245,7 +248,7 @@ class GoogleSearchService:
                             "meta": {"source": "google_dork", "url": target_url}
                         })
             return results
-            
+
         except Exception as e:
             logger.error(f"    [GoogleSearch] Error: {e}")
             return []
@@ -262,7 +265,7 @@ class BitbucketService:
     def __init__(self):
         self.token = settings.BITBUCKET_API_TOKEN
 
-    async def search(self) -> List[Dict[str, Any]]:
+    async def search(self) -> list[dict[str, Any]]:
         from app.services.scanners import TOKEN_PATTERN, _is_valid_token
 
         if not self.token:
@@ -281,7 +284,7 @@ class BitbucketService:
             "TG_BOT_TOKEN",
         ]
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         try:
             # First get the list of workspaces this token has access to
@@ -365,8 +368,8 @@ class BitbucketService:
 class PastebinService:
     def __init__(self):
         self.base_url = "https://scrape.pastebin.com/api_scraping.php"
-        
-    async def search(self) -> List[Dict[str, Any]]:
+
+    async def search(self) -> list[dict[str, Any]]:
         # Pastebin scraping API requires IP whitelist. If it fails, we return []
         try:
             params = {"limit": 100}
@@ -377,12 +380,12 @@ class PastebinService:
                     return []
                 res.raise_for_status()
                 pastes = res.json()
-            
+
             results = []
             async with httpx.AsyncClient(verify=False, timeout=10.0) as raw_client:
                 tasks = []
                 sem = asyncio.Semaphore(15)
-                
+
                 async def fetch_paste(p):
                     from app.services.scanners import TOKEN_PATTERN, _is_valid_token
                     async with sem:
@@ -403,12 +406,12 @@ class PastebinService:
 
                 for p in pastes:
                     tasks.append(fetch_paste(p))
-                    
+
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
                 for batch in scan_results:
                     if batch and isinstance(batch, list):
                         results.extend(batch)
-                        
+
             return results
         except Exception as e:
              logger.error(f"    [Pastebin] Error: {e}")
@@ -423,30 +426,30 @@ class RentryService:
     def __init__(self):
         from app.services.scanners import ExaService
         self.exa = ExaService()
-    
-    async def search(self) -> List[Dict[str, Any]]:
-        from app.workers.tasks.flow_tasks import redis_client
+
+    async def search(self) -> list[dict[str, Any]]:
         from app.services.scanners import TOKEN_PATTERN, _is_valid_token
-        
-        results: List[Dict[str, Any]] = []
+        from app.workers.tasks.flow_tasks import redis_client
+
+        results: list[dict[str, Any]] = []
         queries = [
             'site:rentry.co "api.telegram.org/bot"',
             'site:rentry.co "TELEGRAM_BOT_TOKEN"'
         ]
-        
+
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             for q in queries:
                 try:
                     exa_results = await self.exa.search(q)
                     if not exa_results:
                         continue
-                    
+
                     for match in exa_results:
                         meta = match.get("meta", {})
                         url = meta.get("url")
                         if not url or "rentry.co/" not in url:
                             continue
-                            
+
                         # Convert https://rentry.co/xyz to https://rentry.co/api/raw/xyz
                         try:
                             paste_id = url.split("rentry.co/")[-1].strip("/")
@@ -454,7 +457,7 @@ class RentryService:
                             raw_url = f"https://rentry.co/api/raw/{paste_id}"
                         except Exception:
                             continue
-                            
+
                         # Dedup check
                         seen_key = f"rentry:seen:{paste_id}"
                         try:
@@ -464,7 +467,7 @@ class RentryService:
                         try:
                             raw_res = await client.get(raw_url)
                             if raw_res.status_code != 200: continue
-                            
+
                             found = TOKEN_PATTERN.findall(raw_res.text)
                             for t in found:
                                 if _is_valid_token(t):
@@ -472,18 +475,17 @@ class RentryService:
                                         "token": t,
                                         "meta": {"source": "rentry", "paste_id": paste_id, "url": url}
                                     })
-                            
-                            try:
+
+                            with contextlib.suppress(Exception):
                                 redis_client.setex(seen_key, 7 * 86400, "1")
-                            except Exception: pass
                         except Exception as e:
                             logger.debug(f"    [Rentry] raw fetch failed for {paste_id}: {e}")
-                        
+
                         await asyncio.sleep(1) # Courtesy rate limit
-                        
+
                 except Exception as e:
                     logger.warning(f"    [Rentry] Exa search failed: {e}")
-                    
+
         return results
 
 
@@ -495,30 +497,30 @@ class HastebinService:
     def __init__(self):
         from app.services.scanners import ExaService
         self.exa = ExaService()
-    
-    async def search(self) -> List[Dict[str, Any]]:
-        from app.workers.tasks.flow_tasks import redis_client
+
+    async def search(self) -> list[dict[str, Any]]:
         from app.services.scanners import TOKEN_PATTERN, _is_valid_token
-        
-        results: List[Dict[str, Any]] = []
+        from app.workers.tasks.flow_tasks import redis_client
+
+        results: list[dict[str, Any]] = []
         queries = [
             'site:hastebin.com "api.telegram.org/bot"',
             'site:hastebin.com "TELEGRAM_BOT_TOKEN"'
         ]
-        
+
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             for q in queries:
                 try:
                     exa_results = await self.exa.search(q)
                     if not exa_results:
                         continue
-                    
+
                     for match in exa_results:
                         meta = match.get("meta", {})
                         url = meta.get("url")
                         if not url or "hastebin.com/" not in url:
                             continue
-                            
+
                         # Convert https://hastebin.com/xyz to https://hastebin.com/raw/xyz
                         try:
                             # Avoid matching hastebin.com/raw/xyz directly if already formatted
@@ -527,7 +529,7 @@ class HastebinService:
                             raw_url = f"https://hastebin.com/raw/{paste_id}"
                         except Exception:
                             continue
-                            
+
                         # Dedup check
                         seen_key = f"hastebin:seen:{paste_id}"
                         try:
@@ -537,7 +539,7 @@ class HastebinService:
                         try:
                             raw_res = await client.get(raw_url)
                             if raw_res.status_code != 200: continue
-                            
+
                             found = TOKEN_PATTERN.findall(raw_res.text)
                             for t in found:
                                 if _is_valid_token(t):
@@ -545,18 +547,17 @@ class HastebinService:
                                         "token": t,
                                         "meta": {"source": "hastebin", "paste_id": paste_id, "url": url}
                                     })
-                            
-                            try:
+
+                            with contextlib.suppress(Exception):
                                 redis_client.setex(seen_key, 7 * 86400, "1")
-                            except Exception: pass
                         except Exception as e:
                             logger.debug(f"    [Hastebin] raw fetch failed for {paste_id}: {e}")
-                        
+
                         await asyncio.sleep(1) # Courtesy rate limit
-                        
+
                 except Exception as e:
                     logger.warning(f"    [Hastebin] Exa search failed: {e}")
-                    
+
         return results
 
 
@@ -609,13 +610,13 @@ class NetlasService:
                 return account_num, api_key
         return None
 
-    async def search(self, query: str) -> List[Dict[str, Any]]:
+    async def search(self, query: str) -> list[dict[str, Any]]:
         """
         Run a single Netlas response search query.
         Returns list of {token, chat_id, meta} dicts.
         Respects daily limits — returns [] if both accounts exhausted.
         """
-        from app.services.scanners import TOKEN_PATTERN, _is_valid_token, CHAT_ID_PATTERN
+        from app.services.scanners import CHAT_ID_PATTERN, TOKEN_PATTERN, _is_valid_token
 
         if not self.keys:
             logger.warning("    [Netlas] No API keys configured (NETLAS_API_KEY_1 / _2)")
@@ -647,7 +648,7 @@ class NetlasService:
                 f"query: {query[:60]}..."
             )
 
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             for item in (data or {}).get("items", []):
                 d = item.get("data", {})
                 http = d.get("http", {})
@@ -719,15 +720,16 @@ class ReplitService:
     def __init__(self):
         self.timeout = httpx.Timeout(20.0, connect=10.0)
 
-    async def search(self, query: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str = None) -> list[dict[str, Any]]:
+        import hashlib
+
         from app.services.scanners import (
             TOKEN_PATTERN,
             _is_valid_token,
         )
         from app.workers.tasks.flow_tasks import redis_client
-        import hashlib
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         queries = [query] if query else self.QUERIES
 
         async with httpx.AsyncClient(
@@ -821,10 +823,8 @@ class ReplitService:
                             pass
                         await asyncio.sleep(1)
 
-                    try:
+                    with contextlib.suppress(Exception):
                         redis_client.setex(redis_key, 7 * 86400, "1")
-                    except Exception:
-                        pass
 
                     await asyncio.sleep(2)
                 await asyncio.sleep(3)
@@ -875,16 +875,17 @@ class PostmanService:
         except Exception:
             pass
 
-    async def search(self, query: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str = None) -> list[dict[str, Any]]:
+        import hashlib
+
         from app.services.scanners import TOKEN_PATTERN, _is_valid_token
         from app.workers.tasks.flow_tasks import redis_client
-        import hashlib
 
         if not self.api_key:
             logger.warning("[Postman] No POSTMAN_API_KEY configured")
             return []
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         queries = [query] if query else self.QUERIES
         seen_tokens: set = set()
 
@@ -977,10 +978,8 @@ class PostmanService:
                             },
                         })
 
-                    try:
+                    with contextlib.suppress(Exception):
                         redis_client.setex(redis_key, 7 * 86400, "1")
-                    except Exception:
-                        pass
 
                     await asyncio.sleep(1)
                 await asyncio.sleep(2)
@@ -997,7 +996,7 @@ class SearchcodeService:
     def __init__(self):
         self.timeout = httpx.Timeout(30.0, connect=10.0)
 
-    async def search(self, query: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str = None) -> list[dict[str, Any]]:
         from app.services.scanners import (
             TOKEN_PATTERN,
             _is_valid_token,
@@ -1005,7 +1004,7 @@ class SearchcodeService:
         )
 
         queries = [query] if query else self.DEFAULT_QUERIES
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         seen_tokens: set = set()
 
         async with get_async_http_client(timeout=self.timeout, follow_redirects=True) as client:

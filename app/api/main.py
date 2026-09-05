@@ -1,12 +1,14 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from app.core.config import settings
-from app.api.routers import monitor, scan, ingest
+import asyncio
 import logging
 import sys
-import asyncio
 import threading
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.routers import ingest, monitor, scan
+from app.core.config import settings
 
 # ==============================================
 # LOGGING CONFIGURATION
@@ -133,6 +135,7 @@ app.add_middleware(SlowAPIMiddleware)
 # Dev origins are included by default; add extra domains via EXTRA_CORS_ORIGINS
 # in .env (comma-separated, e.g. "https://my-tunnel.ngrok.io").
 import os as _os
+
 _extra_origins = [o.strip() for o in _os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()]
 _cors_origins = [
     "http://localhost:3000",
@@ -158,14 +161,17 @@ app.include_router(ingest.router)
 
 # Health check endpoints
 from app.api.routers import health
+
 app.include_router(health.router)
 
 # Media proxy endpoint
 from app.api.routers import media
+
 app.include_router(media.router, prefix="/media", tags=["media"])
 
 # Honeypot webhook receiver — only active when HONEYPOT_MODE=True
 from app.api.routers import honeypot
+
 app.include_router(honeypot.router)
 
 @app.get("/")

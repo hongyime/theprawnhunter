@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.audit import AuditEvent, AuditLogger
@@ -154,7 +154,7 @@ async def close_revoked_topics_logic(
         return result
 
     broadcaster = get_broadcaster()
-    closed_at = datetime.now(timezone.utc).isoformat()
+    closed_at = datetime.now(UTC).isoformat()
     monitor_group_id = getattr(settings, "MONITOR_GROUP_ID", None)
     delay_seconds = max(0.0, float(getattr(settings, "REVOKED_TOPIC_CLOSE_DELAY_SECONDS", 0.5) or 0.0))
     timeout_seconds = float(getattr(settings, "REVOKED_TOPIC_CLOSE_TIMEOUT_SECONDS", 10.0) or 10.0)

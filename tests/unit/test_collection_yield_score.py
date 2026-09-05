@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION_PATH = (
     REPO_ROOT / "supabase" / "migrations" / "20260903000003_collection_yield_score.sql"

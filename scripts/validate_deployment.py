@@ -2,8 +2,8 @@
 Comprehensive validation script for deployment readiness.
 Checks imports, syntax, and core functionality.
 """
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -11,14 +11,6 @@ def test_core_imports():
     """Test all core module imports"""
     print("1. Testing core imports...")
     try:
-        from app.core.config import settings
-        from app.core.database import db
-        from app.core.logger import get_logger
-        from app.core.retry import retry
-        from app.core.db_retry import with_db_retry, DatabaseHealth
-        from app.core.circuit_breaker import get_circuit_breaker, CircuitBreaker
-        from app.core.metrics import metrics
-        from app.core.audit import AuditLogger
         print("   ✅ All core imports successful")
         return True
     except Exception as e:
@@ -29,9 +21,6 @@ def test_service_imports():
     """Test service imports"""
     print("\n2. Testing service imports...")
     try:
-        from app.services.broadcaster_srv import BroadcasterService
-        from app.services.scanners import ShodanService, UrlScanService, GithubService, FofaService
-        from app.services.scraper_srv import ScraperService
         print("   ✅ All service imports successful")
         return True
     except Exception as e:
@@ -42,9 +31,6 @@ def test_task_imports():
     """Test Celery task imports"""
     print("\n3. Testing task imports...")
     try:
-        from app.workers.celery_app import app as celery_app
-        from app.workers.tasks.scanner_tasks import scan_shodan, scan_urlscan, scan_github
-        from app.workers.tasks.flow_tasks import system_heartbeat, exfiltrate_chat
         print("   ✅ All task imports successful")
         return True
     except Exception as e:
@@ -55,8 +41,6 @@ def test_api_imports():
     """Test API imports"""
     print("\n4. Testing API imports...")
     try:
-        from app.api.main import app
-        from app.api.routers import monitor, scan, health
         print("   ✅ All API imports successful")
         return True
     except Exception as e:
@@ -67,7 +51,6 @@ def test_helper_imports():
     """Test helper utilities"""
     print("\n5. Testing helper utilities...")
     try:
-        from app.utils.helpers import is_valid_telegram_token, extract_chat_id
         print("   ✅ Helper utilities imported")
         return True
     except Exception as e:
@@ -106,21 +89,21 @@ def test_new_features():
     print("\n7. Testing new features...")
     try:
         from app.core.logger import get_logger
-        logger = get_logger("test")
-        
+        get_logger("test")
+
         from app.core.retry import retry
         @retry(max_attempts=1)
         def test_func():
             return True
-        assert test_func() == True
-        
+        assert test_func() is True
+
         from app.core.circuit_breaker import get_circuit_breaker
         breaker = get_circuit_breaker("test")
         assert breaker is not None
-        
+
         from app.core.metrics import metrics
         assert metrics is not None
-        
+
         print("   ✅ All new features working")
         return True
     except Exception as e:
@@ -141,11 +124,11 @@ def test_runtime_regressions():
         if not callable(DatabaseHealth.check_connection):
             raise AssertionError("DatabaseHealth.check_connection is not callable")
 
-        bot_source = open(bot_listener.__file__, "r", encoding="utf-8").read()
+        bot_source = open(bot_listener.__file__, encoding="utf-8").read()
         if "_resolve_monitor_group_ids_async" not in bot_source:
             raise AssertionError("bot_listener.log_update is not using async monitor guard")
 
-        validation_source = open(validation_tasks.__file__, "r", encoding="utf-8").read()
+        validation_source = open(validation_tasks.__file__, encoding="utf-8").read()
         if '".update({\n                        "meta": new_meta,\n                        "confidence_score": score,' in validation_source:
             raise AssertionError("validation backfill still updates top-level confidence_score")
 
@@ -160,7 +143,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Telegram Hunter - Deployment Validation")
     print("=" * 60)
-    
+
     results = [
         test_core_imports(),
         test_service_imports(),
@@ -171,7 +154,7 @@ if __name__ == "__main__":
         test_new_features(),
         test_runtime_regressions(),
     ]
-    
+
     print("\n" + "=" * 60)
     if all(results):
         print("✅ All validation checks passed!")

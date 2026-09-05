@@ -1,37 +1,43 @@
-import logging
 import asyncio
+import logging
 import os
-import sys
+import shutil
 import signal
+import sys
 import uuid
+from typing import Any
+
 import redis.asyncio as redis
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.error import Conflict
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
-    ContextTypes,
-    CommandHandler,
-    MessageHandler,
-    ConversationHandler,
     ChatMemberHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
     filters,
-    Application
 )
-from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown
 from telegram.request import HTTPXRequest
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
-import shutil
-from typing import Any
-from telegram.helpers import escape_markdown
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from app.core.config import settings
-from app.core.database import db
-from app.core.constants import LOCK_TTL_SECONDS, SESSION_FILE_PERMISSIONS, WORKER_HEARTBEAT_TIMEOUT_SECONDS, TELEGRAM_SERVICE_NOTIFICATIONS_ID
+import contextlib
 
+from app.core.config import settings
+from app.core.constants import (
+    LOCK_TTL_SECONDS,
+    SESSION_FILE_PERMISSIONS,
+    TELEGRAM_SERVICE_NOTIFICATIONS_ID,
+)
+from app.core.database import db
 
 # Unique ID for this process instance — used in distributed Redis locks
 INSTANCE_ID = str(uuid.uuid4())
@@ -270,10 +276,10 @@ async def opt_out_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_user_admin = is_admin(update)
-    
+
     # Show all available bots in the help text
     bot_list = ", ".join([f"@{u}" for u in _bot_usernames.values()])
-    
+
     if is_user_admin:
         help_text = (
             "📖 **Telegram Hunter Bot Help**\n\n"
@@ -299,7 +305,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• /help - Show this help message\n\n"
             "Please use /starthunter in a private chat to begin."
         )
-        
+
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 async def bots_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -307,12 +313,12 @@ async def bots_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         await update.message.reply_text("⚠️ This command is restricted to administrators.")
         return
-    
+
     lines = ["🤖 **Bot Rotation Pool**\n"]
     for token, username in _bot_usernames.items():
         status = "🔒 Locked" if token in _locked_bots else "✅ Available"
         lines.append(f"• @{username} — {status}")
-    
+
     lines.append(f"\n**Total**: {len(_bot_usernames)} bots")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
@@ -569,17 +575,15 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 3. Check System Pause State
     is_paused = False
     if redis_client:
-        try:
+        with contextlib.suppress(Exception):
             is_paused = await redis_client.get(PAUSE_KEY)
-        except Exception:
-            pass
-            
+
     system_status = "⏸️ **PAUSED**" if is_paused else "▶️ **RUNNING**"
-    
+
     # 4. Bot pool info
     bot_count = len(_bot_usernames)
     locked_count = len(_locked_bots)
-    
+
     msg = (
         f"📊 **System Status**\n\n"
         f"**State**: {system_status}\n"
@@ -594,7 +598,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
-    
+
     if redis_client:
         await redis_client.set(PAUSE_KEY, "true")
         await update.message.reply_text("⏸️ **System Paused**.\nScanners and Broadcaster will skip their next run.")
@@ -629,13 +633,13 @@ async def watchdog_loop(bot):
     - Checks Worker Last Seen timestamp.
     """
     logger.info("🐶 Watchdog System Started.")
-    
+
     # Initial State
     state = {
         "redis": True,
         "worker": True
     }
-    
+
     while not stop_event.is_set():
         try:
             # Check Redis
@@ -649,10 +653,10 @@ async def watchdog_loop(bot):
                     if state["redis"]:
                         state["redis"] = False
                         await _send_alert(bot, f"❌ **CRITICAL**: Redis connection LOST! ({str(e)[:20]})")
-                    
+
                     # If Redis is down, we can't check worker stats from Redis
                     await asyncio.sleep(60)
-                    continue 
+                    continue
 
                 # Check Worker Heartbeat
                 try:
@@ -660,7 +664,7 @@ async def watchdog_loop(bot):
                     if last_seen:
                         import time
                         age = int(time.time()) - int(last_seen)
-                        
+
                         if age > (45 * 60): # 45 minutes
                             if state["worker"]:
                                 state["worker"] = False
@@ -671,9 +675,9 @@ async def watchdog_loop(bot):
                                 await _send_alert(bot, "✅ **RECOVERY**: Worker heartbeat detected.")
                 except Exception:
                     pass
-            
+
             await asyncio.sleep(60)
-        
+
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -698,7 +702,7 @@ async def schedule_deletion(context: ContextTypes.DEFAULT_TYPE, chat_id: int, me
             await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         except Exception as e:
             logger.error(f"Failed to delete sensitive message {message_id}: {e}")
-    
+
     asyncio.create_task(delete_task())
 
 
@@ -792,13 +796,12 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     # Track both the user's /starthunter command and our reply for full wipe
     context.user_data['bot_messages'] = [update.message.message_id, sent_msg.message_id]
-    
+
     return WAIT_PHONE
 
 async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     phone = update.message.text.strip()
-    chat_id = update.effective_chat.id
-    
+
     # Track user's phone message for wipe
     context.user_data.setdefault('bot_messages', []).append(update.message.message_id)
 
@@ -808,20 +811,18 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     temp_dir = tempfile.gettempdir()
     session_id = uuid.uuid4().hex
     temp_session_path = os.path.join(temp_dir, f"temp_login_{session_id}")
-    
+
     # Clean up old temp file if exists (not strictly needed with uuid but good practice)
     if os.path.exists(temp_session_path + ".session"):
-        try:
+        with contextlib.suppress(Exception):
             os.remove(temp_session_path + ".session")
-        except Exception:
-            pass
 
     try:
         client = TelegramClient(temp_session_path, settings.TELEGRAM_API_ID, settings.TELEGRAM_API_HASH)
         await client.connect()
-        
+
         sent_code = await client.send_code_request(phone)
-        
+
         context.user_data['client'] = client
         context.user_data['phone'] = phone
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
@@ -836,7 +837,7 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         )
         sent_msg = await update.message.reply_text(msg)
         context.user_data['bot_messages'].append(sent_msg.message_id)
-        
+
         return WAIT_CODE
 
     except Exception as e:
@@ -851,13 +852,13 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw_code = update.message.text
     chat_id = update.effective_chat.id
-    
+
     # Always schedule deletion of the code
     context.user_data.setdefault('bot_messages', []).append(update.message.message_id)
 
     # Sanitize code
     code = raw_code.replace(" ", "").replace("-", "").replace(",", "").strip()
-    
+
     client = context.user_data.get('client')
     phone = context.user_data.get('phone')
     phone_code_hash = context.user_data.get('phone_code_hash')
@@ -890,12 +891,12 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     password = update.message.text
     chat_id = update.effective_chat.id
-    
+
     # Always schedule deletion of password
     context.user_data.setdefault('bot_messages', []).append(update.message.message_id)
 
     client = context.user_data.get('client')
-    
+
     if not client or not client.is_connected():
         err = await update.message.reply_text("❌ Session expired. Please start over with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
@@ -919,16 +920,16 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     temp_session_path = context.user_data.get('temp_session_path')
     chat_id = update.effective_chat.id
     current_bot_username = context.bot.username or "unknown"
-    
+
     try:
         me = await client.get_me()
-        
+
         # Determine filename according to requirements: account_{phone}_{timestamp}.session
         import time
         phone_clean = context.user_data.get('phone', 'unknown').lstrip('+').replace(' ', '').replace('-', '')
         timestamp = int(time.time())
         filename = f"account_{phone_clean}_{timestamp}"
-        
+
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         sessions_dir = os.path.join(base_dir, "sessions")
         os.makedirs(sessions_dir, exist_ok=True)
@@ -972,7 +973,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception as cleanup_exc:
             logger.warning(f"[ReloginCleanup] non-fatal: {cleanup_exc}")
         # ──────────────────────────────────────────────────────────────
-        
+
         # Delete bot messages we sent during the flow (Footprint Cleanup)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
 
@@ -996,7 +997,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info(f"Deleted dialog with bot {context.bot.username} for logged in user {filename}")
         except Exception as e:
             logger.error(f"Failed footprint cleanup: {e}")
-        
+
         await client.disconnect()
 
         # Copy to final destination
@@ -1081,11 +1082,11 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             current_token = context.bot_data.get('_bot_token', '')
             if current_token:
                 _locked_bots.add(current_token)
-            
+
             other_bots = _get_other_bot_usernames(current_bot_username)
             if not other_bots:
                 other_bots = _get_all_bot_usernames_except(current_bot_username)
-            
+
             if other_bots:
                 bot_links = "\n".join([f"• @{b}" for b in other_bots])
                 lock_msg = (
@@ -1102,7 +1103,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     f"This bot (@{current_bot_username}) could not save the session file.\n"
                     f"No other bots are available at this time. Please try again later."
                 )
-            
+
             sent_msg = await update.message.reply_text(lock_msg, parse_mode=ParseMode.MARKDOWN)
             await schedule_deletion(context, chat_id, sent_msg.message_id, delay=30)
             return ConversationHandler.END
@@ -1113,10 +1114,8 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if current_token:
             _locked_bots.discard(current_token)
 
-        try:
+        with contextlib.suppress(Exception):
             os.remove(temp_session_path + ".session")
-        except Exception:
-            pass
 
         # Auto-join monitor group step: generate a single-use invite link and
         # DM it to the user. The user's session MUST be a member of the
@@ -1183,10 +1182,8 @@ async def cancel_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     """Cancels and ends the conversation — silent wipe for OPSEC."""
     client = context.user_data.get('client')
     if client:
-        try:
+        with contextlib.suppress(Exception):
             await client.disconnect()
-        except Exception:
-            pass
     await _cleanup_temp_session(context)
     chat_id = update.effective_chat.id
     await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
@@ -1198,10 +1195,8 @@ async def _conversation_timeout(update: Update, context: ContextTypes.DEFAULT_TY
     orphaned temp session file + closes the Telethon client."""
     client = context.user_data.get('client')
     if client:
-        try:
+        with contextlib.suppress(Exception):
             await client.disconnect()
-        except Exception:
-            pass
     await _cleanup_temp_session(context)
     chat_id = update.effective_chat.id if update and update.effective_chat else None
     if chat_id:
@@ -1594,11 +1589,11 @@ async def main():
         def _handle_signal(): stop_event.set()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, _handle_signal)
-    
+
     tasks = []
     for i, token in enumerate(tokens):
         tasks.append(asyncio.create_task(_run_bot(token, is_primary=(i == 0))))
-    
+
     await asyncio.gather(*tasks, return_exceptions=True)
     await redis_client.aclose()
     logger.info("Bye!")

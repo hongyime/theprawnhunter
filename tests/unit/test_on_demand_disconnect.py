@@ -4,9 +4,9 @@ and MTProto conflict resilience.
 """
 
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers — build a minimal UserAgentService without touching real config
@@ -256,8 +256,6 @@ class TestConcurrency:
         svc.client = client
 
         call_order = []
-
-        original_start = svc.start
 
         async def tracked_start():
             call_order.append("start")

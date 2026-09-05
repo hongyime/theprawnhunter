@@ -180,7 +180,7 @@ async def detailed_health():
         "status": "healthy",
         "checks": {}
     }
-    
+
     # Check Database
     try:
         from app.core.db_retry import DatabaseHealth
@@ -189,7 +189,7 @@ async def detailed_health():
     except Exception as e:
         health_status["checks"]["database"] = {"status": "unhealthy", "error": str(e)}
         health_status["status"] = "degraded"
-    
+
     # Check Redis
     try:
         import redis
@@ -199,7 +199,7 @@ async def detailed_health():
     except Exception as e:
         health_status["checks"]["redis"] = {"status": "unhealthy", "error": str(e)}
         health_status["status"] = "degraded"
-    
+
     # Check Telegram Bot API
     try:
         import httpx
@@ -217,11 +217,11 @@ async def detailed_health():
         # Do NOT include the exception string — it may contain the bot token in a URL
         health_status["checks"]["telegram_bot"] = {"status": "unhealthy", "error": "connection_failed"}
         health_status["status"] = "degraded"
-    
+
     # Return 503 if any critical service is down
     if health_status["status"] == "degraded":
         raise HTTPException(status_code=503, detail=health_status)
-    
+
     return health_status
 
 
@@ -245,6 +245,7 @@ async def get_queue_health():
     """
     try:
         import redis
+
         from app.core.queue_monitor import get_queue_snapshot, summarize_queue_health
 
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -273,6 +274,7 @@ async def get_operational_health():
 
     try:
         import redis
+
         from app.core.queue_monitor import get_queue_snapshot, summarize_queue_health
 
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -359,10 +361,11 @@ async def get_quotas():
     pct}}``. Services whose Redis counter is absent report ``used_today=0``.
     ``limit`` is null when no budget is known for a service.
     """
-    import redis
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    today_key = datetime.now(timezone.utc).strftime("%Y%m%d")
+    import redis
+
+    today_key = datetime.now(UTC).strftime("%Y%m%d")
     try:
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
         out: dict[str, dict] = {}

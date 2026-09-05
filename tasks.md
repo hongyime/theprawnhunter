@@ -32,6 +32,15 @@
 **Issue:** some environments still carry the older writable `confidence_score` column shape, while the canonical schema is generated-from-`meta`. Older validator code also tried to update the top-level column directly.  
 **Fix:** added a canonicalizing migration for legacy environments; validation scripts assert the backfill path only updates `meta`. Rebuild required for any stale worker image.
 
+### P0-005 — Frontend release drift exposes findings without auth
+**Status:** open  
+**Severity:** HIGH (security)  
+**Diagnosis:** 207bf47  
+**Issue:** Anonymous Vercel deployment + local frontend expose findings data because both run old SHA 84e2e47. Current source already has auth/RLS fixes but deployments not updated.  
+**Impact:** Unauthenticated users can access `/monitor/findings` endpoint and view all discovered credentials.  
+**Fix Required:** (1) Push 22+ commits to origin/main, (2) Trigger Vercel rebuild, (3) Rebuild local Docker frontend container, (4) QA verifies fresh-session gate blocks anonymous access.  
+**Blocking:** Production-code changes must wait until frontend is redeployed with auth fixes.  
+
 ---
 
 ## P1 — Guardrails

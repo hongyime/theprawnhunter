@@ -23,12 +23,12 @@ import os
 
 import httpx
 
-from app.workers.celery_app import app, _run_sync
+from app.workers.celery_app import _run_sync, app
+from app.workers.tasks.flow_tasks import redis_client
 from app.workers.tasks.scanner_tasks import (
     _save_credentials_async,
     _send_log_async,
 )
-from app.workers.tasks.flow_tasks import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ async def _poll_github_events_async():
         return "paused"
 
     # Reuse the GithubService rotation pool so firehose load shares the budget.
-    from app.services.scanners import GithubService, _is_valid_token, TOKEN_PATTERN
+    from app.services.scanners import TOKEN_PATTERN, GithubService, _is_valid_token
     gh = GithubService()
     token = gh._get_token()
     if not token:
@@ -123,13 +123,13 @@ async def _poll_github_events_async():
                     new_last_id = ev_id  # first event of first page = newest
                 ev_type = ev.get("type")
                 valid_types = {"PushEvent", "IssuesEvent", "PullRequestEvent", "IssueCommentEvent"}
-                
+
                 if ev_type not in valid_types:
                     continue
 
                 payload = ev.get("payload") or {}
                 repo_name = (ev.get("repo") or {}).get("name")
-                
+
                 text_blobs = []
                 source_meta = {
                     "repo": repo_name,
@@ -156,18 +156,18 @@ async def _poll_github_events_async():
                             if cr.status_code != 200:
                                 continue
                             commit_data = cr.json()
-                            
+
                             for f in (commit_data.get("files") or []):
                                 patch = f.get("patch")
                                 if patch:
                                     text_blobs.append(patch)
-                            
+
                             source_meta["commit_sha"] = commit_sha
                             source_meta["commit_url"] = commit_url
-                            
+
                         except Exception as e:
                             logger.debug(f"[Firehose] commit fetch failed: {e}")
-                        
+
                         await asyncio.sleep(0.2)  # gentle pacing per commit fetch
 
                 elif ev_type == "IssuesEvent":
@@ -176,14 +176,14 @@ async def _poll_github_events_async():
                     if body:
                         text_blobs.append(body)
                     source_meta["issue_url"] = issue.get("html_url")
-                    
+
                 elif ev_type == "PullRequestEvent":
                     pr = payload.get("pull_request") or {}
                     body = pr.get("body")
                     if body:
                         text_blobs.append(body)
                     source_meta["pr_url"] = pr.get("html_url")
-                    
+
                 elif ev_type == "IssueCommentEvent":
                     comment = payload.get("comment") or {}
                     body = comment.get("body")

@@ -1,10 +1,13 @@
-from app.workers.celery_app import app, _run_sync
-from app.core.database import db
-from app.core.config import settings
-from app.workers.tasks.flow_tasks import async_execute, get_broadcaster, _broadcast_logic
 import asyncio
 import logging
+from datetime import UTC
+
 from telegram.error import TelegramError
+
+from app.core.config import settings
+from app.core.database import db
+from app.workers.celery_app import _run_sync, app
+from app.workers.tasks.flow_tasks import _broadcast_logic, async_execute, get_broadcaster
 
 logger = logging.getLogger("audit.tasks")
 logger.setLevel(logging.INFO)
@@ -36,8 +39,9 @@ async def _audit_active_topics_async():
     # Cursor: created_at of last-seen credential (ISO string stored in Redis)
     CURSOR_KEY = "audit:topics:cursor"
     try:
-        from app.core.config import settings as _s
         import redis as _redis
+
+        from app.core.config import settings as _s
         _r = _redis.from_url(_s.REDIS_URL, decode_responses=True)
         cursor_val = _r.get(CURSOR_KEY)  # ISO timestamp or None
     except Exception:
@@ -198,7 +202,7 @@ def system_self_heal():
 
 
 async def _system_self_heal_async():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     broadcaster = get_broadcaster()
     await broadcaster.send_log("🩹 **Self-Heal**: Starting system-wide sync and recovery...")
@@ -220,7 +224,7 @@ async def _system_self_heal_async():
                     int(mid)
                 except ValueError:
                     continue  # Skip non-numeric monitor IDs (e.g. @username) since chat_id is bigint in DB
-                
+
                 res = await async_execute(
                     db.table("discovered_credentials")
                     .select("id")
@@ -260,8 +264,9 @@ async def _system_self_heal_async():
         # instead of always fetching the same first-N rows (which may never cycle through).
         HEAL_CURSOR_KEY = "self_heal:cursor"
         try:
-            from app.core.config import settings as _sh_s
             import redis as _redis
+
+            from app.core.config import settings as _sh_s
             _rh = _redis.from_url(_sh_s.REDIS_URL, decode_responses=True)
             heal_cursor = _rh.get(HEAL_CURSOR_KEY)
         except Exception:
@@ -313,7 +318,7 @@ async def _system_self_heal_async():
                 )
                 meta = dict((fresh.data or {}).get("meta") or {})
                 meta["topic_id"] = new_topic_id
-                meta["healed_at"] = datetime.now(timezone.utc).isoformat()
+                meta["healed_at"] = datetime.now(UTC).isoformat()
 
                 await async_execute(
                     db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id)
@@ -328,6 +333,7 @@ async def _system_self_heal_async():
     rename_count = 0
     try:
         import httpx
+
         from app.core.security import security
 
         unknown_q = (
@@ -512,8 +518,8 @@ def prune_audit_logs():
 
 async def _prune_audit_logs_async():
     try:
-        from datetime import datetime, timedelta, timezone
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=90)).isoformat()
 
         # Count before delete for the log message
         count_res = await async_execute(
@@ -562,6 +568,7 @@ def cleanup_matkap_bots():
 async def _cleanup_matkap_bots_async():
     try:
         import redis as _redis_sync
+
         from app.core.config import settings as _s
         rc = _redis_sync.from_url(_s.REDIS_URL, decode_responses=True)
 

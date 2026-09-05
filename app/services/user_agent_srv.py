@@ -1,13 +1,16 @@
-import os
 import asyncio
-from telethon import TelegramClient, types, errors
-from telethon.errors import SecurityError
-from app.core.config import settings
-import time
+import contextlib
 import logging
+import os
+import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
+from telethon import TelegramClient, errors, types
+from telethon.errors import SecurityError
+
+from app.core.config import settings
 from app.services._scraper.lifecycle import TelegramClientLifecycle
 
 logger = logging.getLogger("user_agent")
@@ -212,14 +215,14 @@ class UserAgentService:
     def _discover_sessions(self):
         """Scans BASE_DIR and telegram_accounts DB for valid .session files."""
         new_sessions = set() # Use set to avoid duplicates
-        
+
         # 1. Check Env Var Override first (Single Session Mode)
         env_session = os.getenv("USER_SESSION_NAME")
         if env_session:
             path = os.path.join(SESSIONS_DIR, f"{env_session}.session")
             if os.path.exists(path):
                 new_sessions.add(path)
-                self.sessions = sorted(list(new_sessions))
+                self.sessions = sorted(new_sessions)
                 return
 
         # 2. Scan Directory (sessions/)
@@ -260,13 +263,13 @@ class UserAgentService:
         if not new_sessions:
             default_path = os.path.abspath(os.path.join(SESSIONS_DIR, "user_session.session"))
             new_sessions.add(default_path)
-            
-        final_list = sorted(list(new_sessions))
-        
+
+        final_list = sorted(new_sessions)
+
         # Log only if the session list has changed
         if final_list != self.sessions:
             logger.info(f"    🔄 [UserAgent] Discovered {len(final_list)} session(s): {[os.path.basename(s) for s in final_list]}")
-            
+
         self.sessions = final_list
 
     # ------------------------------------------------------------------
@@ -282,8 +285,8 @@ class UserAgentService:
         was recorded within the last hour, escalate to 30 minutes. Cooldown is
         extend-only -- an existing longer cooldown is preserved.
         """
-        from datetime import datetime, timedelta, timezone
-        now = datetime.now(timezone.utc)
+        from datetime import datetime, timedelta
+        now = datetime.now(UTC)
         one_hour_ago = now - timedelta(hours=1)
 
         history = [
@@ -313,11 +316,11 @@ class UserAgentService:
 
     def _is_session_on_local_cooldown(self, session_path: str) -> bool:
         """Return True if session_path is currently in local cooldown."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         expires_at = self._session_cooldowns.get(session_path)
         if not expires_at:
             return False
-        if datetime.now(timezone.utc) >= expires_at:
+        if datetime.now(UTC) >= expires_at:
             # Expired -- clean up so it doesn't skew get_pool_status()
             self._session_cooldowns.pop(session_path, None)
             return False
@@ -330,7 +333,7 @@ class UserAgentService:
         reflects cross-worker cooldowns (FloodWait, MTProto backoff, etc.)
         set outside of _mark_session_failed().
         """
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
         try:
             from app.core.redis_srv import redis_srv
             ttl = redis_srv.get_cooldown_remaining(cooldown_key)
@@ -338,7 +341,7 @@ class UserAgentService:
             return
         if not ttl or ttl <= 0:
             return
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         new_expiry = now + timedelta(seconds=int(ttl))
         existing = self._session_cooldowns.get(session_path)
         if existing is None or new_expiry > existing:
@@ -347,11 +350,11 @@ class UserAgentService:
 
     def _log_recovery_if_applicable(self, session_path: str) -> None:
         """Emit an INFO log with duration-on-cooldown if this session was previously cooled down."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         started_at = self._session_cooldown_started.pop(session_path, None)
         if started_at is None:
             return
-        duration_s = (datetime.now(timezone.utc) - started_at).total_seconds()
+        duration_s = (datetime.now(UTC) - started_at).total_seconds()
         session_name = os.path.splitext(os.path.basename(session_path))[0]
         logger.info(
             f"    🟢 [UserAgent] Session '{session_name}' recovered after "
@@ -363,10 +366,10 @@ class UserAgentService:
 
     def _emit_all_on_cooldown_warning(self) -> None:
         """When every known session is on local cooldown, log a WARNING with the earliest recovery time."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         if not self.sessions:
             return
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         active = {
             p: self._session_cooldowns[p]
             for p in self.sessions
@@ -399,8 +402,8 @@ class UserAgentService:
         used for cross-worker coordination are mirrored into the local dict on
         every start() attempt so this stays a useful diagnostic surface.
         """
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        from datetime import datetime
+        now = datetime.now(UTC)
         on_cooldown_expiries: list = []
         for session_path in self.sessions:
             expires = self._session_cooldowns.get(session_path)
@@ -426,7 +429,7 @@ class UserAgentService:
 
     async def start(self):
         """
-        Starts the user client. 
+        Starts the user client.
         Rotates through available sessions to find a usable one.
         On-demand pattern: caller MUST call _disconnect() when done.
         """
@@ -436,7 +439,7 @@ class UserAgentService:
 
         if not self.sessions:
             self._discover_sessions()
-            
+
         # Start background refresher if not already running
         if self._refresher_task is None:
             self._refresher_task = asyncio.create_task(self._session_refresher_loop())
@@ -449,15 +452,15 @@ class UserAgentService:
 
         # Try up to N times (where N = number of sessions) to find a usable one
         from app.core.redis_srv import redis_srv
-        
+
         attempts = len(self.sessions)
         for _ in range(attempts):
             # 1. Round Robin Selection (Global Redis Counter)
             global_idx = redis_srv.get_next_rotation_index("user_agent", attempts)
-            
+
             session_path = self.sessions[global_idx]
             session_name = os.path.splitext(os.path.basename(session_path))[0]
-            
+
             # Update local reference
             self.current_index = global_idx
 
@@ -471,9 +474,9 @@ class UserAgentService:
             # mirrors Redis state so get_pool_status() stays accurate for the
             # operator-facing diagnostic surface.
             if self._is_session_on_local_cooldown(session_path):
-                from datetime import datetime as _dt, timezone as _tz
+                from datetime import datetime as _dt
                 _exp = self._session_cooldowns[session_path]
-                _remaining = int((_exp - _dt.now(_tz.utc)).total_seconds())
+                _remaining = int((_exp - _dt.now(UTC)).total_seconds())
                 logger.info(
                     f"    ⏳ [UserAgent] Session '{session_name}' local cooldown "
                     f"({_remaining}s, until {_exp.isoformat()}). Rotating..."
@@ -507,7 +510,7 @@ class UserAgentService:
                 if getattr(self.client.session, 'filename', '') == session_path:
                     self.current_session_name = session_name # Update tracker
                     return True
-                
+
                 # Disconnect old
                 session_filename = getattr(self.client.session, 'filename', None)
                 await self.client.disconnect()
@@ -522,19 +525,19 @@ class UserAgentService:
             import shutil
             import sqlite3
             TEMP_SESSION_PATH = f"/tmp/{session_name}" # Unique tmp path per session
-            
+
             try:
                 if os.path.exists(session_path):
                     shutil.copy2(session_path, f"{TEMP_SESSION_PATH}.session")
-                
+
                 conn = sqlite3.connect(f"{TEMP_SESSION_PATH}.session")
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA busy_timeout=20000")
                 conn.close()
-                
+
                 self.client = TelegramClient(TEMP_SESSION_PATH, self.api_id, self.api_hash)
                 await self.client.connect()
-                
+
                 if not await self.client.is_user_authorized():
                     logger.warning(f"    ⚠️ [UserAgent] Session '{session_name}' invalid/expired. Skipping.")
                     await self.client.disconnect()
@@ -546,7 +549,7 @@ class UserAgentService:
                         self._session_lock_key = None
                     await self._release_db_lease()
                     continue
-                    
+
                 self.current_session_name = session_name
                 redis_srv.reset_key(f"user_agent_fail:{session_name}")
                 self._log_recovery_if_applicable(session_path)
@@ -559,10 +562,8 @@ class UserAgentService:
                         f"    🔴 [UserAgent] MTProto conflict detected for '{session_name}': {e}. "
                         f"Backing off for {_MTPROTO_CONFLICT_BACKOFF}s..."
                     )
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.client.disconnect()
-                    except Exception:
-                        pass
                     self._cleanup_temp_session(f"{TEMP_SESSION_PATH}.session")
                     redis_srv.incr_key(f"user_agent_fail:{session_name}", 3600)
                     redis_srv.set_cooldown(cooldown_key, _MTPROTO_CONFLICT_BACKOFF + 5)
@@ -586,7 +587,7 @@ class UserAgentService:
                     self._session_lock_key = None
                 await self._release_db_lease()
                 continue
-        
+
         logger.error("    ❌ [UserAgent] All sessions failed or on cooldown.")
         self._emit_all_on_cooldown_warning()
         return False
@@ -657,13 +658,13 @@ class UserAgentService:
             phone = row.get("phone")
             if not phone:
                 return True
-            
+
             # Check if we already hold this lease (same instance_id and not expired)
             current_holder = row.get("locked_by")
             current_until = row.get("locked_until")
             if current_holder == self._instance_id and current_until:
                 # We already hold it -- just refresh the TTL
-                lease_until = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+                lease_until = (datetime.now(UTC) + timedelta(minutes=10)).isoformat()
                 await asyncio.to_thread(
                     lambda: db.table("telegram_accounts")
                         .update({"locked_until": lease_until})
@@ -673,9 +674,9 @@ class UserAgentService:
                 )
                 self._current_phone = phone
                 return True
-            
+
             # Try to acquire fresh lease (only if unlocked or expired)
-            lease_until = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+            lease_until = (datetime.now(UTC) + timedelta(minutes=10)).isoformat()
             updated = await asyncio.to_thread(
                 lambda: db.table("telegram_accounts")
                     .update({"locked_by": self._instance_id, "locked_until": lease_until})
@@ -714,10 +715,8 @@ class UserAgentService:
             await self._disconnect()
             if self._refresher_task and not self._refresher_task.done():
                 self._refresher_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._refresher_task
-                except asyncio.CancelledError:
-                    pass
                 self._refresher_task = None
 
     def _cleanup_temp_session(self, filename: str):
@@ -737,19 +736,16 @@ class UserAgentService:
         async with self.lock:
             if not await self.start():
                 return False
-            
+
             try:
                 bot_entity = await self.client.get_entity(bot_username)
-                if str(group_id).lstrip('-').isdigit(): 
-                    target = int(group_id)
-                else:
-                    target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 group_entity = await self.client.get_entity(target)
 
                 logger.info(f"    🚀 [UserAgent] Inviting {bot_username} to group...")
                 from telethon.tl.functions.channels import InviteToChannelRequest
                 from telethon.tl.functions.messages import AddChatUserRequest
-                
+
                 try:
                     await self.client(InviteToChannelRequest(channel=group_entity, users=[bot_entity]))
                     logger.info("    ✅ [UserAgent] Invite successful (Channel/Supergroup).")
@@ -796,22 +792,20 @@ class UserAgentService:
                 return False
             try:
                 bot_entity = await self.client.get_entity(bot_username)
-                if str(group_id).lstrip("-").isdigit():
-                    target = int(group_id)
-                else:
-                    target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 group_entity = await self.client.get_entity(target)
+
+                from datetime import datetime, timedelta
 
                 from telethon.tl.functions.channels import EditBannedRequest
                 from telethon.tl.types import ChatBannedRights
-                from datetime import datetime, timezone, timedelta
 
                 # Ban (kicks non-admin bots immediately)
                 await self.client(EditBannedRequest(
                     channel=group_entity,
                     participant=bot_entity,
                     banned_rights=ChatBannedRights(
-                        until_date=datetime.now(timezone.utc) + timedelta(seconds=30),
+                        until_date=datetime.now(UTC) + timedelta(seconds=30),
                         view_messages=True,
                     )
                 ))
@@ -850,8 +844,7 @@ class UserAgentService:
         async with self.lock:
             if not await self.start(): return None
             try:
-                if str(group_id).lstrip('-').isdigit(): target = int(group_id)
-                else: target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
                 from telethon.tl.functions.channels import GetForumTopicsRequest
                 res = await self.client(GetForumTopicsRequest(channel=entity, q=topic_name, offset_date=0, offset_id=0, offset_topic=0, limit=10))
@@ -870,8 +863,7 @@ class UserAgentService:
         async with self.lock:
             if not await self.start(): return None
             try:
-                if str(group_id).lstrip('-').isdigit(): target = int(group_id)
-                else: target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 group_entity = await self.client.get_entity(target)
                 if str(user_identifier).lstrip('-').isdigit(): user_target = int(user_identifier)
                 else: user_target = user_identifier
@@ -895,8 +887,7 @@ class UserAgentService:
         async with self.lock:
             if not await self.start(): return False
             try:
-                if str(group_id).lstrip('-').isdigit(): target = int(group_id)
-                else: target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 group_entity = await self.client.get_entity(target)
                 if str(user_identifier).lstrip('-').isdigit(): user_target = int(user_identifier)
                 else: user_target = user_identifier
@@ -982,8 +973,7 @@ class UserAgentService:
         async with self.lock:
             if not await self.start(): return False
             try:
-                if str(target).lstrip('-').isdigit(): entity = int(target)
-                else: entity = target
+                entity = int(target) if str(target).lstrip("-").isdigit() else target
                 await self.client.send_message(entity, message, reply_to=thread_id)
                 logger.info(f"    🗣️ [UserAgent] Sent (session={self.current_session_name}): '{message[:30]}...'")
                 return True
@@ -1000,10 +990,7 @@ class UserAgentService:
     def _archive_temp_path(message, message_id: int) -> str:
         original_name = os.path.basename(str(getattr(getattr(message, "file", None), "name", "") or ""))
         filename = f"{ARCHIVE_TMP_PREFIX}{uuid.uuid4().hex[:8]}_{message_id}"
-        if original_name:
-            filename = f"{filename}_{original_name}"
-        else:
-            filename = f"{filename}.bin"
+        filename = f"{filename}_{original_name}" if original_name else f"{filename}.bin"
         archive_dir = ARCHIVE_TMP_DIR.rstrip("/\\")
         return f"{archive_dir}/{filename}"
 
@@ -1216,11 +1203,10 @@ class UserAgentService:
             if not await self.start(): return 0
             cleared_count = 0
             try:
-                if str(group_id).lstrip('-').isdigit(): target = int(group_id)
-                else: target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
-                from telethon.tl.types import ChannelParticipantsKicked, ChatBannedRights
                 from telethon.tl.functions.channels import EditBannedRequest
+                from telethon.tl.types import ChannelParticipantsKicked, ChatBannedRights
                 async for user in self.client.iter_participants(entity, filter=ChannelParticipantsKicked()):
                     try:
                         await self.client(EditBannedRequest(channel=entity, participant=user, banned_rights=ChatBannedRights(until_date=None, view_messages=False)))
@@ -1234,13 +1220,13 @@ class UserAgentService:
         async with self.lock:
             if not await self.start(): return 0
             import datetime
+
             from telethon.tl.types import Message
             deleted_count = 0
             try:
-                if str(group_id).lstrip('-').isdigit(): target = int(group_id)
-                else: target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
-                now = datetime.datetime.now(datetime.timezone.utc)
+                now = datetime.datetime.now(datetime.UTC)
                 cutoff = now - datetime.timedelta(hours=age_hours)
                 async for message in self.client.iter_messages(entity, reply_to=topic_id):
                     if not isinstance(message, Message): continue
@@ -1257,8 +1243,7 @@ class UserAgentService:
         async with self.lock:
             if not await self.start(): return None
             try:
-                if str(group_id).lstrip('-').isdigit(): target = int(group_id)
-                else: target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
                 messages = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
                 if messages: return messages[0].id
@@ -1267,9 +1252,10 @@ class UserAgentService:
             finally: await self._disconnect()
 
     async def get_history(self, group_id: int | str, limit: int) -> list[dict]:
-        from telethon.tl.types import Message
-        from telethon.errors import FloodWaitError
         import os as _os
+
+        from telethon.errors import FloodWaitError
+        from telethon.tl.types import Message
         # Minimum sleep between successive get_history calls on the same session.
         # Prevents back-to-back MTProto requests across concurrent Celery tasks from
         # triggering Telegram FloodWait. Tune via MTPROTO_INTER_REQUEST_SLEEP (default 3s).
@@ -1278,8 +1264,7 @@ class UserAgentService:
             if not await self.start(): return []
             msgs = []
             try:
-                if str(group_id).lstrip('-').isdigit(): target = int(group_id)
-                else: target = group_id
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
                 async for message in self.client.iter_messages(entity, limit=limit):
                     if not isinstance(message, Message): continue
@@ -1323,10 +1308,11 @@ class UserAgentService:
         Returns: list of {"text", "chat_id", "chat_name", "message_id", "date"}.
         Empty list if FloodWait, no sessions, or search disabled.
         """
+        import os as _os
+
+        from telethon.errors import FloodWaitError
         from telethon.tl.functions.messages import SearchGlobalRequest
         from telethon.tl.types import InputMessagesFilterEmpty, InputPeerEmpty
-        from telethon.errors import FloodWaitError
-        import os as _os
 
         INTER_SLEEP = float(_os.getenv("MTPROTO_INTER_REQUEST_SLEEP", 3.0))
         results: list[dict] = []

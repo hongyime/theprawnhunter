@@ -2,8 +2,8 @@
 Validate configuration and dependencies at startup.
 Run this before deploying to catch configuration issues early.
 """
-import sys
 import os
+import sys
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,8 +28,8 @@ def validate_database():
     try:
         from app.core.database import db
         # Try a simple query
-        result = db.table("discovered_credentials").select("id").limit(1).execute()
-        print(f"   ✅ Database connected successfully")
+        db.table("discovered_credentials").select("id").limit(1).execute()
+        print("   ✅ Database connected successfully")
         return True
     except Exception as e:
         print(f"   ❌ Database connection failed: {e}")
@@ -46,12 +46,12 @@ def validate_runtime_guards():
         if not callable(DatabaseHealth.check_connection):
             raise TypeError("DatabaseHealth.check_connection is not callable")
 
-        with open(bot_listener.__file__, "r", encoding="utf-8") as fh:
+        with open(bot_listener.__file__, encoding="utf-8") as fh:
             bot_source = fh.read()
         if "_resolve_monitor_group_ids_async" not in bot_source:
             raise AssertionError("bot_listener.log_update is not using async monitor guard")
 
-        with open(validation_tasks.__file__, "r", encoding="utf-8") as fh:
+        with open(validation_tasks.__file__, encoding="utf-8") as fh:
             validation_source = fh.read()
         if '"confidence_score": score,' in validation_source and '".update({' in validation_source:
             marker = '.update({\n                        "meta": new_meta,\n                        "confidence_score": score,'
@@ -69,10 +69,11 @@ def validate_redis():
     print("\n3. Validating Redis connection...")
     try:
         import redis
+
         from app.core.config import settings
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
         client.ping()
-        print(f"   ✅ Redis connected successfully")
+        print("   ✅ Redis connected successfully")
         return True
     except Exception as e:
         print(f"   ❌ Redis connection failed: {e}")
@@ -83,11 +84,12 @@ def validate_telegram_api():
     print("\n5. Validating Telegram Bot API...")
     try:
         import requests
+
         from app.core.config import settings
-        
+
         url = f"https://api.telegram.org/bot{settings.MONITOR_BOT_TOKEN}/getMe"
         response = requests.get(url, timeout=10)
-        
+
         if response.status_code == 200 and response.json().get('ok'):
             bot_info = response.json()['result']
             print(f"   ✅ Bot API connected: @{bot_info.get('username')}")
@@ -127,14 +129,14 @@ def validate_optional_services():
     for name, is_configured, configured_msg, missing_msg in services:
         status = "✅" if is_configured else "ℹ️ "
         print(f"   {status} {name}: {configured_msg if is_configured else missing_msg}")
-    
+
     return True
 
 if __name__ == "__main__":
     print("=" * 60)
     print("Telegram Hunter - Startup Validation")
     print("=" * 60)
-    
+
     results = [
         validate_config(),
         validate_database(),
@@ -143,7 +145,7 @@ if __name__ == "__main__":
         validate_telegram_api(),
         validate_optional_services()
     ]
-    
+
     print("\n" + "=" * 60)
     if all(results[:4]):  # Only require first 4 to pass
         print("✅ All critical validations passed!")

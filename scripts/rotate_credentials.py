@@ -19,15 +19,16 @@ Runbook:
     7. Remove the legacy key from ENCRYPTION_KEY_LEGACY.
 """
 import argparse
-import sys
 import os
+import sys
 
 # Add project root to path for `python scripts/rotate_credentials.py` from any cwd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from cryptography.fernet import MultiFernet
+
 from app.core.database import db
 from app.core.security import security
-from cryptography.fernet import Fernet, MultiFernet
 
 
 def _is_multifernet() -> bool:
@@ -116,7 +117,7 @@ def main():
     rotated, skipped, failed = rotate_batch(args.batch_size, args.dry_run)
 
     print()
-    print(f"=== SUMMARY ===")
+    print("=== SUMMARY ===")
     print(f"Rotated: {rotated}")
     print(f"Skipped (already under primary): {skipped}")
     print(f"Failed: {failed}")

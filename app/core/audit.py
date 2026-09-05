@@ -4,8 +4,9 @@ Tracks credential access, token decryption, and security events.
 """
 import asyncio
 import re
-from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
+
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -75,9 +76,9 @@ class AuditLogger:
     @staticmethod
     def log(
         event_type: str,
-        credential_id: Optional[str] = None,
+        credential_id: str | None = None,
         user: str = "system",
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
         success: bool = True
     ):
         """
@@ -90,7 +91,7 @@ class AuditLogger:
             details: Additional event details (credential-shaped values are redacted)
             success: Whether the operation succeeded
         """
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         safe_details = _redact_details(details or {})
 
         audit_entry = {
@@ -186,8 +187,8 @@ class AuditLogger:
                 now = _time.time()
                 if now - getattr(AuditLogger, "_last_missing_table_log_ts", 0.0) > 300:
                     logger.error(
-                        f"Audit DB persist failed — audit_logs table missing. "
-                        f"Run database/init.sql. Suppressing further occurrences for 5min."
+                        "Audit DB persist failed — audit_logs table missing. "
+                        "Run database/init.sql. Suppressing further occurrences for 5min."
                     )
                     AuditLogger._last_missing_table_log_ts = now
                 return

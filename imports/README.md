@@ -16,7 +16,7 @@ token,chat_id
 2. Restart Docker: `docker compose restart`
 3. Files are renamed to `.pending` and moved to `processed/`
 
-**NOTE (T011)**: Current behavior only marks files as `.pending`; automated import task not yet implemented. Use manual import via `scripts/` if available, or add a Celery task to process `.pending` files.
+**NOTE**: The CSV import pipeline is now IMPLEMENTED. See `app/workers/tasks/import_tasks.py` and Celery beat schedule (runs every 5 minutes). Files are processed, validated, inserted to DB, and moved to `processed/`.
 
 ## Also Accepted
 

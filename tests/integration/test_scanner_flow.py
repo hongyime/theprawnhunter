@@ -2,8 +2,9 @@
 Integration tests for scanner workflow.
 Test the full flow from scanning to saving credentials.
 """
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, MagicMock, patch
 
 
 @pytest.mark.integration
@@ -69,14 +70,14 @@ class TestScannerWorkflow:
     def test_skip_duplicate_token(self, mock_requests, mock_db, mock_validate_task):
         """Tokens already in Redis soft-dedup key are skipped (not re-enqueued).
         Uses patch to inject a pre-seeded Redis mock so no live Redis needed."""
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as _patch
+
         from app.workers.tasks.scanner_tasks import _save_credentials
-        from unittest.mock import patch as _patch, MagicMock
-        import hashlib
 
         mock_validate_task.delay = Mock(return_value=None)
 
         token = "123456789:AAHhbW3Pzj9V5JhU5KzJ9V5JhU5KzJ9V5Jh"
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
 
         # Simulate Redis returning None from SET NX (key already exists -> duplicate)
         mock_redis = MagicMock()

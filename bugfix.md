@@ -8,21 +8,21 @@
 ## CRITICAL SEVERITY (Startup Crashes)
 
 ### BUG-001: GithubGistService Import Error
-**Status:** Open  
+**Status:** Done (fixed 2026-08-29)
 **Location:** `app/workers/tasks/scanner_tasks.py:17`  
 **Root Cause:** `GithubGistService` is imported from `app.services.scanners` but is defined in `app.services.scanners_extension`  
 **Impact:** Worker-scanners container crashes on startup with `ImportError`. All scanner tasks fail to load.  
 **Fix:** Move import to `from app.services.scanners_extension import GithubGistService`
 
 ### BUG-002: PublicWWW Service Not Instantiated
-**Status:** Open  
+**Status:** Done (fixed 2026-08-29)
 **Location:** `app/workers/tasks/scanner_tasks.py:763`  
 **Root Cause:** `scan_publicwww` task references `publicwww_srv` but this variable is never instantiated. Only `google_srv` and `netlas_srv` are instantiated from `scanners_extension`.  
 **Impact:** `scan_publicwww` task raises `NameError` at runtime. Scheduled task fails every 6 hours.  
 **Fix:** Add `publicwww_srv = PublicWwwService()` after line 46
 
 ### BUG-003: AuditLogger.log_event() Method Does Not Exist
-**Status:** Open  
+**Status:** Done (fixed 2026-08-29)
 **Location:** `app/workers/tasks/flow_tasks.py:24,25`  
 **Root Cause:** Code calls `audit_log.log_event("exfiltrate.start", ...)` but `AuditLogger` only defines static `log()` method  
 **Impact:** Every exfiltration task raises `AttributeError`. Enrichment and exfiltration pipeline broken.  
@@ -136,7 +136,7 @@
 ## MISSING FEATURES (Acknowledged in Audit)
 
 ### MISSING-001: CSV Import Pipeline
-**Status:** Open (Acknowledged)  
+**Status:** Done (implemented 2026-08-27 - see `app/workers/tasks/import_tasks.py`)
 **Location:** `imports/` directory  
 **Root Cause:** No Celery task processes `.pending` files  
 **Impact:** Feature documented but non-functional  

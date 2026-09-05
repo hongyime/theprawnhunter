@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import pytest
 
 from app.services import user_agent_srv
-from app.services.user_agent_srv import UserAgentService
 from app.services._scraper.results import ScrapeReason
 from app.services._scraper.strategies import UserAgentJoinService
+from app.services.user_agent_srv import UserAgentService
 
 
 class _FakeFloodWaitError(Exception):

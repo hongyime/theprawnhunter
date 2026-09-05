@@ -1,13 +1,12 @@
 import asyncio
 import hashlib
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.auth import require_monitor_key
-from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 
@@ -34,19 +33,19 @@ async def _exec(query_builder):
 
 class ExtensionCredential(BaseModel):
     token: str
-    chat_id: Optional[int] = None
-    chat_name: Optional[str] = None
-    chat_type: Optional[str] = None
-    bot_id: Optional[str] = None
-    bot_username: Optional[str] = None
-    valid: Optional[bool] = None
+    chat_id: int | None = None
+    chat_name: str | None = None
+    chat_type: str | None = None
+    bot_id: str | None = None
+    bot_username: str | None = None
+    valid: bool | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExtensionIngestRequest(BaseModel):
     source: str = "extension"
-    domain: Optional[str] = None
-    query: Optional[str] = None
+    domain: str | None = None
+    query: str | None = None
     results: list[ExtensionCredential]
 
 

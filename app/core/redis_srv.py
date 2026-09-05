@@ -1,5 +1,7 @@
 import redis
+
 from app.core.config import settings
+
 
 class RedisService:
     def __init__(self):
@@ -9,7 +11,7 @@ class RedisService:
     def client(self):
         if self._client is None:
             self._client = redis.from_url(
-                settings.REDIS_URL, 
+                settings.REDIS_URL,
                 decode_responses=True # Ensure we get strings back
             )
         return self._client
@@ -73,6 +75,7 @@ redis_srv = RedisService()
 # The underlying redis client is sync but calls are local + fast; the async
 # signature keeps the call sites clean and lets us swap to `redis.asyncio`
 # later without touching consumers.
+import contextlib
 import json as _json
 
 
@@ -94,14 +97,12 @@ async def set_cached_getme(bot_id: str, data: dict, ttl: int = 3600) -> None:
     """Cache Bot API getMe response for `bot_id` with TTL (default 1h)."""
     if not isinstance(data, dict):
         return
-    try:
+    with contextlib.suppress(Exception):
         redis_srv.client.set(
             f"cache:getme:{bot_id}",
             _json.dumps(data, default=str),
             ex=max(1, int(ttl)),
         )
-    except Exception:
-        pass
 
 
 async def get_cached_getchat(bot_id: str, chat_id: int | str) -> dict | None:
@@ -124,14 +125,12 @@ async def set_cached_getchat(
     """Cache Bot API getChat response for (bot_id, chat_id) with TTL (default 1h)."""
     if not isinstance(data, dict):
         return
-    try:
+    with contextlib.suppress(Exception):
         redis_srv.client.set(
             f"cache:getchat:{bot_id}:{chat_id}",
             _json.dumps(data, default=str),
             ex=max(1, int(ttl)),
         )
-    except Exception:
-        pass
 
 
 # Probe cooldown: after 3 failures in 1h we back off from `hostname` for 24h.

@@ -5,6 +5,7 @@ that were left from the previous session.
 """
 import sys
 import time
+
 import requests
 
 # Load env

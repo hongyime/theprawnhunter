@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
+
 from app.core.auth import require_monitor_key
+from app.core.config import settings
 from app.schemas.models import ScanRequest
 from app.workers.celery_app import app as celery_app
-from app.core.config import settings
 
 router = APIRouter(
     prefix="/scan",

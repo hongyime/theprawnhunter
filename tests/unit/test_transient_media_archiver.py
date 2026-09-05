@@ -1,7 +1,7 @@
-from types import SimpleNamespace
 import os
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 

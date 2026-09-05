@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -58,8 +58,8 @@ class TelemetryEntityParser:
         return urlunsplit((parsed.scheme.lower(), f"{userinfo}{host}{port}", path, parsed.query, ""))
 
     @classmethod
-    def parse_payload(cls, content: str, raw_payload: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
-        indicators: List[Dict[str, Any]] = []
+    def parse_payload(cls, content: str, raw_payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        indicators: list[dict[str, Any]] = []
         if not content:
             return indicators
 

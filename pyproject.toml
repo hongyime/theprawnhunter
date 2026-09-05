@@ -92,6 +92,7 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "live: Explicitly opted-in tests that call live external services",
+    "load: Bounded load and latency tests",
     "slow: Slow tests",
 ]
 

@@ -13,12 +13,8 @@ Verifies:
    feature was not deleted, only gated).
 """
 import asyncio
-import types
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).parents[2]
 REDIRECT_TASKS = REPO_ROOT / "app" / "workers" / "tasks" / "honeypot_redirect_tasks.py"

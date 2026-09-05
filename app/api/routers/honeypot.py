@@ -26,9 +26,10 @@ Without a public HTTPS endpoint, this endpoint exists but never receives
 traffic because we never call setWebhook.
 """
 
-from datetime import datetime, timezone
 import asyncio as _asyncio
-from fastapi import APIRouter, HTTPException, Header, Request
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.core.config import settings
 from app.core.database import db
@@ -111,7 +112,7 @@ async def receive_webhook_update(credential_id: str, request: Request):
         logger.warning("[Honeypot] payload missing update_id — dropping")
         return {"ok": True}
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     try:
         db.table("honeypot_updates").insert(
             {

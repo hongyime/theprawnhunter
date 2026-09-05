@@ -2,12 +2,9 @@
 Unit tests for multi-bot rotation functionality.
 Tests config parsing, bot username helpers, and broadcaster cycling.
 """
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-
 import unittest
-from unittest.mock import patch, MagicMock, PropertyMock
+import os
+from unittest.mock import patch
 
 
 class TestConfigMultiToken(unittest.TestCase):
@@ -17,7 +14,7 @@ class TestConfigMultiToken(unittest.TestCase):
         """Single token string should produce a single-item bot_tokens list."""
         from cryptography.fernet import Fernet
         key = Fernet.generate_key().decode()
-        
+
         with patch.dict(os.environ, {
             'SUPABASE_URL': 'https://x.supabase.co',
             'SUPABASE_KEY': 'k',
@@ -38,7 +35,7 @@ class TestConfigMultiToken(unittest.TestCase):
         """Comma-separated tokens should become a multi-item list."""
         from cryptography.fernet import Fernet
         key = Fernet.generate_key().decode()
-        
+
         with patch.dict(os.environ, {
             'SUPABASE_URL': 'https://x.supabase.co',
             'SUPABASE_KEY': 'k',
@@ -61,7 +58,7 @@ class TestConfigMultiToken(unittest.TestCase):
         """Whitespace around tokens should be stripped."""
         from cryptography.fernet import Fernet
         key = Fernet.generate_key().decode()
-        
+
         with patch.dict(os.environ, {
             'SUPABASE_URL': 'https://x.supabase.co',
             'SUPABASE_KEY': 'k',
@@ -84,65 +81,69 @@ class TestBotUsernameHelpers(unittest.TestCase):
 
     def test_get_other_bot_usernames_excludes_current(self):
         """Should return all bots except the current one."""
-        from app.services.bot_listener import _get_other_bot_usernames, _bot_usernames, _locked_bots
-        
+        from app.services.bot_listener import _bot_usernames, _get_other_bot_usernames, _locked_bots
+
         # Setup state
         _bot_usernames.clear()
         _locked_bots.clear()
         _bot_usernames["token1"] = "BotA"
         _bot_usernames["token2"] = "BotB"
         _bot_usernames["token3"] = "BotC"
-        
+
         result = _get_other_bot_usernames("BotA")
         self.assertEqual(sorted(result), ["BotB", "BotC"])
 
     def test_get_other_bot_usernames_excludes_locked(self):
         """Should exclude locked bots from recommendations."""
-        from app.services.bot_listener import _get_other_bot_usernames, _bot_usernames, _locked_bots
-        
+        from app.services.bot_listener import _bot_usernames, _get_other_bot_usernames, _locked_bots
+
         _bot_usernames.clear()
         _locked_bots.clear()
         _bot_usernames["token1"] = "BotA"
         _bot_usernames["token2"] = "BotB"
         _bot_usernames["token3"] = "BotC"
         _locked_bots.add("token2")  # BotB is locked
-        
+
         result = _get_other_bot_usernames("BotA")
         self.assertEqual(result, ["BotC"])
 
     def test_get_other_bot_usernames_empty_pool(self):
         """Should return empty list if only one bot exists."""
-        from app.services.bot_listener import _get_other_bot_usernames, _bot_usernames, _locked_bots
-        
+        from app.services.bot_listener import _bot_usernames, _get_other_bot_usernames, _locked_bots
+
         _bot_usernames.clear()
         _locked_bots.clear()
         _bot_usernames["token1"] = "BotA"
-        
+
         result = _get_other_bot_usernames("BotA")
         self.assertEqual(result, [])
 
     def test_get_all_bot_usernames_except_includes_locked(self):
         """Fallback should include locked bots (since all alternatives are shown)."""
-        from app.services.bot_listener import _get_all_bot_usernames_except, _bot_usernames, _locked_bots
-        
+        from app.services.bot_listener import (
+            _bot_usernames,
+            _get_all_bot_usernames_except,
+            _locked_bots,
+        )
+
         _bot_usernames.clear()
         _locked_bots.clear()
         _bot_usernames["token1"] = "BotA"
         _bot_usernames["token2"] = "BotB"
         _locked_bots.add("token2")  # BotB is locked
-        
+
         result = _get_all_bot_usernames_except("BotA")
         self.assertEqual(result, ["BotB"])
 
     def test_case_insensitive_matching(self):
         """Username matching should be case-insensitive."""
-        from app.services.bot_listener import _get_other_bot_usernames, _bot_usernames, _locked_bots
-        
+        from app.services.bot_listener import _bot_usernames, _get_other_bot_usernames, _locked_bots
+
         _bot_usernames.clear()
         _locked_bots.clear()
         _bot_usernames["token1"] = "BotA"
         _bot_usernames["token2"] = "BotB"
-        
+
         result = _get_other_bot_usernames("bota")  # lowercase
         self.assertEqual(result, ["BotB"])
 

@@ -19,6 +19,7 @@ you'd lose access to those tokens permanently.
 """
 
 from cryptography.fernet import Fernet, MultiFernet
+
 from app.core.config import settings
 
 

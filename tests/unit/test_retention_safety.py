@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = REPO_ROOT / "supabase" / "migrations" / "20260903000001_supabase_optimization.sql"
 OPERATION = REPO_ROOT / "database" / "operations" / "retention_cleanup.sql"

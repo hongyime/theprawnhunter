@@ -9,10 +9,11 @@ Property 2: Preservation — Caller-Supplied Query Pass-Through and No Existing 
 Validates: Requirements 3.1, 3.2, 3.3, 3.4
 """
 
-import re
 import os
+import re
 
-from hypothesis import given, settings as h_settings
+from hypothesis import given
+from hypothesis import settings as h_settings
 from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
@@ -377,7 +378,7 @@ class TestC2QueriesPreservation:
         """
         missing = [e for e in PRE_FIX_C2_QUERIES if e not in _c2_queries]
         assert not missing, (
-            f"The following pre-fix C2_QUERIES entries are missing from the current list:\n"
+            "The following pre-fix C2_QUERIES entries are missing from the current list:\n"
             + "\n".join(f"  - {e!r}" for e in missing)
             + f"\n\nCurrent C2_QUERIES ({len(_c2_queries)} entries):\n"
             + "\n".join(f"  - {e!r}" for e in _c2_queries)
@@ -445,7 +446,7 @@ class TestNetlasQueriesPreservation:
         """
         missing = [e for e in PRE_FIX_NETLAS_QUERIES if e not in _netlas_queries]
         assert not missing, (
-            f"The following pre-fix NETLAS_QUERIES entries are missing from the current list:\n"
+            "The following pre-fix NETLAS_QUERIES entries are missing from the current list:\n"
             + "\n".join(f"  - {e!r}" for e in missing)
             + f"\n\nCurrent NETLAS_QUERIES ({len(_netlas_queries)} entries):\n"
             + "\n".join(f"  - {e!r}" for e in _netlas_queries)
@@ -519,7 +520,7 @@ class TestFofaQueriesPreservation:
         """
         missing = [e for e in PRE_FIX_FOFA_QUERIES if e not in _fofa_queries]
         assert not missing, (
-            f"The following pre-fix FOFA COMMON_QUERIES entries are missing from the current list:\n"
+            "The following pre-fix FOFA COMMON_QUERIES entries are missing from the current list:\n"
             + "\n".join(f"  - {e!r}" for e in missing)
             + f"\n\nCurrent FOFA queries ({len(_fofa_queries)} entries):\n"
             + "\n".join(f"  - {e!r}" for e in _fofa_queries)

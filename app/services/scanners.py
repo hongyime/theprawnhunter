@@ -3,20 +3,23 @@ Primary scanner services: ShodanService, FofaService, UrlScanService, GithubServ
 Also exports shared utilities: TOKEN_PATTERN, _is_valid_token, _perform_active_deep_scan.
 Complementary services (GithubGistService, GrepAppService, etc.) live in scanners_extension.py.
 """
-import httpx
-from app.utils.http_client import get_async_http_client
 import asyncio
+import base64
+import contextlib
 import hashlib
 import json
-from typing import List, Dict, Any
-from app.core.config import settings
-import base64
-import re
-import urllib3
 import logging
 import random
-from datetime import datetime, timezone
+import re
+from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlparse
+
+import httpx
+import urllib3
+
+from app.core.config import settings
+from app.utils.http_client import get_async_http_client
 
 logger = logging.getLogger("scanners")
 
@@ -42,7 +45,7 @@ async def retry_with_backoff(func, max_retries=3, initial_delay=2, backoff_facto
         except (httpx.RequestError, asyncio.TimeoutError) as e:
             logger.warning(f"⚠️ Network error: {e}. Retrying in {delay}s...")
             await asyncio.sleep(delay)
-        
+
         retries += 1
         delay *= backoff_factor
     return None # exhausted retries
@@ -91,16 +94,16 @@ def _is_valid_token(token_str: str) -> bool:
         # Explicit Fernet rejection (starts with gAAAA)
         if token_str.startswith("gAAAA"):
             return False
-        
+
         # Must contain exactly one colon
         if ":" not in token_str:
             return False
         if token_str.count(":") != 1:
             return False
-            
+
         parts = token_str.split(":", 1)
         bot_id, secret = parts
-        
+
         # Bot ID must be 8-15 digits, no leading zeros
         if not bot_id.isdigit():
             return False
@@ -108,16 +111,16 @@ def _is_valid_token(token_str: str) -> bool:
             return False
         if len(bot_id) > 1 and bot_id.startswith("0"):
             return False
-        
+
         # Secret must be exactly 35 characters
         if len(secret) != 35:
             return False
-        
+
         # Secret must only contain allowed chars (base64-ish)
         allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
         if not all(c in allowed for c in secret):
             return False
-        
+
         # Suspicious: Pure hex (likely hash collision)
         is_pure_hex = all(c in "0123456789abcdefABCDEF" for c in secret)
         if is_pure_hex:
@@ -156,9 +159,9 @@ def _is_remote_endpoint(value: str) -> bool:
 
 def extract_infrastructure_context(
     code_text: str,
-    source_meta: Dict[str, Any],
+    source_meta: dict[str, Any],
     token: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     context_text = _token_context(code_text, token) if token else (code_text or "")
     endpoints = set()
     for url_match, config_match in ADJACENT_ENDPOINT_REGEX.findall(context_text):
@@ -173,25 +176,25 @@ def extract_infrastructure_context(
         "source_file_path": source_meta.get("path") or source_meta.get("file") or source_meta.get("filename"),
         "repository_uri": source_meta.get("repository") or source_meta.get("repo") or source_meta.get("project_id"),
         "co_located_endpoints": sorted(endpoints),
-        "extracted_at": datetime.now(timezone.utc).isoformat(),
+        "extracted_at": datetime.now(UTC).isoformat(),
     }
 
 # Strict Regex: \b (boundary) + digits + : + 35 chars + \b
 # Regex for extracting chat_id (e.g., chat_id=12345 or "chat_id": 12345)
 CHAT_ID_PATTERN = re.compile(r'(?:chat_id|chat|target|cid)[=_":\s]+([-\d]+)', re.IGNORECASE)
 
-async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient = None) -> List[Dict[str, str]]:
+async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient = None) -> list[dict[str, str]]:
     """
-    Connects to a URL, scans HTML body, finds <script src="..."> tags, 
+    Connects to a URL, scans HTML body, finds <script src="..."> tags,
     fetches those JS files, and scans them too.
     Returns a list of dicts: [{'token': '...', 'chat_id': '...'}]
     """
     found_results = [] # List of {'token': ..., 'chat_id': ...}
-    
-    def extract_from_text(text: str) -> List[Dict[str, str]]:
+
+    def extract_from_text(text: str) -> list[dict[str, str]]:
         tokens = TOKEN_PATTERN.findall(text)
         chat_ids = CHAT_ID_PATTERN.findall(text)
-        
+
         extracted = []
         if len(text) < 500:
              cid = chat_ids[0] if chat_ids else None
@@ -227,11 +230,11 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
             if res.status_code == 200:
                 html_content = res.text
                 found_results.extend(extract_from_text(html_content))
-            
+
                 # 2. Find External JS
                 js_links = re.findall(r'src=["\'](.*?.js)["\']', html_content)
-                unique_js = list(set(js_links))[:5] 
-                
+                unique_js = list(set(js_links))[:5]
+
                 # Create async tasks for JS fetching
                 js_tasks = []
                 for js_path in unique_js:
@@ -240,9 +243,9 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
                     else:
                         from urllib.parse import urljoin
                         js_url = urljoin(target_url, js_path)
-                    
+
                     js_tasks.append(client.get(js_url, headers=SPOOFED_HEADERS, follow_redirects=True))
-                
+
                 if js_tasks:
                     js_responses = await asyncio.gather(*js_tasks, return_exceptions=True)
                     for js_res in js_responses:
@@ -267,8 +270,8 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
             if t not in final_map:
                 final_map[t] = c
             elif not final_map[t] and c:
-                final_map[t] = c 
-                
+                final_map[t] = c
+
         return [{'token': t, 'chat_id': c} for t, c in final_map.items()]
 
     except Exception:
@@ -283,27 +286,27 @@ class ShodanService:
         self.api_key = settings.SHODAN_KEY
         self.base_url = "https://api.shodan.io/shodan/host/search"
 
-    async def search(self, query: str, country_code: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str, country_code: str = None) -> list[dict[str, Any]]:
         if not self.api_key: return []
         try:
             full_query = query
             if country_code:
                 full_query = f'{query} country:"{country_code}"'
                 logger.info(f"    [Shodan] Adding country filter: {country_code}")
-            
+
             # Shodan API call must be async or threaded. Since it's one call, requests is fine IF wrapped,
             # but ideally use httpx.
             params = {'key': self.api_key, 'query': full_query}
-            
+
             async def do_search():
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     res = await client.get(self.base_url, params=params)
                     res.raise_for_status()
                     return res.json().get('matches', [])
-            
+
             matches = await retry_with_backoff(do_search)
             if matches is None: return []
-            
+
             # Sort/Filter
             from datetime import datetime, timedelta
             three_hours_ago = datetime.utcnow() - timedelta(hours=3)
@@ -316,9 +319,8 @@ class ShodanService:
                         match_time = datetime.fromisoformat(ts.replace('Z', '+00:00').split('+')[0])
                         if match_time >= three_hours_ago: recent_matches.append(m)
                 except Exception: pass
-            
-            if len(recent_matches) > len(matches[:300]): matches = recent_matches
-            else: matches = matches[:300]
+
+            matches = recent_matches if len(recent_matches) > len(matches[:300]) else matches[:300]
 
             results = []
             logger.info(f"    [Shodan] Processing {len(matches)} matches...")
@@ -333,7 +335,7 @@ class ShodanService:
                         ip = match.get('ip_str')
                         port = match.get('port')
                         banner = match.get('data', '')
-                        
+
                         # Passive
                         tokens_found = TOKEN_PATTERN.findall(banner)
                         chat_ids_found = CHAT_ID_PATTERN.findall(banner)
@@ -349,31 +351,31 @@ class ShodanService:
                                 active_found = await _perform_active_deep_scan(target_url, client=scan_client)
                                 local_found.extend(active_found)
                             except Exception: pass
-                        
+
                         return (ip, port, local_found)
 
                 for m in matches:
                     tasks.append(process_match(m))
-                
+
                 if tasks:
                     batch_results = await asyncio.gather(*tasks, return_exceptions=True)
                 else:
                     batch_results = []
-                
+
             # Aggregate Results
             for res_item in batch_results:
                 if isinstance(res_item, Exception): continue
                 if not isinstance(res_item, tuple): continue # Should be tuple
-                
+
                 ip, port, found_items = res_item
-                
+
                 # Dedup within this match
                 seen_t = set()
                 for item in found_items:
                     t = item['token']
                     if t in seen_t: continue
                     seen_t.add(t)
-                    
+
                     results.append({
                         "token": t,
                         "chat_id": item['chat_id'],
@@ -400,7 +402,7 @@ class FofaService:
         self.key = settings.FOFA_KEY
         self.base_url = "https://fofa.info/api/v1/search/all"
 
-    async def search(self, query: str = 'body="api.telegram.org/bot"', country_code: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str = 'body="api.telegram.org/bot"', country_code: str = None) -> list[dict[str, Any]]:
         if not (self.email and self.key): return []
         try:
             full_query = query
@@ -411,19 +413,19 @@ class FofaService:
             qbase64 = base64.b64encode(full_query.encode()).decode()
             params = {'email': self.email, 'key': self.key, 'qbase64': qbase64, 'fields': 'host,ip,port', 'size': 100}
             logger.info(f"    [FOFA] Searching: {full_query}")
-            
+
             async def do_fofa():
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     res = await client.get(self.base_url, params=params)
-                    if res.status_code != 200: 
+                    if res.status_code != 200:
                         res.raise_for_status() # Trigger retry on non-200
                     return res.json().get("results", [])
-            
+
             results_data = await retry_with_backoff(do_fofa)
             if results_data is None: return []
-            
+
             valid_results = []
-            
+
             # Parallel Active Scan
             async with httpx.AsyncClient(verify=False, timeout=10.0) as scan_client:
                 tasks = []
@@ -434,17 +436,17 @@ class FofaService:
                         host = row[0]
                         # URL Construction
                         target_url = host if host.startswith("http") else (f"https://{host}" if row[2]=="443" else f"http://{host}:{row[2]}")
-                        
+
                         try:
                             # Deep scan
                             items = await _perform_active_deep_scan(target_url, client=scan_client)
                             return (target_url, items)
-                        except Exception: 
+                        except Exception:
                             return None
 
                 for row in results_data:
                     tasks.append(process_row(row))
-                
+
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for item in scan_results:
@@ -476,44 +478,44 @@ class UrlScanService:
     def __init__(self):
         self.api_key = settings.URLSCAN_KEY
         self.search_url = "https://urlscan.io/api/v1/search/"
-        
-    async def search(self, query: str, country_code: str = None) -> List[Dict[str, Any]]:
+
+    async def search(self, query: str, country_code: str = None) -> list[dict[str, Any]]:
         if not self.api_key:
             logger.warning("    [URLScan] No API key found")
             return []
-            
+
         try:
             headers = {
                 'API-Key': self.api_key,
                 'Content-Type': 'application/json'
             }
-            
+
             # URLScan query format: search in page content
             api_query = f'page.body:"{query}" OR page.url:*{query}*'
             if country_code:
                 api_query = f'({api_query}) AND page.country:"{country_code}"'
                 logger.info(f"    [URLScan] Adding country filter: {country_code}")
-            
+
             params = {'q': api_query, 'size': 500}
             logger.info(f"    [URLScan] Searching: {api_query[:50]}...")
-            
+
             async def do_urlscan():
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     res = await client.get(self.search_url, headers=headers, params=params)
                     if res.status_code in [401, 403]: raise Exception("Invalid URLScan Key")
                     res.raise_for_status()
                     return res.json()
-            
+
             data = await retry_with_backoff(do_urlscan)
             if not data: return []
-            
+
             results_list = data.get('results', [])
             logger.info(f"    [URLScan] Found {len(results_list)} hits. scanning cache & live...")
-            
+
             # Filter Logic (Date etc)
             from datetime import datetime, timedelta
             three_hours_ago = datetime.utcnow() - timedelta(hours=3)
-            
+
             valid_items = []
             for r in results_list:
                 try:
@@ -523,14 +525,14 @@ class UrlScanService:
                         if scan_time >= three_hours_ago:
                             valid_items.append(r)
                 except Exception: pass
-            
+
             # Sort and Cap
             valid_items = sorted(valid_items, key=lambda x: x.get('task', {}).get('time', ''), reverse=True)
             if len(valid_items) > 300: valid_items = valid_items[:300]
             elif not valid_items and len(results_list) > 0: valid_items = results_list[:50]
-            
+
             final_results = []
-            
+
             # Parallel processing of DOM cache and Live Scan
             async with httpx.AsyncClient(verify=False, timeout=10.0) as scan_client:
                 tasks = []
@@ -541,7 +543,7 @@ class UrlScanService:
                         page_url = item.get('page', {}).get('url', '')
                         scan_id = item.get('_id')
                         item_found_tokens = []
-                        
+
                         # 1. Cached DOM Scan
                         if scan_id:
                             try:
@@ -555,7 +557,7 @@ class UrlScanService:
                                      for t in tokens:
                                          item_found_tokens.append({'token': t, 'chat_id': cid})
                             except Exception: pass
-                        
+
                         # 2. Live Deep Scan
                         if page_url:
                             try:
@@ -565,23 +567,23 @@ class UrlScanService:
                                 url_cid = url_cids[0] if url_cids else None
                                 for t in url_tokens:
                                     item_found_tokens.append({'token': t, 'chat_id': url_cid})
-                                
+
                                 # Deep Scan
                                 live_items = await _perform_active_deep_scan(page_url, client=scan_client)
                                 item_found_tokens.extend(live_items)
                             except Exception: pass
-                        
+
                         return (item, item_found_tokens)
 
                 for item in valid_items:
                     tasks.append(process_urlscan_item(item))
-                
+
                 # Execute
                 task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for res_item in task_results:
                 if not res_item or isinstance(res_item, Exception): continue
-                
+
                 item, found = res_item
                 # Dedup
                 final_map = {}
@@ -606,10 +608,10 @@ class UrlScanService:
                                 "type": "cached_or_live"
                             }
                         })
-            
+
             logger.info(f"    [URLScan] Scan complete. {len(final_results)} valid tokens found.")
             return final_results
-            
+
         except httpx.TimeoutException:
             logger.warning("    [URLScan] Error: Search Request Timed Out")
             return []
@@ -650,7 +652,7 @@ class GithubService:
             import random as _r
             return _r.choice(tokens)
 
-    async def search(self, query: str) -> List[Dict[str, Any]]:
+    async def search(self, query: str) -> list[dict[str, Any]]:
         token = self._get_token()
         if not token:
             logger.warning("GitHub Token missing (set GITHUB_TOKEN or GITHUB_TOKENS)")
@@ -663,8 +665,8 @@ class GithubService:
                 'Authorization': f'{auth_scheme} {token}',
                 'Accept': 'application/vnd.github.v3+json'
             }
-            params = {'q': query, 'per_page': 100, 'sort': 'indexed', 'order': 'desc'} 
-            
+            params = {'q': query, 'per_page': 100, 'sort': 'indexed', 'order': 'desc'}
+
             async def do_github():
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     res = await client.get(self.base_url, headers=headers, params=params)
@@ -673,10 +675,10 @@ class GithubService:
                         raise httpx.HTTPStatusError("Rate Limit", request=res.request, response=res)
                     res.raise_for_status()
                     return res.json().get('items', [])
-            
+
             items = await retry_with_backoff(do_github, max_retries=2)
             if not items: items = []
-            
+
             # Parallel Raw Fetching
             results = []
             async with httpx.AsyncClient(verify=False, timeout=10.0) as raw_client:
@@ -740,9 +742,9 @@ class GithubService:
 
                 for item in items:
                     tasks.append(fetch_raw(item))
-                    
+
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
-                
+
                 for batch in scan_results:
                     if batch and isinstance(batch, list):
                         results.extend(batch)
@@ -766,42 +768,42 @@ class GitlabService:
     def __init__(self):
         self.token = settings.GITLAB_TOKEN
         self.base_url = "https://gitlab.com/api/v4/search"
-        
-    async def search(self, query: str = "api.telegram.org/bot") -> List[Dict[str, Any]]:
+
+    async def search(self, query: str = "api.telegram.org/bot") -> list[dict[str, Any]]:
         if not self.token:
             logger.warning("    [GitLab] Missing GITLAB_TOKEN")
             return []
-        
+
         try:
             headers = {"PRIVATE-TOKEN": self.token}
             params = {"scope": "blobs", "search": query}
-            
+
             async def do_gitlab_search():
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     res = await client.get(self.base_url, headers=headers, params=params)
                     res.raise_for_status()
                     return res.json()
-            
+
             items = await retry_with_backoff(do_gitlab_search)
             if not items: items = []
-            
-            # GitLab blobs api returns project_id and filename. 
+
+            # GitLab blobs api returns project_id and filename.
             # We must fetch the raw blob or the file content via projects API.
             # Due to GitLab API structures, getting raw content is complex in search scopes.
             # Instead, we will simulate scraping the blob URL directly or doing a shallow parse of the match data.
             results = []
-            
+
             async with httpx.AsyncClient(verify=False, timeout=10.0) as raw_client:
                 tasks = []
                 sem = asyncio.Semaphore(10)
-                
+
                 async def fetch_raw(item):
                     from app.services.scanners import TOKEN_PATTERN, _is_valid_token
                     async with sem:
                         project_id = item.get("project_id")
                         filename = item.get("filename")
                         ref = item.get("ref", "master")
-                        
+
                         raw_url = f"https://gitlab.com/api/v4/projects/{project_id}/repository/files/{filename}/raw?ref={ref}"
                         try:
                             raw_res = await raw_client.get(raw_url, headers=headers)
@@ -820,14 +822,14 @@ class GitlabService:
 
                 for item in items:
                     tasks.append(fetch_raw(item))
-                    
+
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
                 for batch in scan_results:
                     if batch and isinstance(batch, list):
                         results.extend(batch)
-                        
+
             return results
-                
+
         except Exception as e:
             logger.error(f"    [GitLab] Error: {e}")
             return []
@@ -867,7 +869,7 @@ class ExaService:
         ]
         return random.choice(keys) if keys else None
 
-    async def search(self, query: str = '"api.telegram.org/bot"') -> List[Dict[str, Any]]:
+    async def search(self, query: str = '"api.telegram.org/bot"') -> list[dict[str, Any]]:
         api_key = self._get_api_key()
         if not api_key:
             logger.warning("    [Exa] No EXA_API_KEY configured")
@@ -953,10 +955,10 @@ class WaybackService:
         self.timeout = httpx.Timeout(20.0, connect=10.0)
         self.dedupe_ttl = 7 * 86400  # 7 days
 
-    async def search(self, query_pattern: str = "api.telegram.org", limit: int = 500) -> List[Dict[str, Any]]:
+    async def search(self, query_pattern: str = "api.telegram.org", limit: int = 500) -> list[dict[str, Any]]:
         """Query CDX, fetch unseen archived content, extract tokens."""
         from app.workers.tasks.flow_tasks import redis_client
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         # Step 1: CDX query
         # matchType=domain searches the domain + all subpaths — required for
@@ -1049,10 +1051,8 @@ class WaybackService:
                     logger.debug(f"    [Wayback] Fetch failed {original[:60]}: {e}")
 
                 # Mark seen (1-week dedup)
-                try:
+                with contextlib.suppress(Exception):
                     redis_client.setex(redis_key, self.dedupe_ttl, "1")
-                except Exception:
-                    pass
 
                 # Courtesy rate limit
                 await asyncio.sleep(1.2)
@@ -1089,9 +1089,9 @@ class CommonCrawlService:
         self.timeout = httpx.Timeout(30.0, connect=10.0)
         self.dedupe_ttl = 30 * 86400  # 30 days
 
-    async def search(self, limit: int = 500) -> List[Dict[str, Any]]:
+    async def search(self, limit: int = 500) -> list[dict[str, Any]]:
         from app.core.redis_srv import redis_srv as _redis
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         async with httpx.AsyncClient(
             timeout=self.timeout,
@@ -1178,10 +1178,8 @@ class CommonCrawlService:
                     })
 
                 # Mark seen regardless of match (avoids re-processing same URL)
-                try:
+                with contextlib.suppress(Exception):
                     _redis.client.setex(redis_key, self.dedupe_ttl, "1")
-                except Exception:
-                    pass
 
         logger.info(
             f"    [CommonCrawl] returned {len(results)} matches "
@@ -1215,9 +1213,9 @@ class SourcegraphService:
         self.timeout = httpx.Timeout(45.0, connect=10.0)
         self.dedupe_ttl = 14 * 86400  # 14 days
 
-    async def search(self, query: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str = None) -> list[dict[str, Any]]:
         from app.core.redis_srv import redis_srv as _redis
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         queries = [query] if query else list(self.QUERIES)
 
         async with get_async_http_client(
@@ -1293,10 +1291,8 @@ class SourcegraphService:
                                     }
                                 })
 
-                        try:
+                        with contextlib.suppress(Exception):
                             _redis.client.setex(redis_key, self.dedupe_ttl, "1")
-                        except Exception:
-                            pass
 
                 await asyncio.sleep(5)  # courtesy between queries
 

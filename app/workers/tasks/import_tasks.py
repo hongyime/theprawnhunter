@@ -32,8 +32,8 @@ def import_csv():
 
 
 async def _import_csv_logic() -> str:
-    from app.workers.tasks.scanner_tasks import _save_credentials_async
     from app.workers.tasks.flow_tasks import get_broadcaster
+    from app.workers.tasks.scanner_tasks import _save_credentials_async
 
     # Ensure imports directory exists
     IMPORTS_DIR.mkdir(parents=True, exist_ok=True)

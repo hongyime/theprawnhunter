@@ -7,13 +7,11 @@ BUG 3: redirect_one normal path references undefined `text` variable
 BUG 4: redirect_1_sent_at never written on first successful send
 BUG 5: Failure paths mark rows redirected/deduplicated despite failed delivery
 """
-import asyncio
 import types
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # BUG 1: celery_app.py must import honeypot_redirect_tasks
@@ -267,13 +265,13 @@ async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
     class FakeClient:
         def __init__(self, **kwargs):
             pass  # Accept timeout and other httpx arguments
-        
+
         async def __aenter__(self):
             return self
-        
+
         async def __aexit__(self, *_):
             pass
-        
+
         async def post(self, *_a, **_kw):
             return FakeResponse()
 

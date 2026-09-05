@@ -21,7 +21,6 @@ from typing import Any
 
 import httpx
 
-
 DEFAULT_MATRIX_CASES = [
     {
         "name": "bot_in_group",

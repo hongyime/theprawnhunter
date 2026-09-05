@@ -66,7 +66,7 @@ def _classify_broadcast_exception(exc: BaseException) -> BroadcastSendError:
             retryable=True,
             retry_after_seconds=int(retry_after) if retry_after else None,
         )
-    if isinstance(exc, (TimedOut, TimeoutError, asyncio.TimeoutError)):
+    if isinstance(exc, TimedOut | TimeoutError | asyncio.TimeoutError):
         return BroadcastSendError("timeout", text or "Telegram send timed out.", retryable=True)
     if isinstance(exc, Forbidden):
         return BroadcastSendError("forbidden", text, retryable=False)
@@ -250,8 +250,9 @@ class BroadcasterService:
             media_id = file_meta.get("id")
             access_hash = file_meta.get("access_hash")
             if media_id and access_hash:
+                from telethon.tl.types import InputDocument, InputPhoto
+
                 from app.services.bot_manager_srv import bot_manager
-                from telethon.tl.types import InputPhoto, InputDocument
                 client = await bot_manager.get_client(decrypted_token)
                 file_ref = bytes.fromhex(file_meta.get("file_reference", "")) if file_meta.get("file_reference") else b""
 
@@ -351,7 +352,7 @@ class BroadcasterService:
                                         caption=caption,
                                         filename=filename,
                                     )
-                                
+
                                 sent_via_media = True
                                 logger.info(
                                     f"    ✅ [Broadcaster] Successfully sent {media_type} "

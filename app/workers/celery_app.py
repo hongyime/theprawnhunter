@@ -4,8 +4,14 @@ import os
 import sys
 
 from celery import Celery
-from celery.signals import before_task_publish, worker_ready, worker_shutdown, task_failure, task_prerun
 from celery.schedules import crontab
+from celery.signals import (
+    before_task_publish,
+    task_failure,
+    task_prerun,
+    worker_ready,
+    worker_shutdown,
+)
 
 from app.core.config import settings
 
@@ -109,10 +115,7 @@ def on_task_failure(task_id, exception, traceback, einfo, args, kwargs, **extra)
     never blocks the worker event loop.
     """
     task_name = extra.get("sender", {})
-    if hasattr(task_name, "name"):
-        task_name = task_name.name
-    else:
-        task_name = str(task_name)
+    task_name = task_name.name if hasattr(task_name, "name") else str(task_name)
 
     exc_str = str(exception)[:500]  # cap to avoid huge audit rows
     logger.error(
@@ -122,7 +125,7 @@ def on_task_failure(task_id, exception, traceback, einfo, args, kwargs, **extra)
     # Persist to audit_logs via AuditLogger (redaction pass applies)
     def _persist():
         try:
-            from app.core.audit import AuditLogger, AuditEvent
+            from app.core.audit import AuditEvent, AuditLogger
 
             AuditLogger.log(
                 AuditEvent.TASK_FAILURE if hasattr(AuditEvent, "TASK_FAILURE")
@@ -149,6 +152,7 @@ def on_before_task_publish(sender=None, headers=None, body=None, routing_key=Non
         task_id = (headers or {}).get("id")
         queue_name = routing_key or (headers or {}).get("queue") or "celery"
         import redis as _redis
+
         from app.core.queue_monitor import record_task_enqueued
 
         client = _redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -166,6 +170,7 @@ def on_task_prerun(task_id, task, args, kwargs, **extra):
     """
     try:
         import redis as _redis
+
         from app.core.queue_monitor import record_task_started
 
         client = _redis.from_url(settings.REDIS_URL, decode_responses=True)

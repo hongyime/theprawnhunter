@@ -1,7 +1,8 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from telegram import Bot
 from telegram.request import HTTPXRequest
-import logging
 
 from app.core.auth import require_monitor_key
 from app.core.database import db

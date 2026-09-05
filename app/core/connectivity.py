@@ -7,9 +7,9 @@ Used by workers and bot_listener to:
 3. Suppress log spam during extended outages
 """
 
-import socket
 import asyncio
 import logging
+import socket
 import time
 
 logger = logging.getLogger("connectivity")

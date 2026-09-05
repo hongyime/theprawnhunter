@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 AUTH = {"X-Monitor-Key": "test-monitor-key-for-pytest"}
 
 

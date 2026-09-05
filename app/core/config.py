@@ -1,7 +1,8 @@
 import os
-from typing import Optional
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     # General
@@ -74,12 +75,12 @@ class Settings(BaseSettings):
     REVOKED_TOPIC_CLOSE_BATCH_SIZE: int = 25
     REVOKED_TOPIC_CLOSE_DELAY_SECONDS: float = 0.5
     REVOKED_TOPIC_CLOSE_TIMEOUT_SECONDS: float = 10.0
-    CANARY_CREDENTIAL_ID: Optional[str] = None
+    CANARY_CREDENTIAL_ID: str | None = None
     CANARY_EXPECTED_TEXT: str = "telegramhunter-canary"
     CANARY_MAX_AGE_SECONDS: int = 1800
     CANARY_STALE_SECONDS: int = 3600
-    PUBLIC_FRONTEND_URL: Optional[str] = None
-    DATABASE_URL: Optional[str] = None
+    PUBLIC_FRONTEND_URL: str | None = None
+    DATABASE_URL: str | None = None
 
     # Operational alerting
     # Raw messages remain in authenticated Chat/Telemetry drill-down but are
@@ -108,8 +109,8 @@ class Settings(BaseSettings):
     # HONEYPOT_ALLOWLIST is a comma-separated list of credential UUIDs to
     #     opt-in (empty means ALL webhook-registered bots — high risk)
     HONEYPOT_MODE: bool = False
-    HONEYPOT_WEBHOOK_URL: Optional[str] = None
-    HONEYPOT_SECRET: Optional[str] = None
+    HONEYPOT_WEBHOOK_URL: str | None = None
+    HONEYPOT_SECRET: str | None = None
     HONEYPOT_ALLOWLIST: str = ""
 
     # Bot IDs that belong to US — never scan, validate, scrape, or broadcast about these.
@@ -123,38 +124,38 @@ class Settings(BaseSettings):
     TELEGRAM_API_HASH: str
 
     # OSINT KeysAPI Keys
-    SHODAN_KEY: Optional[str] = None
-    FOFA_EMAIL: Optional[str] = None
-    FOFA_KEY: Optional[str] = None
-    URLSCAN_KEY: Optional[str] = None
-    GITHUB_TOKEN: Optional[str] = None  # Also accepts GH_OSINT_TOKEN (GitHub Actions reserves the name GITHUB_TOKEN for its own token)
+    SHODAN_KEY: str | None = None
+    FOFA_EMAIL: str | None = None
+    FOFA_KEY: str | None = None
+    URLSCAN_KEY: str | None = None
+    GITHUB_TOKEN: str | None = None  # Also accepts GH_OSINT_TOKEN (GitHub Actions reserves the name GITHUB_TOKEN for its own token)
     # Multi-token rotation for GitHub code search.
     # Comma-separated list of PATs from different accounts. If set, overrides
     # GITHUB_TOKEN. Each PAT gets its own 30 req/min budget — pool of 5 PATs
     # = 150 req/min total → no more secondary rate limits on big result sets.
-    GITHUB_TOKENS: Optional[str] = None
-    GITLAB_TOKEN: Optional[str] = None
-    BITBUCKET_USER: Optional[str] = None        # Atlassian account email (for Basic auth with API token)
-    BITBUCKET_API_TOKEN: Optional[str] = None   # API token (replaces app password — use Bearer auth)
-    EXA_API_KEY: Optional[str] = None
-    EXA_API_KEY_2: Optional[str] = None
-    EXA_API_KEY_3: Optional[str] = None
-    CENSYS_ID: Optional[str] = None
-    CENSYS_SECRET: Optional[str] = None
-    HYBRID_ANALYSIS_KEY: Optional[str] = None
-    GOOGLE_SEARCH_KEY: Optional[str] = None
-    GOOGLE_CSE_ID: Optional[str] = None
-    PUBLICWWW_KEY: Optional[str] = None
-    POSTMAN_API_KEY: Optional[str] = None
+    GITHUB_TOKENS: str | None = None
+    GITLAB_TOKEN: str | None = None
+    BITBUCKET_USER: str | None = None        # Atlassian account email (for Basic auth with API token)
+    BITBUCKET_API_TOKEN: str | None = None   # API token (replaces app password — use Bearer auth)
+    EXA_API_KEY: str | None = None
+    EXA_API_KEY_2: str | None = None
+    EXA_API_KEY_3: str | None = None
+    CENSYS_ID: str | None = None
+    CENSYS_SECRET: str | None = None
+    HYBRID_ANALYSIS_KEY: str | None = None
+    GOOGLE_SEARCH_KEY: str | None = None
+    GOOGLE_CSE_ID: str | None = None
+    PUBLICWWW_KEY: str | None = None
+    POSTMAN_API_KEY: str | None = None
     # Netlas — two accounts, rotated automatically to stay within daily limits
     # Account 1: 50 req/day, 2500 search coins  Account 2: 100 req/day, 5000 search coins
-    NETLAS_API_KEY_1: Optional[str] = None
-    NETLAS_API_KEY_2: Optional[str] = None
+    NETLAS_API_KEY_1: str | None = None
+    NETLAS_API_KEY_2: str | None = None
 
     # Proxy Configuration — optional SOCKS5/HTTP proxies for external connections
-    TELETHON_PROXY_URL: Optional[str] = None
-    HTTP_PROXY_URL: Optional[str] = None
-    
+    TELETHON_PROXY_URL: str | None = None
+    HTTP_PROXY_URL: str | None = None
+
     # Target Countries (Tiered by Telegram usage volume)
     # Primary:   Top Telegram DAU per capita (CIS, South/Southeast Asia, MENA, LatAm)
     # Secondary: Large tech populations with significant Telegram usage
@@ -194,14 +195,14 @@ class Settings(BaseSettings):
             tokens = [t.strip() for t in raw.split(',') if t.strip()]
         else:
             tokens = [raw] if raw else []
-            
+
         if not tokens:
             raise ValueError('MONITOR_BOT_TOKEN cannot be empty')
-            
+
         for token in tokens:
             if ':' not in token or not token.split(':')[0].isdigit():
                 raise ValueError(f'Invalid bot token format: {token}')
-        
+
         object.__setattr__(self, '_bot_tokens', tokens)
         return self
 
@@ -211,14 +212,14 @@ class Settings(BaseSettings):
         if not v.startswith('https://') and not v.startswith('http://'):
             raise ValueError('SUPABASE_URL must start with https:// or http://')
         return v
-    
+
     @field_validator('REDIS_URL')
     @classmethod
     def validate_redis_url(cls, v: str) -> str:
         if not v.startswith('redis://') and not v.startswith('rediss://'):
             raise ValueError('REDIS_URL must start with redis:// or rediss://')
         return v
-    
+
     @field_validator('ENCRYPTION_KEY')
     @classmethod
     def validate_encryption_key(cls, v: str) -> str:
@@ -236,7 +237,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"),
-        env_file_encoding="utf-8", 
+        env_file_encoding="utf-8",
         extra="ignore"
     )
 

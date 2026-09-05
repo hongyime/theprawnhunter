@@ -179,7 +179,7 @@ def test_log_calls_never_interpolate_raw_telegram_user_ids():
 
 
 def test_backfill_scoring_does_not_update_top_level_confidence_score():
-    source = open(validation_tasks.__file__, "r", encoding="utf-8").read()
+    source = Path(validation_tasks.__file__).read_text(encoding="utf-8")
     forbidden = '.update({\n                        "meta": new_meta,\n                        "confidence_score": score,'
     assert forbidden not in source
 

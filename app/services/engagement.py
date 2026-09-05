@@ -83,7 +83,7 @@ def _redact_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     return {
         key: value
         for key, value in (metadata or {}).items()
-        if key in _ALLOWED_METADATA and isinstance(value, (str, bool, int, float))
+        if key in _ALLOWED_METADATA and isinstance(value, str | bool | int | float)
     }
 
 

@@ -7,13 +7,12 @@ Called from the heartbeat task every 30 min so restarts don't lose all history.
 Redis keys: metrics:counter:<name>  (INCRBY, no TTL — survives restarts)
             metrics:flush_ts         (last flush timestamp)
 """
-import time
-import json
-from typing import Dict, Optional
-from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime
 import functools
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
+
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -26,7 +25,7 @@ class MetricData:
     total_time: float = 0.0
     success_count: int = 0
     failure_count: int = 0
-    last_execution: Optional[float] = None
+    last_execution: float | None = None
     min_time: float = float('inf')
     max_time: float = 0.0
 
@@ -68,9 +67,9 @@ class MetricsCollector:
     """
 
     def __init__(self):
-        self._metrics: Dict[str, MetricData] = defaultdict(MetricData)
+        self._metrics: dict[str, MetricData] = defaultdict(MetricData)
         # Track counts added since last flush so flush uses INCRBY not SET
-        self._pending_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self._pending_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         # Cached Redis client — initialised once on first flush/get_all_metrics call
         self._redis_client = None
 
@@ -137,7 +136,7 @@ class MetricsCollector:
         self._pending_counts[metric_name]["count"] += amount
         logger.debug(f"Metric [{metric_name}] inc by {amount}")
 
-    def get_metric(self, metric_name: str) -> Optional[MetricData]:
+    def get_metric(self, metric_name: str) -> MetricData | None:
         """Get specific metric data"""
         return self._metrics.get(metric_name)
 
@@ -172,18 +171,19 @@ class MetricsCollector:
         """Returns cached Redis client, initialised once."""
         if self._redis_client is None:
             try:
-                from app.core.config import settings
                 import redis as _redis
+
+                from app.core.config import settings
                 self._redis_client = _redis.from_url(settings.REDIS_URL, decode_responses=True)
             except Exception as e:
                 logger.warning(f"[Metrics] Could not create Redis client: {e}")
                 return None
         return self._redis_client
 
-    def get_all_metrics(self) -> Dict[str, dict]:
+    def get_all_metrics(self) -> dict[str, dict]:
         """Get all metrics as dict — merges in-memory + Redis persisted totals."""
         # Try to load Redis totals and merge
-        redis_totals: Dict[str, Dict[str, int]] = {}
+        redis_totals: dict[str, dict[str, int]] = {}
         try:
             r = self._get_redis()
             if r:

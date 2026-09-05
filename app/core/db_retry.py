@@ -2,9 +2,10 @@
 Database retry wrapper for Supabase operations.
 Handles transient connection errors with exponential backoff.
 """
-from typing import TypeVar, Callable
 import functools
-from app.core.retry import retry
+from collections.abc import Callable
+from typing import TypeVar
+
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +56,7 @@ def with_db_retry(func: Callable[..., T]) -> Callable[..., T]:
 
 class DatabaseHealth:
     """Database health check utilities"""
-    
+
     @staticmethod
     @with_db_retry
     def check_connection() -> bool:
@@ -64,13 +65,13 @@ class DatabaseHealth:
         Returns True if successful, raises exception if fails after retries.
         """
         from app.core.database import db
-        
+
         # Simple ping query
-        result = db.table("discovered_credentials").select("id").limit(1).execute()
-        
+        db.table("discovered_credentials").select("id").limit(1).execute()
+
         logger.info("Database health check passed")
         return True
-    
+
     @staticmethod
     def get_pool_stats() -> dict:
         """Get connection pool statistics (if available)"""

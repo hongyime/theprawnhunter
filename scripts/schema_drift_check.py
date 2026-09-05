@@ -12,8 +12,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
-
 
 SCHEMA_CHECK_SQL = r"""
 WITH expected_columns(table_name, column_name, required) AS (
@@ -189,8 +187,7 @@ def main() -> int:
         ],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=child_env,
     )
     if completed.returncode != 0:

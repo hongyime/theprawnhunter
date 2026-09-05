@@ -1,5 +1,6 @@
-from app.core.config import settings
 from typing import Any
+
+from app.core.config import settings
 
 
 # supabase-py 2.x (this version) does not expose http_client via ClientOptions.

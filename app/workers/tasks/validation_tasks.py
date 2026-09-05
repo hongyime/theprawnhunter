@@ -34,13 +34,11 @@ import time
 
 import httpx
 
-from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 from app.services.scanners import _is_valid_token
 from app.workers.celery_app import app
 from app.workers.tasks.flow_tasks import async_execute, redis_client
-
 
 logger = logging.getLogger("validation.tasks")
 logger.setLevel(logging.INFO)
@@ -144,7 +142,7 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
     # MONITOR_BOT_TOKEN covers all our own bots. If a scanner finds our own
     # token (e.g. via telegram_search), drop it here silently.
     if _scraper_srv_is_monitor(token):
-        logger.debug(f"[Validate] Own monitor bot token — silently dropping")
+        logger.debug("[Validate] Own monitor bot token — silently dropping")
         return 0
 
     token_hash = _calculate_hash(token)
@@ -215,8 +213,8 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
             # ---- Bundle 1: Pivot fan-out (fire-and-forget) ----
             try:
                 from app.workers.tasks.pivot_tasks import (
-                    search_github_user,
                     search_bot_username,
+                    search_github_user,
                     search_webhook_host,
                 )
                 # Seed 1: GitHub owner (if source meta carries repo)
@@ -361,7 +359,7 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
             new_id = res.data[0]["id"]
             status_label = "✅ ACTIVE" if chat_id else "⏳ PENDING"
 
-            from app.workers.tasks.flow_tasks import get_broadcaster, enrich_credential
+            from app.workers.tasks.flow_tasks import enrich_credential, get_broadcaster
             await get_broadcaster().send_log(
                 f"🎯 [{source_name}] **New Bot Token!**\n"
                 f"Bot: @{bot_username}\n"
@@ -646,6 +644,7 @@ def backfill_scoring(batch_size: int = 50):
 
 async def _backfill_scoring_async(batch_size: int):
     import httpx
+
     from app.core.security import security
 
     res = await async_execute(

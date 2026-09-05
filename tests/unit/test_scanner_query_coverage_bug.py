@@ -11,9 +11,8 @@ the bug is resolved.
 Validates: Requirements 1.1–1.15 (bug conditions) / 2.1–2.14 (expected behavior)
 """
 
-import re
-import sys
 import os
+import re
 
 # ---------------------------------------------------------------------------
 # Helpers to extract the inline query lists from scanner_tasks without
@@ -321,7 +320,7 @@ class TestShodanDefaultQueries:
             if "http.body:" in q and "http.status:200" not in q
         ]
         assert not bad, (
-            f"Shodan default queries missing http.status:200 on body entries:\n"
+            "Shodan default queries missing http.status:200 on body entries:\n"
             + "\n".join(f"  - {q}" for q in bad)
         )
 
@@ -332,7 +331,7 @@ class TestShodanDefaultQueries:
             if "http.body:" in q and '-http.body:"telegram.org"' not in q
         ]
         assert not bad, (
-            f"Shodan default queries missing -http.body:\"telegram.org\" exclusion:\n"
+            "Shodan default queries missing -http.body:\"telegram.org\" exclusion:\n"
             + "\n".join(f"  - {q}" for q in bad)
         )
 
@@ -343,7 +342,7 @@ class TestShodanDefaultQueries:
             if "http.body:" in q and '-http.body:"github.com"' not in q
         ]
         assert not bad, (
-            f"Shodan default queries missing -http.body:\"github.com\" exclusion:\n"
+            "Shodan default queries missing -http.body:\"github.com\" exclusion:\n"
             + "\n".join(f"  - {q}" for q in bad)
         )
 
