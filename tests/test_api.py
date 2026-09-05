@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,6 +8,19 @@ from fastapi import HTTPException
 # All monitor and scan routes require X-Monitor-Key header.
 # Use the test key set in conftest.py.
 AUTH = {"X-Monitor-Key": "test-monitor-key-for-pytest"}
+
+
+def test_rate_limit_bucket_ignores_invalid_monitor_keys(monkeypatch):
+    from app.api import main
+
+    monkeypatch.setattr(main.settings, "MONITOR_API_KEY", AUTH["X-Monitor-Key"])
+    client = SimpleNamespace(host="203.0.113.9")
+    unauthenticated = SimpleNamespace(headers={}, client=client)
+    forged = SimpleNamespace(headers={"X-Monitor-Key": "attacker-chosen-bucket"}, client=client)
+    authenticated = SimpleNamespace(headers=AUTH, client=client)
+
+    assert main._rate_key(forged) == main._rate_key(unauthenticated)
+    assert main._rate_key(authenticated).startswith("key:")
 
 
 def test_read_root(client):
