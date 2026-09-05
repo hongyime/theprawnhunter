@@ -4133,6 +4133,12 @@ async def _honeypot_redirect_one_logic(
 
     from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
 
+    # Recheck both safety gates for queued jobs
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        return {"status": "skipped", "reason": "not_authorized"}
+    if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
+        return {"status": "skipped", "reason": "not_authorized"}
+
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"

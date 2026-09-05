@@ -29,6 +29,8 @@ async def _redirect_touch2_logic() -> dict:
     Find users who received redirect_1 but not redirect_2.
     Send second message (urgent tone).
     """
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        return {"status": "skipped", "reason": "not_authorized"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
@@ -104,6 +106,8 @@ def honeypot_redirect_touch3():
 
 async def _redirect_touch3_logic() -> dict:
     """Send third and final message (last notice tone)."""
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        return {"status": "skipped", "reason": "not_authorized"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
@@ -175,6 +179,8 @@ async def _proactive_outreach_logic() -> dict:
     Find ALL unique users across all captured bots who haven't been redirected yet.
     Send proactive message asking them to use inline mode.
     """
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        return {"status": "skipped", "reason": "not_authorized"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
