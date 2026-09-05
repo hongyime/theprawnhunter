@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # disabled by default. Finding-policy webhook delivery bypasses this gate.
     ENABLE_LEGACY_EVENT_ALERTS: bool = False
 
+    # Finding alert outbound delivery — disabled by default for safety.
+    # Must be explicitly enabled before alert workers will send anything.
+    FINDING_ALERTS_ENABLED: bool = False
+
     # Telegram Monitoring (The Bot(s) WE control - supports multi-bot rotation)
     # Comma-separated bot tokens, e.g. "token1,token2,token3"
     # Only these bots run the command handler (starthunter, help, etc.)

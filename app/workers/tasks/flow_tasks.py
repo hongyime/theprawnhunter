@@ -2752,6 +2752,11 @@ def weekly_finding_alerts():
 
 
 async def _route_finding_alerts_logic(cadence: str) -> dict:
+    from app.core.config import settings
+    if not settings.FINDING_ALERTS_ENABLED:
+        logger.info("[FindingAlerts] skipping %s routing — FINDING_ALERTS_ENABLED=False", cadence)
+        return {"status": "skipped", "cadence": cadence, "reason": "FINDING_ALERTS_ENABLED=False"}
+    
     from app.services.finding_alerts import route_finding_alerts
 
     try:
@@ -2762,6 +2767,11 @@ async def _route_finding_alerts_logic(cadence: str) -> dict:
 
 
 async def _weekly_finding_alerts_logic() -> dict:
+    from app.core.config import settings
+    if not settings.FINDING_ALERTS_ENABLED:
+        logger.info("[FindingAlerts] skipping weekly routing — FINDING_ALERTS_ENABLED=False")
+        return {"status": "skipped", "reason": "FINDING_ALERTS_ENABLED=False"}
+    
     from app.services.finding_alerts import route_finding_alerts, weekly_alert_coverage
 
     try:
