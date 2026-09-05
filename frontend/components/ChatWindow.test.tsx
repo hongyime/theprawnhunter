@@ -27,12 +27,10 @@ function messageBuilder(result: { data: unknown[]; error: unknown }) {
     select: vi.fn(),
     eq: vi.fn(),
     order: vi.fn(),
-    limit: vi.fn(),
   };
   builder.select.mockReturnValue(builder);
   builder.eq.mockReturnValue(builder);
-  builder.order.mockReturnValue(builder);
-  builder.limit.mockResolvedValue(result);
+  builder.order.mockResolvedValue(result);
   return builder;
 }
 

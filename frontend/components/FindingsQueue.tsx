@@ -151,7 +151,7 @@ async function resolveCredentialId(finding: Finding, rows: FindingEvidence[]) {
     .slice(0, 50);
   if (!messageIds.length) return null;
   const { data } = await supabase
-    .from("exfiltrated_messages")
+    .from("evidence_redacted")
     .select("credential_id")
     .in("id", messageIds)
     .limit(1);
