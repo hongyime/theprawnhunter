@@ -119,7 +119,6 @@ SELECT json_build_object(
             FROM missing_indexes WHERE NOT required
         ), '[]'::json)
 );
-)
 """
 
 
@@ -156,27 +155,28 @@ def _check_schema_via_rest(supabase_url: str, service_key: str) -> int:
         "Content-Type": "application/json",
     }
 
-    result = {"status": "ok", "tables": {}, "missing_tables": [], "missing_columns": []}
+    result = {"status": "ok", "tables": {}, "missing_tables": [], "probe_errors": []}
 
     for table, spec in expected.items():
         try:
-            # SELECT single row to verify table/column existence
-            conn.request("GET", f"/rest/v1/{table}?select=*&limit=1", headers=headers)
+            # Explicit column list (not select=*)
+            columns = ",".join(spec["required"])
+            conn.request("GET", f"/rest/v1/{table}?select={columns}&limit=1", headers=headers)
             resp = conn.getresponse()
+            body = resp.read().decode("utf-8")  # Always consume body
             if resp.status in (200, 206):
                 result["tables"][table] = "present"
             elif resp.status == 404:
                 result["missing_tables"].append(table)
             else:
-                body = resp.read().decode("utf-8")[:200]
-                result["tables"][table] = f"error_{resp.status}"
+                result["probe_errors"].append({"table": table, "status": resp.status, "body": body[:200]})
         except Exception as e:
-            result["tables"][table] = f"error: {str(e)[:50]}"
+            result["probe_errors"].append({"table": table, "error": str(e)[:100]})
 
     conn.close()
 
-    if result["missing_tables"]:
-        result["status"] = "drift_detected"
+    if result["missing_tables"] or result["probe_errors"]:
+        result["status"] = "failed"
         print(json.dumps(result, indent=2, sort_keys=True))
         return 1
 
@@ -226,19 +226,20 @@ def main() -> int:
             )
         )
         return 2
-    if not database_url:
+
+    # Direct Postgres path (requires psql + DATABASE_URL)
+    psql = shutil.which("psql")
+    if not psql:
         print(
             json.dumps(
                 {
                     "status": "blocked",
-                    "reason": "DATABASE_URL or SUPABASE_DB_URL is required for SQL schema drift checks",
+                    "reason": "psql executable not found in PATH",
                 },
                 indent=2,
             )
         )
         return 2
-
-
 
     child_env = os.environ.copy()
     child_env["PGDATABASE"] = database_url
