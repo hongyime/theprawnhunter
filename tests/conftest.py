@@ -1,22 +1,22 @@
-import pytest
 import os
 import sys
 from pathlib import Path
 
+import pytest
+from cryptography.fernet import Fernet
+from fastapi.testclient import TestClient
+
 # Add project root to sys.path so we can import 'app'
 sys.path.append(str(Path(__file__).parent.parent))
-
-from fastapi.testclient import TestClient
 
 # Mock Environment Variables BEFORE importing app
 os.environ["PROJECT_NAME"] = "Test Hunter"
 os.environ["ENV"] = "test"
 os.environ["SUPABASE_URL"] = "https://example.supabase.co"
 os.environ["SUPABASE_KEY"] = "mock-key"
+os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "mock-service-role-key"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-os.environ["ENCRYPTION_KEY"] = "A" * 32 + "=" # Invalid but length correct-ish, need valid fernet key
 # Generate a valid key for testing
-from cryptography.fernet import Fernet
 valid_key = Fernet.generate_key().decode()
 os.environ["ENCRYPTION_KEY"] = valid_key
 
@@ -26,7 +26,7 @@ os.environ["TELEGRAM_API_ID"] = "12345"
 os.environ["TELEGRAM_API_HASH"] = "abc"
 os.environ["MONITOR_API_KEY"] = "test-monitor-key-for-pytest"
 
-from app.api.main import app
+from app.api.main import app  # noqa: E402, I001
 
 @pytest.fixture(scope="module")
 def client():

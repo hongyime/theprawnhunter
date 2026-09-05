@@ -85,11 +85,13 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "-v --tb=short --strict-markers"
+asyncio_default_fixture_loop_scope = "function"
 
 # Markers for test categories
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
+    "live: Explicitly opted-in tests that call live external services",
     "slow: Slow tests",
 ]
 

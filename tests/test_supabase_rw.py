@@ -1,61 +1,57 @@
+"""Opt-in live Supabase read/write/delete round-trip."""
 
-import asyncio
-import sys
+import hashlib
 import os
-from dotenv import load_dotenv
+from uuid import uuid4
 
-# Load env variables from parent
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+import pytest
 
-# Add project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from app.core.config import settings
 from supabase import create_client
 
-def test_rw():
-    print("--- Testing Supabase Read/Write ---")
+pytestmark = [pytest.mark.integration, pytest.mark.live]
+
+
+def test_supabase_read_write_round_trip():
     if os.getenv("ALLOW_SUPABASE_WRITE") != "1":
-        print("⚠️ Skipping write test (set ALLOW_SUPABASE_WRITE=1 to enable).")
-        return
-    if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
-        print("❌ Supabase config missing.")
-        return
+        pytest.skip("set ALLOW_SUPABASE_WRITE=1 to enable the live database probe")
+
+    url = os.getenv("LIVE_SUPABASE_URL")
+    service_role_key = os.getenv("LIVE_SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not service_role_key:
+        pytest.fail(
+            "LIVE_SUPABASE_URL and LIVE_SUPABASE_SERVICE_ROLE_KEY are required "
+            "when the live database probe is enabled"
+        )
+
+    client = create_client(url, service_role_key)
+    nonce = uuid4().hex
+    token_hash = hashlib.sha256(f"qa-live-probe-{nonce}".encode()).hexdigest()
+    new_id = None
 
     try:
-        client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        
-        # 1. Insert Dummy
-        dummy_data = {
-            "bot_token": "TEST_TOKEN_ENCRYPTED_PLACEHOLDER",
-            "token_hash": "TEST_HASH_123456",
-            "source": "TEST_SCRIPT",
-            "status": "pending"
-        }
-        print("1. Attempting INSERT...")
-        data = client.table("discovered_credentials").insert(dummy_data).execute()
-        new_id = data.data[0]['id']
-        print(f"   ✅ Inserted ID: {new_id}")
-        
-        # 2. Read it back
-        print("2. Attempting SELECT...")
-        res = client.table("discovered_credentials").select("*").eq("id", new_id).execute()
-        if len(res.data) > 0:
-             print(f"   ✅ Record found: {res.data[0]['token_hash']}")
-        else:
-             print("   ❌ Record NOT found after insert!")
-             
-        # 3. Delete it
-        print("3. Attempting DELETE...")
-        client.table("discovered_credentials").delete().eq("id", new_id).execute()
-        print("   ✅ Record deleted.")
-        
-        print("\n🎉 Supabase Read/Write Fully Verified!")
+        inserted = (
+            client.table("discovered_credentials")
+            .insert(
+                {
+                    "bot_token": f"QA_LIVE_PROBE_{nonce}",
+                    "token_hash": token_hash,
+                    "source": "QA_LIVE_PROBE",
+                    "status": "pending",
+                }
+            )
+            .execute()
+        )
+        assert inserted.data, "insert returned no row"
+        new_id = inserted.data[0]["id"]
 
-    except Exception as e:
-        print(f"\n❌ FAILED: {e}")
-        if "policy" in str(e).lower():
-            print("   👉 Hint: Check your Supabase RLS policies. The Service Key should bypass them, but if using Anon key you might need policies.")
-
-if __name__ == "__main__":
-    test_rw()
+        selected = (
+            client.table("discovered_credentials")
+            .select("id,token_hash")
+            .eq("id", new_id)
+            .execute()
+        )
+        assert len(selected.data) == 1
+        assert selected.data[0]["token_hash"] == token_hash
+    finally:
+        if new_id is not None:
+            client.table("discovered_credentials").delete().eq("id", new_id).execute()
