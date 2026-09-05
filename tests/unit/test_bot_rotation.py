@@ -2,8 +2,8 @@
 Unit tests for multi-bot rotation functionality.
 Tests config parsing, bot username helpers, and broadcaster cycling.
 """
-import unittest
 import os
+import unittest
 from unittest.mock import patch
 
 
