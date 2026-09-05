@@ -25,6 +25,23 @@ async def _run_with_timeout(
         pytest.fail(f"{name} failed: {exc}")
 
 
+def _assert_success_result(name: str, result: object) -> None:
+    assert isinstance(result, str), f"{name} returned an unexpected result: {result!r}"
+    normalized = result.lower()
+    failure_markers = (
+        "error",
+        "failed",
+        "paused",
+        "cooldown",
+        "exhausted",
+        "limit reached",
+        "skipped",
+    )
+    assert not any(marker in normalized for marker in failure_markers), (
+        f"{name} did not complete a healthy provider probe: {result}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_all_configured_scanners_are_reachable(monkeypatch):
     if os.getenv("RUN_LIVE_SCANNER_TESTS") != "1":
@@ -88,5 +105,8 @@ async def test_all_configured_scanners_are_reachable(monkeypatch):
     results = {}
     for name, operation, timeout in probes:
         results[name] = await _run_with_timeout(name, operation, timeout)
+
+    for name, result in results.items():
+        _assert_success_result(name, result)
 
     assert set(results) == {name for name, _, _ in probes}

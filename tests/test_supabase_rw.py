@@ -55,3 +55,10 @@ def test_supabase_read_write_round_trip():
     finally:
         if new_id is not None:
             client.table("discovered_credentials").delete().eq("id", new_id).execute()
+            after_delete = (
+                client.table("discovered_credentials")
+                .select("id")
+                .eq("id", new_id)
+                .execute()
+            )
+            assert after_delete.data == [], "cleanup delete did not remove the live probe row"
