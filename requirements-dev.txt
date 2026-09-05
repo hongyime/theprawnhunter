@@ -1,6 +1,6 @@
 # Additional dependencies for code quality and testing
 pytest==8.3.5  # SECURITY: CVE-2025-71176 — no patched version exists yet; kept out of prod image
-pytest-asyncio==0.21.1
+pytest-asyncio==0.24.0
 pytest-mock==3.12.0
 pytest-cov==4.1.0
 ruff==0.1.9
