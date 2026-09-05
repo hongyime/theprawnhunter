@@ -108,14 +108,22 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 
+import hmac
+
+
 def _rate_key(request):
     """Prefer X-Monitor-Key so a leaked key can't outrun the per-IP budget,
-    fall back to remote IP for unauth endpoints (honeypot receiver)."""
+    fall back to remote IP for unauth endpoints (honeypot receiver).
+    
+    SECURITY: Only valid monitor keys get the key bucket to prevent bucket manipulation.
+    """
     hdr = request.headers.get("X-Monitor-Key")
-    if hdr:
-        # Bucket by first 12 chars — enough entropy to distinguish keys
-        # without dumping the whole key into Redis
-        return f"key:{hdr[:12]}"
+    if hdr and settings.MONITOR_API_KEY:
+        # Constant-time comparison to prevent timing attacks
+        if hmac.compare_digest(hdr, settings.MONITOR_API_KEY):
+            # Bucket by first 12 chars — enough entropy to distinguish keys
+            # without dumping the whole key into Redis
+            return f"key:{hdr[:12]}"
     return f"ip:{get_remote_address(request)}"
 
 
