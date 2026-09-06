@@ -271,9 +271,19 @@ class BroadcasterService:
             logger.warning(f"    ⚠️ [Broadcaster] _download_media_bytes failed: {exc}")
             return None
 
-    async def send_message(self, group_id: int | str, thread_id: int, msg_obj: dict):
-        """
-        Sends a message using the next available identity (Bot or User Account).
+    async def send_message(
+        self,
+        group_id: int | str,
+        thread_id: int,
+        msg_obj: dict,
+    ) -> int | None:
+        """Send a broadcast message.
+
+        Returns the Telegram message_id on successful delivery (used by the
+        caller to persist `exfiltrated_messages.broadcast_message_id` for
+        idempotency on retry — see INTR-001). Returns ``None`` when the
+        message was delivered via auto-archive or another path that doesn't
+        expose a message-id. Raises ``BroadcastSendError`` on failure.
         """
         content = msg_obj.get("content", "")
         sender = msg_obj.get("sender_name", "Unknown")
@@ -292,6 +302,10 @@ class BroadcasterService:
 
         # Try up to N times (total size of pool)
         last_failure: BroadcastSendError | None = None
+        # Telegram message-id of a successful send, or None when the delivery
+        # path doesn't expose one (auto-archive fallback). Callers persist
+        # this into exfiltrated_messages.broadcast_message_id for INTR-001.
+        sent_message_id: int | None = None
         for _ in range(len(self._pool)):
             identity = next(self._cycle)
 
@@ -320,7 +334,7 @@ class BroadcasterService:
                             filename = _media_filename(file_meta, media_type)
                             try:
                                 if media_type == "photo":
-                                    await bot.send_photo(
+                                    _sent = await bot.send_photo(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         photo=media_bytes,
@@ -328,7 +342,7 @@ class BroadcasterService:
                                         filename=filename,
                                     )
                                 elif media_type == "document":
-                                    await bot.send_document(
+                                    _sent = await bot.send_document(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         document=media_bytes,
@@ -337,7 +351,7 @@ class BroadcasterService:
                                         disable_content_type_detection=False,
                                     )
                                 elif media_type == "video":
-                                    await bot.send_video(
+                                    _sent = await bot.send_video(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         video=media_bytes,
@@ -345,15 +359,18 @@ class BroadcasterService:
                                         filename=filename,
                                     )
                                 elif media_type == "audio":
-                                    await bot.send_audio(
+                                    _sent = await bot.send_audio(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         audio=media_bytes,
                                         caption=caption,
                                         filename=filename,
                                     )
+                                else:
+                                    _sent = None
 
                                 sent_via_media = True
+                                sent_message_id = getattr(_sent, "message_id", None)
                                 logger.info(
                                     f"    ✅ [Broadcaster] Successfully sent {media_type} "
                                     f"({len(media_bytes)} bytes, filename={filename})"
@@ -392,12 +409,13 @@ class BroadcasterService:
                         raise last_failure
 
                     if not sent_via_media:
-                        await bot.send_message(
+                        _sent = await bot.send_message(
                             chat_id=group_id,
                             message_thread_id=bot_thread_id,
                             text=to_send_text
                         )
-                    return
+                        sent_message_id = getattr(_sent, "message_id", None)
+                    return sent_message_id
                 except Forbidden as e:
                     self._failed_tokens.add(token)
                     last_failure = _classify_broadcast_exception(e)

