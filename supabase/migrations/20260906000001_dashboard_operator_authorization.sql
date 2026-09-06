@@ -17,10 +17,13 @@ BEGIN
 END;
 $function$;
 
--- Guard the queue tables (findings, feedback, evidence)
+-- Guard the queue tables (findings, feedback, finding_evidence).
+-- Note: table is `finding_evidence` (per 20260903000001_supabase_optimization.sql
+-- and 20260904000002_insight_queue.sql); earlier draft used the shorthand
+-- `evidence` which does not exist.
 ALTER TABLE public.findings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.finding_feedback ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.evidence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.finding_evidence ENABLE ROW LEVEL SECURITY;
 
 -- Findings: only operators can read/write
 DROP POLICY IF EXISTS findings_authenticated_read ON public.findings;
@@ -36,9 +39,9 @@ CREATE POLICY finding_feedback_operator_only ON public.finding_feedback
   USING (public.is_dashboard_operator())
   WITH CHECK (public.is_dashboard_operator());
 
--- Evidence: only operators
-DROP POLICY IF EXISTS evidence_authenticated_read ON public.evidence;
-CREATE POLICY evidence_operator_only ON public.evidence
+-- finding_evidence: only operators
+DROP POLICY IF EXISTS evidence_authenticated_read ON public.finding_evidence;
+CREATE POLICY evidence_operator_only ON public.finding_evidence
   FOR ALL TO authenticated
   USING (public.is_dashboard_operator())
   WITH CHECK (public.is_dashboard_operator());

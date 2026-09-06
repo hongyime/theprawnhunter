@@ -25,15 +25,15 @@ ALTER TABLE public.exfiltrated_messages
     ADD COLUMN IF NOT EXISTS broadcast_status TEXT
         CHECK (broadcast_status IN ('pending', 'sent', 'permanent_failed', 'revoked'));
 
--- Backfill existing rows so the column is non-null-consistent:
---   is_broadcasted=true  → 'sent'
---   is_broadcasted=false → 'pending' (retry loop keeps them here)
-UPDATE public.exfiltrated_messages
-   SET broadcast_status = CASE
-           WHEN is_broadcasted IS TRUE THEN 'sent'
-           ELSE 'pending'
-       END
- WHERE broadcast_status IS NULL;
+-- Backfill removed from this migration — the 351k-row UPDATE hits the
+-- Management API 30s statement timeout. Backfill runs separately via
+-- scripts/backfill_broadcast_status.py in 500-row batches.
+--
+-- After that script completes, `broadcast_status` is populated for all rows
+-- and any new INSERT will still need a default. Add the default here so
+-- new rows land as 'pending' automatically:
+ALTER TABLE public.exfiltrated_messages
+    ALTER COLUMN broadcast_status SET DEFAULT 'pending';
 
 -- Partial index for permanent-failed drill-down.
 CREATE INDEX IF NOT EXISTS idx_messages_permanent_failed

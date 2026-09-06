@@ -9,7 +9,7 @@
 
 DO $$
 DECLARE
-    expected_tables text[] := ARRAY['findings','finding_evidence','engagement_events','honeypot_redirect_log'];
+    expected_tables text[] := ARRAY['findings','finding_evidence','engagement_events'];
     missing text[] := ARRAY[]::text[];
     t text;
 BEGIN
