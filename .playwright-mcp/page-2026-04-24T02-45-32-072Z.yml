@@ -1,7 +1,0 @@
-- generic [active] [ref=e1]:
-  - main [ref=e2]:
-    - heading "Discovered Bots" [level=2] [ref=e5]:
-      - img [ref=e6]
-      - text: Discovered Bots
-    - generic [ref=e10]: Select a chat to view exfiltrated messages
-  - alert [ref=e11]

@@ -64,6 +64,11 @@ frontend/out/
 .omo/
 .agents/tickets/
 
+# Local AI tool state (never commit; these are per-machine)
+.claude/*.lock
+.claude/settings.local.json
+.playwright-mcp/
+
 # Kiro specs (local dev only — not for CI)
 # Uncomment if you don't want specs in the repo:
 # .kiro/
