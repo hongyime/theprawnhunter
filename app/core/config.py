@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str  # Service role key (bypasses RLS)
     REDIS_URL: str
 
+    # SEC-001 (operator override): store bot tokens as plaintext instead of
+    # Fernet ciphertext. When True, SecurityService.encrypt is a no-op that
+    # returns the input unchanged; SecurityService.decrypt still handles both
+    # `gAAAA%` ciphertext (via the self-heal path) and plaintext, so the mixed
+    # historical state doesn't break. Default False for security; set True
+    # explicitly to opt into uniform plaintext storage. See bugfix.md SEC-001.
+    PLAINTEXT_TOKEN_MODE: bool = False
+
     # Security
     ENCRYPTION_KEY: str  # Fernet Key
     # Optional comma-separated list of PREVIOUS Fernet keys, used only to
