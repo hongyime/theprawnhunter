@@ -4096,7 +4096,10 @@ async def _honeypot_redirect_sweep_logic() -> dict:
     # concurrent sweep never re-dispatches the same row before honeypot_redirect_one
     # writes the final timestamp. On dispatch success the sub-task flips it to a
     # real ISO timestamp; on send failure it clears it back to NULL.
-    _PENDING_SENTINEL = "pending"
+    #
+    # Value is inlined below because Supabase update() takes the literal.
+
+
 
     for row in rows:
         payload = row.get("payload") or {}
@@ -4164,7 +4167,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         try:
             claim_res = await async_execute(
                 db.table("honeypot_updates")
-                .update({"redirected_at": _PENDING_SENTINEL})
+                .update({"redirected_at": "pending"})
                 .eq("id", row["id"])
                 .is_("redirected_at", "null")
             )
