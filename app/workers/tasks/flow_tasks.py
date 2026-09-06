@@ -4068,7 +4068,7 @@ def honeypot_redirect_sweep():
 
 async def _honeypot_redirect_sweep_logic() -> dict:
     if not settings.HONEYPOT_REDIRECT_MODE:
-        return {"status": "disabled"}
+        return {"status": "disabled", "reason": "mode_disabled"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
 
@@ -4091,6 +4091,12 @@ async def _honeypot_redirect_sweep_logic() -> dict:
 
     dispatched = 0
     skipped = 0
+
+    # INTR-002 / CONC-002: claim-before-dispatch. Marker string 'pending' so a
+    # concurrent sweep never re-dispatches the same row before honeypot_redirect_one
+    # writes the final timestamp. On dispatch success the sub-task flips it to a
+    # real ISO timestamp; on send failure it clears it back to NULL.
+    _PENDING_SENTINEL = "pending"
 
     for row in rows:
         payload = row.get("payload") or {}
@@ -4152,6 +4158,25 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         except Exception:
             pass
 
+        # INTR-002 / CONC-002: atomic claim — set redirected_at='pending' only
+        # if it is still NULL. If another sweep already claimed the row, this
+        # returns zero rows and we move on. Prevents duplicate DM to victim.
+        try:
+            claim_res = await async_execute(
+                db.table("honeypot_updates")
+                .update({"redirected_at": _PENDING_SENTINEL})
+                .eq("id", row["id"])
+                .is_("redirected_at", "null")
+            )
+            if not claim_res.data:
+                logger.debug(f"[HoneypotSweep] claim contended for row {row['id']}")
+                skipped += 1
+                continue
+        except Exception as claim_exc:
+            logger.warning(f"[HoneypotSweep] claim failed for row {row['id']}: {claim_exc}")
+            skipped += 1
+            continue
+
         # Dispatch redirect with update_type for specialized handling
         app.send_task(
             "flow.honeypot_redirect_one",
@@ -4197,10 +4222,32 @@ async def _honeypot_redirect_one_logic(
 
     from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
 
-    # Recheck both safety gates for queued jobs
+    # Recheck both safety gates for queued jobs. Report the ACTUAL gate that
+    # failed — the previous shared "not_authorized" reason for both was
+    # misleading when triaging (LOGIC-005). If the gates are off we also release
+    # the sweep-side "pending" claim so the row can be tried again once the
+    # operator flips the gate back on.
+    async def _release_pending_claim(reason_tag: str) -> None:
+        try:
+            await async_execute(
+                db.table("honeypot_updates")
+                .update({"redirected_at": None})
+                .eq("id", update_id)
+                .eq("redirected_at", "pending")
+            )
+            logger.debug(
+                f"[HoneypotRedirect] released pending claim on {update_id} ({reason_tag})"
+            )
+        except Exception as _release_exc:
+            logger.debug(
+                f"[HoneypotRedirect] could not release pending claim: {_release_exc}"
+            )
+
     if not settings.HONEYPOT_REDIRECT_MODE:
-        return {"status": "skipped", "reason": "not_authorized"}
+        await _release_pending_claim("mode_disabled")
+        return {"status": "skipped", "reason": "mode_disabled"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
+        await _release_pending_claim("not_authorized")
         return {"status": "skipped", "reason": "not_authorized"}
 
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
@@ -4233,6 +4280,10 @@ async def _honeypot_redirect_one_logic(
                 update_id, user_id, redirect_bot
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        else:
+            # INTR-002: release the sweep-side "pending" claim so the next
+            # sweep can retry this row instead of leaving it stuck.
+            await _release_pending_claim("callback_send_failed")
 
         logger.info(
             f"🔀 [Callback] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
@@ -4267,6 +4318,9 @@ async def _honeypot_redirect_one_logic(
                 update_id, user_id, redirect_bot
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        else:
+            # INTR-002: release the sweep-side "pending" claim on failure.
+            await _release_pending_claim("inline_send_failed")
 
         logger.info(
             f"🔀 [Inline] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
@@ -4333,7 +4387,10 @@ async def _honeypot_redirect_one_logic(
                 "redirect_attempt": 1,
             }
         else:
+            # INTR-002: on failure, ALSO clear the sweep-side "pending" claim
+            # by writing redirected_at=None so the next sweep can retry.
             update_payload = {
+                "redirected_at": None,
                 "redirect_error": str(resp.get("description") or resp.get("error", "unknown"))[:200],
                 "sender_user_id": user_id,
             }

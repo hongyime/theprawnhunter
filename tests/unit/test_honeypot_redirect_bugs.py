@@ -85,23 +85,41 @@ def test_redirect_one_defines_text_before_send():
 
 def test_redirect_one_writes_redirect_1_sent_at_on_success():
     """On a successful first redirect, the code must persist redirect_1_sent_at
-    so the touch-2 sweep can find eligible candidates."""
+    so the touch-2 sweep can find eligible candidates.
+
+    We look for a `"redirected_at"` key that appears within 500 chars of
+    `"redirect_1_sent_at"` — the success-branch payload. INTR-002 adds an
+    earlier `"redirected_at"` reference inside `_release_pending_claim` that
+    is unrelated to the success payload, so a naive first-occurrence search
+    would false-fail; iterate to find the pairing that matters.
+    """
     source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flow_tasks.py"
     text_src = source.read_text(encoding="utf-8")
 
     fn_start = text_src.find("async def _honeypot_redirect_one_logic")
     assert fn_start != -1
 
-    # Find the success branch update_payload block
-    success_block_start = text_src.find('"redirected_at"', fn_start)
-    assert success_block_start != -1, (
-        '"redirected_at" key not found in _honeypot_redirect_one_logic'
-    )
+    # Scan every "redirected_at" occurrence in the function and require that
+    # AT LEAST ONE of them is co-located (within 500 chars either direction)
+    # with the redirect_1_sent_at write. That is the success-branch payload.
+    fn_end = text_src.find("\n@app.task", fn_start)
+    if fn_end == -1:
+        fn_end = fn_start + 20_000
+    fn_body = text_src[fn_start:fn_end]
 
-    # redirect_1_sent_at must appear in the same update_payload block
-    # (within 500 chars of redirected_at to ensure same dict)
-    nearby = text_src[success_block_start : success_block_start + 500]
-    assert "redirect_1_sent_at" in nearby, (
+    found_success_pair = False
+    idx = 0
+    while True:
+        pos = fn_body.find('"redirected_at"', idx)
+        if pos == -1:
+            break
+        nearby = fn_body[max(0, pos - 500) : pos + 500]
+        if "redirect_1_sent_at" in nearby:
+            found_success_pair = True
+            break
+        idx = pos + 1
+
+    assert found_success_pair, (
         "redirect_1_sent_at must be written in the same update_payload as "
         "redirected_at on successful first send"
     )
