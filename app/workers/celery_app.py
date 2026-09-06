@@ -276,6 +276,13 @@ app.conf.update(
             "task": "flow.canary_flow_check",
             "schedule": crontab(minute="*/30"),
         },
+        # LOGIC-001: findings-pipeline canary. Independent of raw broadcast so
+        # the ENABLE_RAW_MESSAGE_BROADCAST toggle doesn't blind operators to
+        # findings-workflow health.
+        "canary-findings-check-hourly": {
+            "task": "flow.canary_findings_check",
+            "schedule": crontab(minute=7, hour="*"),
+        },
         # Passive fingerprint of captured third-party webhook URLs — every 6h,
         # 15 min after the hour to avoid colliding with other beats.
         "probe-webhooks-6hours": {

@@ -228,6 +228,13 @@ services:
     mem_reservation: "${FRONTEND_MEM_RESERVATION:-256m}"
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    # REL-002: healthcheck via node http client (image lacks curl/wget).
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     logging:
       driver: "json-file"
       options:
@@ -289,6 +296,15 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    # REL-002: healthcheck via raw TCP connect on 5555. Flower's basic-auth
+    # gate makes HTTP probes awkward; a successful TCP handshake is enough
+    # to confirm the process is up and accepting connections.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket, sys; s = socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', 5555)); s.close(); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     logging:
       driver: "json-file"
       options:

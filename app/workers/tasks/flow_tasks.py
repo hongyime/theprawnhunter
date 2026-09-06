@@ -500,6 +500,66 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
     retry_after_seconds = getattr(exc, "retry_after_seconds", None)
     now = datetime.now(UTC)
     attempts = int(msg.get("broadcast_attempts") or 0) + 1
+
+    # DATA-003 / REL-003: cap infinite retry. When attempts exceed the budget,
+    # move the row to a terminal `permanent_failed` state so the retry pool
+    # stops churning on it. Row stays visible for operator triage via
+    # broadcast_status='permanent_failed'.
+    max_attempts = int(os.getenv("MAX_BROADCAST_ATTEMPTS", 8))
+    if attempts >= max_attempts:
+        terminal_payload: dict[str, Any] = {
+            "is_broadcasted": True,  # exits the retry pool
+            "broadcast_claimed_at": None,
+            "broadcast_status": "permanent_failed",
+            "broadcast_error": {
+                "reason": reason,
+                "detail": str(detail)[:500],
+                "retryable": False,
+                "failed_at": now.isoformat(),
+                "terminal_at_attempts": attempts,
+            },
+            "broadcast_attempts": attempts,
+            "next_retry_at": None,
+        }
+        try:
+            await async_execute(
+                db.table("exfiltrated_messages").update(terminal_payload).eq("id", msg_id)
+            )
+            _set_broadcast_reliability_columns_available(True)
+        except Exception as terminal_exc:
+            terminal_str = str(terminal_exc)
+            # If the new broadcast_status column isn't migrated yet, drop it
+            # and try again — we still want to exit the retry pool.
+            if "broadcast_status" in terminal_str:
+                terminal_payload.pop("broadcast_status", None)
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("exfiltrated_messages")
+                        .update(terminal_payload)
+                        .eq("id", msg_id)
+                    )
+            else:
+                logger.error(
+                    f"[Broadcast] terminal update failed for {msg_id}: {terminal_str[:200]}"
+                )
+        AuditLogger.log(
+            AuditEvent.BROADCAST_FAILED,
+            credential_id=msg.get("credential_id"),
+            details={
+                "message_id": msg_id,
+                "reason": reason,
+                "retryable": False,
+                "attempts": attempts,
+                "terminal": True,
+            },
+            success=False,
+        )
+        logger.warning(
+            f"    🛑 [Broadcast] {msg_id} moved to permanent_failed after "
+            f"{attempts} attempts (reason={reason})"
+        )
+        return
+
     delay_seconds = _broadcast_retry_delay_seconds(reason, retryable, retry_after_seconds)
     next_retry_at = (now + timedelta(seconds=delay_seconds)).isoformat()
     payload = {
@@ -1028,6 +1088,13 @@ async def _enrich_logic(cred_id: str):
 @app.task(name="flow.broadcast_pending")
 def broadcast_pending():
     if not settings.ENABLE_RAW_MESSAGE_BROADCAST:
+        # LOGIC-003: surface disabled-run counter so operators can distinguish
+        # "beat is firing but skipped" from "beat is not firing".
+        try:
+            from app.core.metrics import metrics
+            metrics.inc("broadcast.disabled_run")
+        except Exception:
+            pass
         return "Disabled: raw message broadcast is opt-in; use the findings queue."
     # Distributed Lock to prevent race conditions (e.g. Local Worker vs Prod Worker)
     lock_key = "telegram_hunter:lock:broadcast"
@@ -1040,6 +1107,9 @@ def broadcast_pending():
 
     acquired = lock.acquire()
     if not acquired:
+        # CONC-001: surface skip to operator logs so beat cadence is visible
+        # even when a concurrent run holds the lock.
+        logger.info("[Broadcast] Skipped — lock held by another worker")
         return "Skipped: Broadcast task already running (Lock active)."
 
     # Check Pause State
@@ -1470,6 +1540,103 @@ def canary_flow_check():
     from app.workers.celery_app import get_worker_loop
 
     return get_worker_loop().run_until_complete(_canary_flow_check_logic())
+
+
+@app.task(name="flow.canary_findings_check")
+def canary_findings_check():
+    """LOGIC-001: end-to-end canary that DOES NOT require the raw broadcast
+    pipeline. Inserts a synthetic finding, verifies it lands, then cleans up.
+
+    Runs even when ENABLE_RAW_MESSAGE_BROADCAST is False (findings-first
+    workflow default post-2026-09-06). Returns {status:'disabled', reason:
+    'findings_table_missing'} gracefully if the DATA-001 migration hasn't
+    been applied — so it never fails loudly on a fresh Supabase.
+    """
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_canary_findings_check_logic())
+
+
+async def _canary_findings_check_logic() -> dict:
+    from datetime import datetime
+    from uuid import uuid4
+
+    canary_key = f"canary-findings-{uuid4()}"
+    now = datetime.now(UTC)
+    row = {
+        "type": "canary",
+        "title": "Synthetic canary — safe to ignore",
+        "summary": "flow.canary_findings_check verification row",
+        "priority": 1,
+        "status": "triaged",
+        "signature": canary_key,
+        "created_at": now.isoformat(),
+    }
+
+    result: dict[str, Any] = {"status": "started", "signature": canary_key}
+    try:
+        try:
+            insert_res = await async_execute(db.table("findings").insert(row))
+        except Exception as insert_exc:
+            exc_str = str(insert_exc)
+            if "findings" in exc_str and ("does not exist" in exc_str or "PGRST205" in exc_str):
+                return {
+                    "status": "disabled",
+                    "reason": "findings_table_missing",
+                    "hint": (
+                        "Apply supabase/migrations/20260904000002_insight_queue.sql "
+                        "then re-enable this canary."
+                    ),
+                }
+            raise
+
+        inserted_rows = insert_res.data or []
+        row_id = inserted_rows[0].get("id") if inserted_rows else None
+        result["inserted"] = bool(row_id)
+
+        # Read-back to prove the row landed.
+        try:
+            check = await async_execute(
+                db.table("findings")
+                .select("id, signature")
+                .eq("signature", canary_key)
+                .limit(1)
+            )
+            result["visible"] = bool(check.data)
+        except Exception as check_exc:
+            result["visible"] = False
+            result["visible_error"] = str(check_exc)[:200]
+
+        # Best-effort cleanup so the synthetic row doesn't pollute the queue.
+        try:
+            if row_id:
+                await async_execute(
+                    db.table("findings").delete().eq("id", row_id)
+                )
+            else:
+                await async_execute(
+                    db.table("findings").delete().eq("signature", canary_key)
+                )
+            result["cleaned_up"] = True
+        except Exception as cleanup_exc:
+            result["cleaned_up"] = False
+            result["cleanup_error"] = str(cleanup_exc)[:200]
+
+        result["status"] = "ok" if result.get("inserted") and result.get("visible") else "failed"
+    except Exception as e:
+        result["status"] = "failed"
+        result["error"] = str(e)[:300]
+
+    try:
+        AuditLogger.log(
+            AuditEvent.CANARY_FLOW_CHECK,
+            details=result,
+            success=(result["status"] == "ok"),
+        )
+    except Exception:
+        pass
+
+    return result
 
 
 async def _canary_flow_check_logic():
@@ -3027,7 +3194,9 @@ def hash_exfil_media(max_messages: int = 100):
 async def _hash_exfil_media_logic(max_messages: int) -> dict:
     import hashlib
 
-    # Find media messages that don't have a hash entry yet
+    # Find media messages that don't have a hash entry yet.
+    # LOGIC-002 / DATA-004: pre-filter empty JSONB payloads so rows without a
+    # file_id don't waste a download attempt and end up as failure rows.
     try:
         res = await async_execute(
             db.table("exfiltrated_messages")
@@ -3041,8 +3210,21 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
         return {"status": "db_lookup_failed", "error": str(e)[:200]}
 
     candidate_rows = res.data or []
+    # Python-side filter: JSONB '{}' is not NULL so it slips past the `.is_("file_meta","null")`
+    # filter. Real download requires a file_id (or a Telethon (id, access_hash) pair).
+    def _has_downloadable(fm: dict | None) -> bool:
+        if not isinstance(fm, dict):
+            return False
+        if fm.get("file_id"):
+            return True
+        # Telethon-style bot-independent handle
+        return bool(fm.get("id") and fm.get("access_hash"))
+
+    empty_filtered = [r for r in candidate_rows if _has_downloadable(r.get("file_meta") or {})]
+    empty_dropped = len(candidate_rows) - len(empty_filtered)
+    candidate_rows = empty_filtered
     if not candidate_rows:
-        return {"status": "no_candidates"}
+        return {"status": "no_candidates", "empty_file_meta_dropped": empty_dropped}
 
     # Filter to unhashed ones
     ids = [r["id"] for r in candidate_rows]
@@ -3056,7 +3238,11 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
 
     to_hash = [r for r in candidate_rows if r["id"] not in hashed_ids][:max_messages]
     if not to_hash:
-        return {"status": "all_hashed", "candidates_seen": len(candidate_rows)}
+        return {
+            "status": "all_hashed",
+            "candidates_seen": len(candidate_rows),
+            "empty_file_meta_dropped": empty_dropped,
+        }
 
     # Reuse broadcaster's media download logic (uses source bot's token)
     broadcaster = get_broadcaster()
@@ -3081,21 +3267,41 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
             error = None
 
         if not data:
-            # Log failure so we don't retry it forever
+            # INTR-005: structured failure marker replaces the legacy
+            # sha256='__failed__<id>' sentinel. Backward-compat: keep writing
+            # the sentinel string too so pre-migration deployments still
+            # satisfy the sha256-column NOT NULL constraint.
             try:
                 await async_execute(
                     db.table("media_hashes").insert(
                         {
                             "message_id": msg_id,
                             "credential_id": cred_id,
-                            "sha256": f"__failed__{msg_id[:8]}",  # sentinel unique per row
+                            "sha256": f"__failed__{msg_id[:8]}",
                             "media_type": media_type,
+                            "is_failure": True,
+                            "failure_reason": error or "download_returned_none",
                             "error": error or "download_returned_none",
                         }
                     )
                 )
-            except Exception:
-                pass
+            except Exception as insert_exc:
+                exc_str = str(insert_exc)
+                if "is_failure" in exc_str or "failure_reason" in exc_str:
+                    # Migration 20260906000004 not applied yet — fall back
+                    # to the legacy sentinel-only insert.
+                    with contextlib.suppress(Exception):
+                        await async_execute(
+                            db.table("media_hashes").insert(
+                                {
+                                    "message_id": msg_id,
+                                    "credential_id": cred_id,
+                                    "sha256": f"__failed__{msg_id[:8]}",
+                                    "media_type": media_type,
+                                    "error": error or "download_returned_none",
+                                }
+                            )
+                        )
             failed_count += 1
             continue
 
