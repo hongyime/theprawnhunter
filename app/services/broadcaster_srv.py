@@ -239,8 +239,11 @@ class BroadcasterService:
 
             file_id = file_meta.get("file_id")
             if file_id:
-                request = HTTPXRequest(read_timeout=15.0, write_timeout=15.0)
-                source_bot = Bot(token=decrypted_token, request=request)
+                # PERF-003: reuse pooled Bot instance keyed by token via
+                # _get_bot_instance instead of allocating a fresh HTTPXRequest
+                # + Bot per media download. Halves the setup overhead on
+                # repeated downloads from the same source bot.
+                source_bot = self._get_bot_instance(decrypted_token)
                 tg_file = await source_bot.get_file(file_id)
                 data = await tg_file.download_as_bytearray()
                 logger.info(f"    📥 [Broadcaster] Downloaded {len(data)} bytes via Bot API source bot")
