@@ -186,12 +186,11 @@ class AuditLogger:
 
             details = audit_entry.get("details") or {}
             # DATA-006: cap serialized details to 8 KB.
-            _MAX_DETAILS_BYTES = 8 * 1024
             try:
                 import json as _json
 
                 serialized = _json.dumps(details, default=str)
-                if len(serialized) > _MAX_DETAILS_BYTES:
+                if len(serialized) > 8 * 1024:  # 8 KB cap
                     kept_keys = sorted(details.keys())[:20] if isinstance(details, dict) else []
                     details = {
                         "__truncated": True,
