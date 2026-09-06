@@ -29,8 +29,9 @@ traffic because we never call setWebhook.
 import asyncio as _asyncio
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.core.auth import require_monitor_key
 from app.core.config import settings
 from app.core.database import db
 from app.core.logger import get_logger
@@ -148,27 +149,20 @@ async def receive_webhook_update(credential_id: str, request: Request):
 # to reset those to the header-based scheme.
 
 
-@router.get("/status")
-async def honeypot_status(x_monitor_key: str | None = Header(None)):
-    """Report honeypot configuration state. Requires monitor API key so external
-    scanners can't fingerprint our deployment."""
-    if not settings.MONITOR_API_KEY or x_monitor_key != settings.MONITOR_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid or missing monitor API key")
+@router.get("/status", dependencies=[Depends(require_monitor_key)])
+async def honeypot_status():
+    """Report honeypot configuration state.
+
+    Auth: X-Monitor-Key header required (constant-time compare via
+    `require_monitor_key`). Trimmed response — does NOT leak allowlist size or
+    secret configuration flag, which would fingerprint the deployment if the
+    monitor key ever leaked.
+    """
     raw_allowlist = (settings.HONEYPOT_ALLOWLIST or "").strip()
-    is_auto = raw_allowlist.upper() == "AUTO"
     return {
         "mode_enabled": settings.HONEYPOT_MODE,
         "receiver_url_configured": bool(settings.HONEYPOT_WEBHOOK_URL),
-        "secret_configured": bool(settings.HONEYPOT_SECRET),
-        "allowlist_mode": (
-            "auto_all_webhook_bots" if is_auto
-            else "explicit_opt_in" if raw_allowlist
-            else "deny_all"
-        ),
-        "allowlist_size": "unlimited (auto)" if is_auto else (
-            len([c for c in raw_allowlist.split(",") if c.strip()])
-            if raw_allowlist else 0
-        ),
+        "allowlist_configured": bool(raw_allowlist),
     }
 
 
