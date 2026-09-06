@@ -11,10 +11,13 @@ from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Regex that matches Telegram bot token shape (digits:alphanum 35+)
-_TOKEN_RE = re.compile(r'\b\d{5,15}[:%][A-Za-z0-9_-]{20,}\b')
-# Also match tokens embedded in URLs where the colon is URL-encoded as %3A
-_TOKEN_URL_RE = re.compile(r'/bot\d{5,15}(?::|%3A)[A-Za-z0-9_-]{20,}/', re.IGNORECASE)
+# Regex that matches Telegram bot token shape (digits:alphanum 35 chars).
+# LOGIC-007: was previously permissive (5-15 digits + 20+ chars secret), which
+# over-redacted unrelated numeric:alphanum patterns. Real Telegram tokens are
+# 8-15 digit bot-id followed by ':' then exactly 35 URL-safe chars.
+_TOKEN_RE = re.compile(r'\b\d{8,15}:[A-Za-z0-9_-]{35}\b')
+# Also match tokens embedded in URLs where the colon is URL-encoded as %3A.
+_TOKEN_URL_RE = re.compile(r'/bot\d{8,15}(?::|%3A)[A-Za-z0-9_-]{35}/', re.IGNORECASE)
 
 
 def _redact_details(details: dict) -> dict:
@@ -139,13 +142,20 @@ class AuditLogger:
         """
         Determine if event should be persisted to database.
         Only persist high-importance events to avoid bloat.
+
+        DATA-002: SCRAPE_STRATEGY_ATTEMPT was dominating audit_logs insertions
+        (188 of the last 1000 rows) and driving the table past 350k rows. The
+        strategy-attempt evidence remains available via stdout logs where the
+        rest of the scraper diagnostics live. Removing it from the persist
+        set drops the growth rate significantly without losing operator
+        visibility.
         """
         high_importance = [
             AuditEvent.TOKEN_DECRYPTED,
             AuditEvent.TOKEN_REVOKED,
             AuditEvent.CREDENTIAL_CREATED,
             AuditEvent.SCRAPE_CLASSIFIED,
-            AuditEvent.SCRAPE_STRATEGY_ATTEMPT,
+            # AuditEvent.SCRAPE_STRATEGY_ATTEMPT intentionally excluded — see DATA-002 above.
             AuditEvent.BROADCAST_FAILED,
             AuditEvent.BROADCAST_RETRY_REQUESTED,
             AuditEvent.CANARY_FLOW_CHECK,
@@ -163,11 +173,34 @@ class AuditLogger:
         Writes to the audit_logs table for compliance tracking.
         Failures are logged but never raised — audit must not break the main flow.
 
+        DATA-006: caps the JSON-serialised `details` payload to 8 KB. Any
+        overflow is replaced with a marker dict that records what was cut,
+        so pathological callers (large scrape evidence blobs, tracebacks
+        with local frames) cannot bloat the table.
+
         Throttles the "audit_logs table missing" error to once per 5 minutes so
         deployments that haven't applied init.sql don't flood stderr.
         """
         try:
             from app.core import database
+
+            details = audit_entry.get("details") or {}
+            # DATA-006: cap serialized details to 8 KB.
+            _MAX_DETAILS_BYTES = 8 * 1024
+            try:
+                import json as _json
+
+                serialized = _json.dumps(details, default=str)
+                if len(serialized) > _MAX_DETAILS_BYTES:
+                    kept_keys = sorted(details.keys())[:20] if isinstance(details, dict) else []
+                    details = {
+                        "__truncated": True,
+                        "original_size_bytes": len(serialized),
+                        "kept_keys_sample": kept_keys,
+                    }
+            except Exception:
+                # Serialisation failed — persist a sentinel instead of raising.
+                details = {"__truncated": True, "reason": "serialisation_failed"}
 
             db = database.db
             db.table("audit_logs").insert({
@@ -175,7 +208,7 @@ class AuditLogger:
                 "credential_id": audit_entry.get("credential_id"),
                 "user_agent":    audit_entry.get("user", "system"),
                 "success":       audit_entry.get("success", True),
-                "details":       audit_entry.get("details", {}),
+                "details":       details,
             }).execute()
             # Reset throttle marker on success
             AuditLogger._last_missing_table_log_ts = 0.0
