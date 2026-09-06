@@ -46,7 +46,10 @@ const RESULT_ROW_SELECTORS = [
 // Token regex: 5-15 digit bot_id + colon + 20-50 char secret.
 // Broadened from 8-13:35 to catch edge cases (short bot IDs from early bots,
 // longer secrets from newer Telegram API versions).
-const TOKEN_REGEX = /['"` ]?(\d{5,15}:[A-Za-z0-9_-]{20,50})['"` \n\r]?/g;
+// DATA-005: align to canonical Telegram bot token shape used across
+// the backend (app/utils/helpers.py and app/services/scanners.py).
+// Bot IDs are always 8-15 digits; secret is exactly 35 URL-safe chars.
+const TOKEN_REGEX = /['"` ]?(\d{8,15}:[A-Za-z0-9_-]{35})['"` \n\r]?/g;
 
 // --- STATE ---
 let isWorking  = false;

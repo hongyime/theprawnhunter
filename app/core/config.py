@@ -144,9 +144,11 @@ class Settings(BaseSettings):
     EXA_API_KEY: str | None = None
     EXA_API_KEY_2: str | None = None
     EXA_API_KEY_3: str | None = None
-    CENSYS_ID: str | None = None
-    CENSYS_SECRET: str | None = None
-    HYBRID_ANALYSIS_KEY: str | None = None
+    # DEAD-001 / DEAD-002 / DRIFT-005: SERPER_API_KEY, CENSYS_ID,
+    # CENSYS_SECRET, HYBRID_ANALYSIS_KEY were removed 2026-09-06 — the
+    # corresponding scanner classes are gone (SerperService) or never existed.
+    # Kept `extra="ignore"` in model_config so operators with these vars still
+    # in .env don't hit validation errors.
     GOOGLE_SEARCH_KEY: str | None = None
     GOOGLE_CSE_ID: str | None = None
     PUBLICWWW_KEY: str | None = None
@@ -159,6 +161,13 @@ class Settings(BaseSettings):
     # Proxy Configuration — optional SOCKS5/HTTP proxies for external connections
     TELETHON_PROXY_URL: str | None = None
     HTTP_PROXY_URL: str | None = None
+
+    # SEC-004: verify TLS on webhook probes. Default False preserves existing
+    # scanner OSINT behaviour (probes hit random IPs with self-signed certs
+    # where verify=True would be pure noise). Setting True enforces TLS
+    # validation on webhook-host probes only, so a MITM'd captured C2 host
+    # is observable as a probe failure instead of a silent success.
+    TLS_VERIFY_WEBHOOK_PROBES: bool = False
 
     # Target Countries (Tiered by Telegram usage volume)
     # Primary:   Top Telegram DAU per capita (CIS, South/Southeast Asia, MENA, LatAm)

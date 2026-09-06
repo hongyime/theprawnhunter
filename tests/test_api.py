@@ -70,7 +70,11 @@ def test_get_stats_uses_monitor_stats_rpc(mock_db):
 
 
 @patch("app.api.routers.monitor.db")
-def test_get_stats_serves_stale_cache_on_db_failure(mock_db, monkeypatch):
+def test_get_stats_serves_cache_from_redis(mock_db, monkeypatch):
+    """PERF-004: cache is now Redis-backed. Verify a warm Redis entry
+    short-circuits the DB path entirely."""
+    import json as _json
+
     from app.api.routers import monitor
     from app.schemas.models import StatsOut
 
@@ -80,8 +84,27 @@ def test_get_stats_serves_stale_cache_on_db_failure(mock_db, monkeypatch):
         messages_exfiltrated=2,
         messages_broadcasted=1,
     )
-    monitor._STATS_CACHE = (0, cached)
-    monkeypatch.setattr(monitor.time, "monotonic", lambda: 3600)
+
+    class FakeRedisClient:
+        def __init__(self, cached_json: str | None):
+            self._cached = cached_json
+
+        def get(self, key):
+            if key == monitor._STATS_REDIS_KEY:
+                return self._cached
+            return None
+
+        def set(self, *a, **kw):
+            return True
+
+    class FakeRedisSrv:
+        def __init__(self, cached_json: str | None):
+            self.client = FakeRedisClient(cached_json)
+
+    fake = FakeRedisSrv(_json.dumps(cached.model_dump()))
+    monkeypatch.setattr("app.core.redis_srv.redis_srv", fake)
+
+    # DB will fail; but cache is warm, so DB should never be called.
     mock_db.rpc.side_effect = Exception("DB Down")
 
     stats = asyncio.run(monitor.get_stats())
@@ -90,7 +113,8 @@ def test_get_stats_serves_stale_cache_on_db_failure(mock_db, monkeypatch):
     assert stats.credentials_active == 1
     assert stats.messages_exfiltrated == 2
     assert stats.messages_broadcasted == 1
-    monitor._STATS_CACHE = None
+    # DB path must NOT have been touched
+    mock_db.rpc.assert_not_called()
 
 
 def test_monitor_stats_fallback_uses_narrow_counts(monkeypatch):

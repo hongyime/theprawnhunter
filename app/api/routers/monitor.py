@@ -1,7 +1,6 @@
 import csv
 import io
 import logging
-import time
 from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -29,8 +28,12 @@ from app.schemas.models import (
 
 logger = logging.getLogger(__name__)
 
+# PERF-004: cross-worker stats cache. Replaces per-process _STATS_CACHE.
+# Each uvicorn worker previously kept its own 30 s cache, so a cache-miss
+# storm hit Supabase 4× under `gunicorn -w 4`. Redis-backed shares the miss
+# cost across all workers.
 _STATS_CACHE_TTL_SECONDS = 30
-_STATS_CACHE: tuple[float, StatsOut] | None = None
+_STATS_REDIS_KEY = "monitor:stats:cached"
 
 router = APIRouter(
     prefix="/monitor",
@@ -41,23 +44,47 @@ router = APIRouter(
 
 @router.get("/stats", response_model=StatsOut)
 async def get_stats():
-    """Get system stats. Requires X-Monitor-Key header."""
-    global _STATS_CACHE
+    """Get system stats. Requires X-Monitor-Key header.
 
-    now = time.monotonic()
-    if _STATS_CACHE and now - _STATS_CACHE[0] <= _STATS_CACHE_TTL_SECONDS:
-        return _STATS_CACHE[1]
+    PERF-004: cache is Redis-backed with 30 s TTL so all uvicorn workers
+    share the fetch cost. Falls back to in-process compute on Redis errors.
+    """
+    try:
+        from app.core.redis_srv import redis_srv
+
+        cached_raw = redis_srv.client.get(_STATS_REDIS_KEY)
+        if cached_raw:
+            try:
+                import json as _json
+
+                parsed = _json.loads(cached_raw)
+                return StatsOut(**parsed)
+            except Exception:
+                pass  # cache corrupt, recompute
+    except Exception:
+        pass  # Redis unavailable, recompute
 
     try:
         stats = _get_monitor_stats()
-        _STATS_CACHE = (now, stats)
-        return stats
     except Exception as exc:
-        if _STATS_CACHE:
-            logger.warning("monitor/stats query failed; serving cached stats", exc_info=True)
-            return _STATS_CACHE[1]
         logger.exception("monitor/stats query failed")
         raise HTTPException(status_code=500, detail="Internal error") from exc
+
+    # Best-effort cache write.
+    try:
+        import json as _json
+
+        from app.core.redis_srv import redis_srv
+
+        redis_srv.client.set(
+            _STATS_REDIS_KEY,
+            _json.dumps(stats.model_dump()),
+            ex=_STATS_CACHE_TTL_SECONDS,
+        )
+    except Exception:
+        pass
+
+    return stats
 
 
 def _get_monitor_stats() -> StatsOut:

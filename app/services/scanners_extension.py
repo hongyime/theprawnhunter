@@ -43,7 +43,7 @@ class GithubGistService:
             }
             params = {"per_page": 100}
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                 res = await client.get(self.base_url, headers=headers, params=params)
                 res.raise_for_status()
                 items = res.json()
@@ -154,7 +154,7 @@ class PublicWwwService:
             url = f"{self.base_url}{query}/"
             params = {"export": "json", "key": self.key, "limit": 100}
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                 res = await client.get(url, params=params)
                 if res.status_code == 403:
                     logger.warning("    [PublicWWW] Rate limit or Bad Key")
@@ -214,7 +214,7 @@ class GoogleSearchService:
                 "q": dork,
                 "num": 10
             }
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                 res = await client.get(self.base_url, params=params)
                 res.raise_for_status()
                 data = res.json()
@@ -288,7 +288,7 @@ class BitbucketService:
 
         try:
             # First get the list of workspaces this token has access to
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                 ws_res = await client.get(
                     "https://api.bitbucket.org/2.0/workspaces",
                     headers=headers,
@@ -311,7 +311,7 @@ class BitbucketService:
 
             logger.info(f"    [Bitbucket] Searching {len(workspaces)} workspace(s): {workspaces}")
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                 sem = asyncio.Semaphore(5)
 
                 async def search_workspace(ws: str, term: str):
@@ -373,7 +373,7 @@ class PastebinService:
         # Pastebin scraping API requires IP whitelist. If it fails, we return []
         try:
             params = {"limit": 100}
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                 res = await client.get(self.base_url, params=params)
                 if res.status_code == 403:
                     logger.warning("    [Pastebin] IP not whitelisted for scraping API")

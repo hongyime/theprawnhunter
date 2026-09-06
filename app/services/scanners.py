@@ -299,7 +299,7 @@ class ShodanService:
             params = {'key': self.api_key, 'query': full_query}
 
             async def do_search():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, params=params)
                     res.raise_for_status()
                     return res.json().get('matches', [])
@@ -415,7 +415,7 @@ class FofaService:
             logger.info(f"    [FOFA] Searching: {full_query}")
 
             async def do_fofa():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, params=params)
                     if res.status_code != 200:
                         res.raise_for_status() # Trigger retry on non-200
@@ -500,7 +500,7 @@ class UrlScanService:
             logger.info(f"    [URLScan] Searching: {api_query[:50]}...")
 
             async def do_urlscan():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.search_url, headers=headers, params=params)
                     if res.status_code in [401, 403]: raise Exception("Invalid URLScan Key")
                     res.raise_for_status()
@@ -668,7 +668,7 @@ class GithubService:
             params = {'q': query, 'per_page': 100, 'sort': 'indexed', 'order': 'desc'}
 
             async def do_github():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, headers=headers, params=params)
                     if res.status_code in [403, 429]:
                         # Check Rate Limit sleep
@@ -779,7 +779,7 @@ class GitlabService:
             params = {"scope": "blobs", "search": query}
 
             async def do_gitlab_search():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, headers=headers, params=params)
                     res.raise_for_status()
                     return res.json()
@@ -891,7 +891,7 @@ class ExaService:
             }
 
             async def do_exa():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.post(self.base_url, headers=headers, json=payload)
                     if res.status_code in [401, 403]:
                         raise httpx.HTTPStatusError(

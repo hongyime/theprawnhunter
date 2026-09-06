@@ -1859,9 +1859,12 @@ async def _probe_webhook_url(url: str) -> dict:
         # HTTP fingerprint — GET with no verify, no redirect follow
         try:
             start = time.monotonic()
+            # SEC-004: TLS verify defaults to False for backward compat.
+            # Setting TLS_VERIFY_WEBHOOK_PROBES=True enforces validation on
+            # probes so MITM'd C2 hosts fail loudly.
             async with httpx.AsyncClient(
                 timeout=_WEBHOOK_PROBE_TIMEOUT_SECONDS,
-                verify=False,
+                verify=settings.TLS_VERIFY_WEBHOOK_PROBES,
                 follow_redirects=False,
             ) as client:
                 resp = await client.get(url)
@@ -2064,8 +2067,9 @@ async def _probe_web_recon(base_url: str) -> dict:
         return path, entry
 
     findings: dict[str, dict] = {}
+    # SEC-004: gate verify on the same setting as the primary probe.
     async with httpx.AsyncClient(
-        timeout=5.0, verify=False, follow_redirects=False
+        timeout=5.0, verify=settings.TLS_VERIFY_WEBHOOK_PROBES, follow_redirects=False
     ) as client:
         # Fan out all path probes concurrently on a single client (connection
         # pooled, tight per-request timeout). httpx.AsyncClient is safe for

@@ -67,8 +67,8 @@ frontend/out/
 # Kiro specs (local dev only — not for CI)
 # Uncomment if you don't want specs in the repo:
 # .kiro/
+# Environment — never commit secrets
 .env.*
-!.env.example
 dist/
 build/
 .next/

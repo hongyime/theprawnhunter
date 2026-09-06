@@ -145,6 +145,20 @@ See [Database Setup](#database-setup) above.
 
 ### 5. Start the stack
 
+**First-time deploy — create legacy-named external volumes first.** The Compose project is
+`theprawnhunter` but its volumes retain the legacy `telegramhunter_*` prefix from before the
+rename. If you skip this step, `docker compose up` fails with `volume "telegramhunter_redis_data"
+not found`.
+
+```bash
+docker volume create telegramhunter_redis_data
+docker volume create telegramhunter_sessions
+docker volume create telegramhunter_imports
+docker volume create telegramhunter_beat_schedule
+```
+
+Then:
+
 ```bash
 docker compose up -d --build
 ```

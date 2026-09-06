@@ -27,6 +27,7 @@ traffic because we never call setWebhook.
 """
 
 import asyncio as _asyncio
+import json as _json
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -38,6 +39,11 @@ from app.core.logger import get_logger
 from app.core.webhook import dispatch_alert as _dispatch_alert
 
 logger = get_logger(__name__)
+
+
+def _json_loads(raw: bytes) -> dict:
+    return _json.loads(raw)
+
 
 router = APIRouter(prefix="/honeypot", tags=["Honeypot"])
 
@@ -103,7 +109,21 @@ async def receive_webhook_update(credential_id: str, request: Request):
         logger.debug(f"[Honeypot] active-check skipped: {e}")
 
     try:
-        payload = await request.json()
+        # SEC-005: bound the body read. Telegram updates are typically < 4 KB
+        # (largest legit case: a photo caption + rich metadata). 1 MB is a
+        # generous upper bound; anything larger is malicious traffic. We
+        # return HTTP 200 so Telegram doesn't retry — logged silently.
+        raw_body = await _asyncio.wait_for(request.body(), timeout=5.0)
+        if len(raw_body) > 1_048_576:
+            logger.warning(
+                f"[Honeypot] oversized payload dropped: {len(raw_body)} bytes "
+                f"from cred={credential_id[:8]}..."
+            )
+            return {"ok": True}
+        payload = _json_loads(raw_body)
+    except TimeoutError:
+        logger.warning("[Honeypot] body read timed out")
+        return {"ok": True}
     except Exception as e:
         logger.warning(f"[Honeypot] non-JSON body: {e}")
         return {"ok": True}
