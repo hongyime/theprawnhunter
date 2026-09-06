@@ -7,33 +7,103 @@
     "T04/T05/T09": "skipped",
     "docker_compose_delegation": true,
     "run_all_sessions_continuous": true,
-    "deferred_reconsidered": ["PERF-002 keep deferred", "PERF-003 keep deferred", "DEAD-005 in scope", "DEAD-008 partial in scope"]
+    "deferred_reconsidered": {
+      "PERF-002": "kept deferred (needs benchmark)",
+      "PERF-003": "kept deferred (session pool architecture change)",
+      "DEAD-005": "in scope — removed after verification",
+      "DEAD-008": "partial — 156-site inventory shipped, mechanical rewrite deferred"
+    }
   },
-  "sessions_complete": ["A"],
-  "current_session": "B",
-  "tasks_complete": ["T01","T02","T03","T04-skipped","T05-skipped","T06","T07","T08","T09-skipped","T10","T11"],
-  "current_task": "T12",
-  "commits": ["638f569","522d513","6dc5d9c","043e27a","ec1f51a"],
-  "new_findings": ["NEW-001 CI red on main pre-existing","NEW-002 5 pre-existing test_honeypot_redirect_bugs failures"],
-  "files_modified_this_session": [
-    "app/api/routers/honeypot.py",
-    "app/services/broadcaster_srv.py",
-    "app/workers/tasks/flow_tasks.py",
-    "tests/unit/test_honeypot_redirect_gate.py",
-    "tests/unit/test_honeypot_redirect_bugs.py",
-    "supabase/migrations/20260906000003_broadcast_reliability_ext.sql",
-    "supabase/migrations/20260906000006_verify_pending_migrations.sql",
-    "docs/deployment/rebuild.md",
-    "bugfix.md",
-    "design.md",
-    "tasks.md"
+  "sessions_complete": ["A", "B", "C", "D", "E"],
+  "tasks_summary": {
+    "T01": "baseline captured",
+    "T02": "DATA-001 verify migration shipped",
+    "T03": "INTR-001/DATA-003/REL-003 migration shipped",
+    "T04": "skipped (SEC-001 deferred)",
+    "T05": "skipped (SEC-001 deferred)",
+    "T06": "SEC-002 + LOGIC-004 committed 638f569",
+    "T07": "INTR-001 idempotent broadcast committed 522d513",
+    "T08": "INTR-002 + CONC-002 + LOGIC-005 committed 6dc5d9c + ec1f51a",
+    "T09": "skipped (SEC-001 deferred)",
+    "T10": "REL-001 rebuild runbook committed 043e27a",
+    "T11": "Session A close",
+    "T12": "INTR-005 + CONC-003 migration shipped",
+    "T13": "PERF-001 migration shipped",
+    "T14": "DATA-002 + DATA-006 + LOGIC-007 committed bdbf6f7 + 2493a77",
+    "T15": "LOGIC-002 + DATA-004 + INTR-005 code committed a8d01cf",
+    "T16": "DATA-003 + REL-003 broadcast cap committed a8d01cf",
+    "T17": "INTR-003 CSV breadcrumb committed a8d01cf",
+    "T18": "CONC-001 + LOGIC-003 committed a8d01cf",
+    "T19": "LOGIC-001 findings canary committed a8d01cf",
+    "T20": "REL-002 healthchecks committed a8d01cf + 9f28f3c",
+    "T21": "Session B close",
+    "T22": "SEC-004 TLS gate committed 397e2a9",
+    "T23": "SEC-005 body cap committed 397e2a9",
+    "T24": "PERF-004 Redis cache committed 397e2a9",
+    "T25": "PERF-006 12 sites pattern-rewritten committed 397e2a9",
+    "T26": "DATA-005 extension regex aligned committed 397e2a9",
+    "T27": "DEAD-001 + DEAD-002 + DRIFT-005 committed 397e2a9",
+    "T28": "REL-005 + STRUCT-004 vite -> vitest committed 397e2a9",
+    "T29": "REL-004 verified pre-existing + STRUCT-002 gitignore committed 397e2a9",
+    "T30": "Session C close",
+    "T31-T38": "Session D structural moves committed 2068401",
+    "T40": "SEC-006 marked Invalid — audit description was inaccurate",
+    "T41": "LOGIC-006 own-bot check reorder committed 1de5745",
+    "T42": "REL-006 beat digest log committed 1de5745",
+    "T43": "DEAD-007 retry_with_backoff moved committed 1de5745",
+    "T44": "FE-002 CI smoke committed 1de5745",
+    "T45": "DEAD-008 inventory committed 1de5745",
+    "T46": "DEAD-005 configs removed committed 1de5745",
+    "T47": "DEAD-008 mechanical rewrite deferred (inventory only)",
+    "T48": "docker compose build + up -d executed — all 10 containers healthy",
+    "T49": "Session E close + Phase 4 closeout (this file)"
+  },
+  "commits": [
+    "638f569 fix(sec): SEC-002 LOGIC-004 honeypot/status",
+    "522d513 feat(reliability): INTR-001 DATA-003 idempotent broadcast",
+    "6dc5d9c fix(reliability): INTR-002 CONC-002 LOGIC-005",
+    "043e27a docs(deploy): REL-001 rebuild runbook",
+    "ec1f51a chore(quality): inline pending sentinel",
+    "bdbf6f7 fix(reliability): DATA-002 DATA-006 LOGIC-007 PERF-001 INTR-005 CONC-003",
+    "a8d01cf fix(reliability): T15-T20 P1 batch",
+    "2493a77 chore(quality): inline 8 KB constant",
+    "397e2a9 fix(quality): T22-T29 P2 hardening",
+    "342ac1f chore(cycle): artifact + backup + state update",
+    "2068401 chore(struct): T31-T38 structural moves",
+    "1de5745 chore(quality): T41-T47 P3 cleanup",
+    "9f28f3c fix(ops): frontend healthcheck timeout"
   ],
-  "baseline": {
+  "new_findings": [
+    "NEW-001 CI red on main — pre-existing",
+    "NEW-002 5 pre-existing test_honeypot_redirect_bugs failures (gates not patched)",
+    "NEW-003 operator .env secrets echoed via docker compose config — recommend rotation hygiene"
+  ],
+  "invalid_findings": [
+    "PERF-005 verified false positive",
+    "STRUCT-005 verified false positive",
+    "STRUCT-006 verified false positive",
+    "SEC-006 verified false positive on re-read"
+  ],
+  "deferred_findings": [
+    "PERF-002 broadcast parallelisation (needs benchmark)",
+    "PERF-003 MTProto pooling (session-pool arch change)",
+    "SEC-001 plaintext token remediation (operator accepts risk)",
+    "DEAD-008 mechanical rewrite of 156 sites (inventory shipped)"
+  ],
+  "quality_deltas": {
     "ruff_app_pre_cycle": 192,
-    "ruff_app_after_session_a": 192,
-    "pytest_total_baseline": 398,
-    "pytest_pass_baseline": 385,
-    "pytest_fail_baseline_pre_existing": 5,
-    "pytest_fail_new_from_cycle": 0
+    "ruff_app_end_of_cycle": 190,
+    "ruff_delta": -2,
+    "pytest_total": 398,
+    "pytest_pass_end_of_cycle": 388,
+    "pytest_fail_pre_existing": 5,
+    "pytest_fail_new": 0,
+    "pytest_flake": 1
+  },
+  "deploy": {
+    "images_rebuilt_at": "2026-09-06T04:00Z",
+    "all_10_services_healthy": true,
+    "config_field_count": 82,
+    "config_field_count_pre_cycle": 75
   }
 }
