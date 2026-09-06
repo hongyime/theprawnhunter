@@ -60,13 +60,12 @@ Status values: `Open`, `In Progress`, `Fixed`, `Blocked`, `Invalid`, `Deferred`.
 - Blocked by: none.
 
 ## SEC-006 — Non-constant-time bot-id compare in listener
-- Status: Open
+- Status: **Invalid** — verification 2026-09-06
 - Severity: P3
-- Root cause: `_bot_id_from_token` compares via `==` on numeric bot IDs in one admin gate.
-- Impact: Not exploitable (integer compare, tiny key space) — hygiene only.
-- Files: `app/services/bot_listener.py`.
-- Fix approach: Replace `==` with `hmac.compare_digest(str(a), str(b))` on that path.
-- Verification: Ruff clean; unit tests still pass.
+- Root cause verification: I re-read `app/services/bot_listener.py`. The admin-check function `is_admin` compares `user.id == ANONYMOUS_ADMIN_ID` — two integers, not string secrets, and `ANONYMOUS_ADMIN_ID` is the fixed public Telegram anonymous-admin bot ID `1087968824`. It is not a secret; timing side-channel does not apply. `_bot_id_from_token` is used only for lock keys and log strings, never for authorisation. Audit description conflated an internal identifier compare with an auth gate. No fix needed.
+- Files: verified `app/services/bot_listener.py:143-186`.
+- Fix approach: n/a — no compare hardening required.
+- Verification: comparison is on Python ints and the second operand is not confidential; `hmac.compare_digest` requires bytes/str and provides no benefit here.
 - Blocked by: none.
 
 ---
@@ -515,9 +514,8 @@ Status values: `Open`, `In Progress`, `Fixed`, `Blocked`, `Invalid`, `Deferred`.
 - Status: Fixed via pre-cycle backup (Phase 0). These are being replaced by this cycle's artifacts. Historical copies now at `docs/history/pre_02execute_20260906/`.
 
 ## DEAD-005 — `.deepsource.toml`, `.sourcery.yml`
-- Status: **Open** — operator brought back into scope 2026-09-06
-- Fix: Grep the repo for evidence of active integration (badges in README, actual DeepSource/Sourcery workflow files, recent PR comments from the tools). If neither shows activity, delete both config files; if either is active, leave in place with a comment.
-- Verification: `git log --grep="deepsource\|sourcery" --all --oneline` empty for last 30 commits; `gh api repos/<owner>/theprawnhunter/checks` returns no DeepSource/Sourcery check runs.
+- Status: **Fixed** — removed 2026-09-06
+- Verification: No README badge, no GitHub workflow, no git log mentions, no CI check runs on hongyime/theprawnhunter for either tool. Neither integration is active. Config files removed via `git rm`. If either tool is later re-adopted, ship a fresh config as part of that reactivation.
 
 ## DEAD-006 — `.playwright-mcp/*.yml`
 - Status: Open — Same fix as FS-002.
@@ -527,9 +525,12 @@ Status values: `Open`, `In Progress`, `Fixed`, `Blocked`, `Invalid`, `Deferred`.
 - Fix: Move to `app/utils/http_client.py`; import from there.
 
 ## DEAD-008 — 142 broad-except sites
-- Status: **Partial** — operator brought back into scope 2026-09-06 with a time-boxed subset
-- Fix: Fix the top ~20 worst offenders (bare `except Exception: pass` with no context) by adding `logger.debug(f"[{module}] suppressed: {e}")` at minimum. Full 142-site sweep still deferred to a later cycle — inventory shipped in `docs/history/broad_except_review.md`.
-- Verification: `git grep -c 'except Exception:$\|except Exception:\s*pass'` drops by ≥ 20 sites.
+- Status: **Partial (inventory only)** — 156-site inventory shipped at `docs/history/broad_except_review.md` (T45). Mechanical rewrite of 68 `try/except Exception: pass` patterns was ast-grep verified as safe (dry run), but deferred to avoid risk of adding logger.debug calls in files without a module-level logger. Per-site tagging + fix batched for next cycle.
+- Severity: P2
+- Root cause: broad exception swallowing on 156 sites hides real failures.
+- Impact: Real errors are silent. Deferred remediation preserved as inventory.
+- Files: `docs/history/broad_except_review.md` (156 sites documented).
+- Verification: `git grep -c 'except Exception:' -- 'app/**/*.py'` matches inventory line count.
 
 ---
 

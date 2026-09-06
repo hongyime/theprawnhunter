@@ -92,6 +92,20 @@ def on_worker_ready(**kwargs):
     if not wait_for_internet_sync(max_wait=300, check_interval=10):
         logger.warning("[Worker] Started without internet — tasks needing external APIs will wait.")
 
+    # REL-006: log beat schedule digest so operators can verify the persisted
+    # celerybeat-schedule file matches what the running code expects.
+    try:
+        import hashlib as _hashlib
+
+        schedule = app.conf.get("beat_schedule") or {}
+        task_names = sorted(schedule.keys())
+        digest = _hashlib.sha256("|".join(task_names).encode()).hexdigest()[:12]
+        logger.info(
+            f"[Beat] schedule digest sha256={digest} tasks={len(task_names)}"
+        )
+    except Exception as _e:
+        logger.debug(f"[Beat] schedule digest log failed: {_e}")
+
     _send_signal_log("🟢 **Worker Service** Started (Celery)")
 
 

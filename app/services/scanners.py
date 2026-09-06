@@ -19,36 +19,14 @@ import httpx
 import urllib3
 
 from app.core.config import settings
-from app.utils.http_client import get_async_http_client
+from app.utils.http_client import (  # noqa: F401 — retry_with_backoff moved here in DEAD-007, re-exported for existing importers
+    get_async_http_client,
+    retry_with_backoff,
+)
 
 logger = logging.getLogger("scanners")
 
-# NEW: Resilience Helper
-async def retry_with_backoff(func, max_retries=3, initial_delay=2, backoff_factor=2):
-    """Exponential backoff decorator for async functions."""
-    retries = 0
-    delay = initial_delay
-    while retries <= max_retries:
-        try:
-            return await func()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429: # Rate limit
-                retry_after = e.response.headers.get("Retry-After")
-                wait_time = int(retry_after) if retry_after and retry_after.isdigit() else delay
-                logger.warning(f"⚠️ Rate limited. Waiting {wait_time}s...")
-                await asyncio.sleep(wait_time)
-            elif e.response.status_code in [500, 502, 503, 504]: # Server errors
-                logger.warning(f"⚠️ Server error {e.response.status_code}. Retrying in {delay}s...")
-                await asyncio.sleep(delay)
-            else:
-                raise # 400, 401, 403, 404 should probably fail immediately
-        except (httpx.RequestError, asyncio.TimeoutError) as e:
-            logger.warning(f"⚠️ Network error: {e}. Retrying in {delay}s...")
-            await asyncio.sleep(delay)
-
-        retries += 1
-        delay *= backoff_factor
-    return None # exhausted retries
+# retry_with_backoff was previously defined here; canonical home is app/utils/http_client.py.
 
 # Suppress SSL warnings for active scanning of random IPs (self-signed certs etc)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -267,9 +245,7 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
         for item in found_results:
             t = item['token']
             c = item['chat_id']
-            if t not in final_map:
-                final_map[t] = c
-            elif not final_map[t] and c:
+            if t not in final_map or not final_map[t] and c:
                 final_map[t] = c
 
         return [{'token': t, 'chat_id': c} for t, c in final_map.items()]
@@ -590,9 +566,7 @@ class UrlScanService:
                 for f_item in found:
                     t = f_item['token']
                     c = f_item['chat_id']
-                    if t not in final_map:
-                        final_map[t] = c
-                    elif not final_map[t] and c:
+                    if t not in final_map or not final_map[t] and c:
                         final_map[t] = c
 
                 for t, cid in final_map.items():
