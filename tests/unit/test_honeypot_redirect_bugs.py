@@ -198,6 +198,10 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
 
     import app.workers.tasks.flow_tasks as ft
 
+    # NEW-002 fix: enable both redirect gates so the recheck path doesn't short-circuit.
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
     fake_redis_srv = types.SimpleNamespace(client=FakeRedis())
 
     with (
@@ -217,11 +221,15 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
 
     assert result["status"] == "failed"
 
-    # redirected_at must NOT appear in any DB update payload
+    # BUG-5 / INTR-002: redirected_at must NOT be written to a real timestamp
+    # on failure. It MAY be set to None (release-pending-claim, INTR-002).
+    # Both semantically mean "not marked redirected".
     for upd in db_updates:
         payload = upd.get("payload", {})
-        assert "redirected_at" not in payload, (
-            f"redirected_at must not be written on failure; got payload={payload}"
+        ra = payload.get("redirected_at", "__missing__")
+        assert ra in ("__missing__", None), (
+            f"redirected_at must not be written to a real timestamp on failure; "
+            f"got payload={payload}"
         )
 
     # Redis dedup key must NOT be set
@@ -298,6 +306,10 @@ async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
 
     import app.workers.tasks.flow_tasks as ft
 
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
     fake_redis_srv = types.SimpleNamespace(client=FakeRedis())
 
     with (
@@ -360,6 +372,10 @@ async def test_callback_failure_does_not_mark_redirected(monkeypatch):
     monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
     monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
 
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
     with patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
         return_value=types.SimpleNamespace(data=[{
             "payload": {"callback_query": {"id": "cb-001", "from": {"id": 111}}}
@@ -419,6 +435,10 @@ async def test_callback_branch_returns_early_no_sendmessage(monkeypatch):
     monkeypatch.setattr(HoneypotRedirectStrategies, "send_callback_hijack", staticmethod(fake_send_callback_hijack))
     monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
     monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
+
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
 
     with (
         patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
@@ -485,6 +505,10 @@ async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
     monkeypatch.setattr(HoneypotRedirectStrategies, "send_inline_hijack", staticmethod(fake_send_inline_hijack))
     monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
     monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
+
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
 
     with (
         patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
