@@ -156,8 +156,8 @@ class WebhookStateService:
                     f"webhook ({webhook_url}) over our honeypot for cred {credential_id[:8]}... "
                     f"Will delete + re-register ours."
                 )
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
         if not self.allow_delete:
             return WebhookDecision(
@@ -366,8 +366,8 @@ class BotApiUpdateReader:
                 _lookup = db.table("discovered_credentials").select("id").eq("token_hash", _token_hash).limit(1).execute()
                 if _lookup.data:
                     credential_id = _lookup.data[0]["id"]
-            except Exception:
-                pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
         self._current_credential_id = credential_id
         strategy = "bot_api_updates"
         if self.is_monitor_bot(bot_token):
@@ -557,8 +557,8 @@ class UserAgentJoinService:
                     from app.core.redis_srv import set_cached_getme
 
                     await set_cached_getme(cache_bot_id, data, ttl=3600)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
             return username, evidence
         evidence["getMe_body"] = data
         return None, evidence
@@ -877,8 +877,8 @@ class ForwardingArchiveReader:
 
                     redis_client = redis_mod.from_url(settings.REDIS_URL, decode_responses=True)
                     redis_client.delete(cleanup_key)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
 
 def unique_append(

@@ -74,7 +74,7 @@ class BotClientManager:
                     timeout=_CLIENT_START_TIMEOUT_SECONDS,
                 )
                 started = True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     f"[BotManager] Timeout connecting bot client after {_CLIENT_START_TIMEOUT_SECONDS:g}s"
                 )

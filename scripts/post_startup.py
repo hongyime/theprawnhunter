@@ -3,10 +3,13 @@ TheprawnHunter post-startup cleanup.
 Runs after docker compose up to clear stale session leases
 that were left from the previous session.
 """
+import logging
 import sys
 import time
 
 import requests
+
+logger = logging.getLogger("post_startup")
 
 # Load env
 env = {}
@@ -44,8 +47,8 @@ for i in range(12):
         if r.status_code == 200:
             print(f"API healthy after {i*5}s")
             break
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
     time.sleep(5)
 else:
     print("WARNING: API not healthy after 60s — proceeding anyway")

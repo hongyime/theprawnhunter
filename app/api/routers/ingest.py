@@ -315,8 +315,8 @@ async def ingest_tokens(request: Request):
                     try:
                         from app.workers.tasks.flow_tasks import enrich_credential
                         enrich_credential.delay(new_id)
-                    except Exception:
-                        pass
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
         except Exception as e:
             logger.warning(f"Insert failed for token_hash {token_hash[:12]}...: {e}")
             skipped += 1

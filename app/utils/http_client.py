@@ -63,7 +63,7 @@ async def retry_with_backoff(func, max_retries: int = 3, initial_delay: int = 2,
                 await asyncio.sleep(delay)
             else:
                 raise  # 4xx other than 429 — fail fast
-        except (httpx.RequestError, asyncio.TimeoutError) as e:
+        except (TimeoutError, httpx.RequestError) as e:
             logger.warning(f"⚠️ Network error: {e}. Retrying in {delay}s...")
             await asyncio.sleep(delay)
 

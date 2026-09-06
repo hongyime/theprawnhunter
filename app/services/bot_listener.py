@@ -673,8 +673,8 @@ async def watchdog_loop(bot):
                             if not state["worker"]:
                                 state["worker"] = True
                                 await _send_alert(bot, "✅ **RECOVERY**: Worker heartbeat detected.")
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
             await asyncio.sleep(60)
 
@@ -725,8 +725,8 @@ async def _wipe_conversation(context: ContextTypes.DEFAULT_TYPE, chat_id: int, b
         for msg_id in ids_to_delete:
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except Exception:
-                pass  # already deleted or no permission — both are fine
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")  # already deleted or no permission — both are fine
 
     asyncio.create_task(_do_wipe())
 
@@ -1462,7 +1462,7 @@ async def _run_bot(token: str, is_primary: bool = False):
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=LOCK_TTL_SECONDS + 5)
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         lock_key = await _acquire_poll_lock(token)
         if not lock_key:
@@ -1521,8 +1521,8 @@ async def _run_bot(token: str, is_primary: bool = False):
             try:
                 import pathlib
                 pathlib.Path(_ALIVE_FILE).touch()
-            except Exception:
-                pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
             if heartbeat_count % 30 == 0:
                 logger.info(f"💓 Bot @{bot_username} polling heartbeat (Event loop active)")
 
@@ -1536,8 +1536,8 @@ async def _run_bot(token: str, is_primary: bool = False):
         try:
             await application.updater.stop()
             await application.stop()
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
         await application.shutdown()
         await _release_poll_lock(lock_key)
 
@@ -1561,8 +1561,8 @@ async def main():
             try:
                 os.remove(_f)
                 logger.info(f"[Startup] swept orphan temp session file: {os.path.basename(_f)}")
-            except Exception:
-                pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
     except Exception as _sweep_exc:
         logger.debug(f"[Startup] orphan sweep failed: {_sweep_exc}")
 

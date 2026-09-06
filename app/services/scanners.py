@@ -237,8 +237,8 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
             pass
         except httpx.HTTPStatusError:
             pass
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
         # Deduplicate
         final_map = {}
@@ -294,7 +294,8 @@ class ShodanService:
                     if ts:
                         match_time = datetime.fromisoformat(ts.replace('Z', '+00:00').split('+')[0])
                         if match_time >= three_hours_ago: recent_matches.append(m)
-                except Exception: pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
             matches = recent_matches if len(recent_matches) > len(matches[:300]) else matches[:300]
 
@@ -326,7 +327,8 @@ class ShodanService:
                                 target_url = f"{proto}://{ip}:{port}"
                                 active_found = await _perform_active_deep_scan(target_url, client=scan_client)
                                 local_found.extend(active_found)
-                            except Exception: pass
+                            except Exception as _swallowed:
+                                logger.debug(f"[suppressed] {_swallowed}")
 
                         return (ip, port, local_found)
 
@@ -500,7 +502,8 @@ class UrlScanService:
                         scan_time = datetime.fromisoformat(ts.replace('Z', '+00:00').split('+')[0])
                         if scan_time >= three_hours_ago:
                             valid_items.append(r)
-                except Exception: pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
             # Sort and Cap
             valid_items = sorted(valid_items, key=lambda x: x.get('task', {}).get('time', ''), reverse=True)
@@ -532,7 +535,8 @@ class UrlScanService:
                                      cid = cids[0] if cids else None
                                      for t in tokens:
                                          item_found_tokens.append({'token': t, 'chat_id': cid})
-                            except Exception: pass
+                            except Exception as _swallowed:
+                                logger.debug(f"[suppressed] {_swallowed}")
 
                         # 2. Live Deep Scan
                         if page_url:
@@ -547,7 +551,8 @@ class UrlScanService:
                                 # Deep Scan
                                 live_items = await _perform_active_deep_scan(page_url, client=scan_client)
                                 item_found_tokens.extend(live_items)
-                            except Exception: pass
+                            except Exception as _swallowed:
+                                logger.debug(f"[suppressed] {_swallowed}")
 
                         return (item, item_found_tokens)
 
@@ -985,8 +990,8 @@ class WaybackService:
                 try:
                     if redis_client.exists(redis_key):
                         continue
-                except Exception:
-                    pass  # Redis down — process anyway, we'll skip the marker
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")  # Redis down — process anyway, we'll skip the marker
 
                 # Step 2: Extract token from URL itself
                 url_tokens = TOKEN_PATTERN.findall(original)
@@ -1132,8 +1137,8 @@ class CommonCrawlService:
                 try:
                     if _redis.client.exists(redis_key):
                         continue
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
                 # Extract tokens directly from URL
                 url_tokens = TOKEN_PATTERN.findall(url)
@@ -1243,8 +1248,8 @@ class SourcegraphService:
                         try:
                             if _redis.client.exists(redis_key):
                                 continue
-                        except Exception:
-                            pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
 
                         # Aggregate matched line text
                         line_matches = m.get("lineMatches") or []

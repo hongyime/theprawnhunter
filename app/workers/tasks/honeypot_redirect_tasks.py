@@ -214,8 +214,8 @@ async def _proactive_outreach_logic() -> dict:
                 from app.core.redis_srv import redis_srv
                 if redis_srv.client.exists(key):
                     continue
-            except Exception:
-                pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
 
             bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
             if not bot_token:
@@ -238,8 +238,8 @@ async def _proactive_outreach_logic() -> dict:
                 try:
                     from app.core.redis_srv import redis_srv
                     redis_srv.client.setex(key, 86400, "1")
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
                 sent += 1
                 logger.info(f"🔗 [Proactive] sent cred:{credential_id[:8]}...")

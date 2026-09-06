@@ -207,8 +207,8 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
                         webhook_url = (wh_data.get("result") or {}).get("url") or None
                         if webhook_url:
                             logger.info(f"[Validate] 🪝 webhook → {webhook_url[:80]}")
-            except Exception:
-                pass  # webhook info is bonus; never block the main path
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")  # webhook info is bonus; never block the main path
 
             # ---- Bundle 1: Pivot fan-out (fire-and-forget) ----
             try:
@@ -434,8 +434,8 @@ async def _refresh_pending_tokens_async():
         else:
             redis_client.delete(REFRESH_CURSOR_KEY)  # full pass done, restart
             logger.info("[Refresh] Full pending sweep complete, cursor reset.")
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     enqueued = 0
     for row in rows:

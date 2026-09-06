@@ -38,7 +38,7 @@ async def _send_lifecycle_notification(message: str, label: str, timeout: float)
             logger.info("%s notification sent to Telegram", label)
         else:
             logger.info("%s notification skipped by Telegram log policy", label)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("%s notification timed out (Telegram slow)", label)
     except Exception as e:
         logger.warning("%s notification failed: %s", label, e)
@@ -102,13 +102,12 @@ app = FastAPI(
 # ── Rate limiting ─────────────────────────────────────────────────────
 # Uses Redis for cross-worker limits (all uvicorn workers share the same
 # counters). Keyed on X-Monitor-Key when present, else remote IP.
+import hmac
+
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
-
-
-import hmac
 
 
 def _rate_key(request):

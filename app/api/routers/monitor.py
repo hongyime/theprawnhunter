@@ -61,8 +61,8 @@ async def get_stats():
                 return StatsOut(**parsed)
             except Exception:
                 pass  # cache corrupt, recompute
-    except Exception:
-        pass  # Redis unavailable, recompute
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")  # Redis unavailable, recompute
 
     try:
         stats = _get_monitor_stats()
@@ -81,8 +81,8 @@ async def get_stats():
             _json.dumps(stats.model_dump()),
             ex=_STATS_CACHE_TTL_SECONDS,
         )
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     return stats
 

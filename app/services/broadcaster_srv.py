@@ -423,7 +423,7 @@ class BroadcasterService:
                 except RetryAfter as e:
                     last_failure = _classify_broadcast_exception(e)
                     logger.warning(f"⚠️ Bot {token[:10]}... flood-waited. Rotating...")
-                except (TimedOut, NetworkError, asyncio.TimeoutError, TimeoutError) as e:
+                except (TimedOut, NetworkError, TimeoutError) as e:
                     last_failure = _classify_broadcast_exception(e)
                     logger.warning(f"⚠️ Bot send transient failure: {last_failure.reason}: {e}")
                 except TelegramError as e:
@@ -572,7 +572,8 @@ class BroadcasterService:
         try:
             existing_id = await user_agent.find_topic_id(group_id, topic_name)
             if existing_id: return existing_id
-        except Exception: pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
         if topic_name in ["General", "general", "main"]: return 1
 

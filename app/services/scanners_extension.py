@@ -71,7 +71,8 @@ class GithubGistService:
                                             "token": t,
                                             "meta": {"source": "gist", "gist_id": gist.get("id"), "file": filename}
                                         })
-                                except Exception: pass
+                                except Exception as _swallowed:
+                                    logger.debug(f"[suppressed] {_swallowed}")
                         return local_res
 
                 for item in items:
@@ -462,7 +463,8 @@ class RentryService:
                         seen_key = f"rentry:seen:{paste_id}"
                         try:
                             if redis_client.exists(seen_key): continue
-                        except Exception: pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
 
                         try:
                             raw_res = await client.get(raw_url)
@@ -534,7 +536,8 @@ class HastebinService:
                         seen_key = f"hastebin:seen:{paste_id}"
                         try:
                             if redis_client.exists(seen_key): continue
-                        except Exception: pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
 
                         try:
                             raw_res = await client.get(raw_url)
@@ -796,8 +799,8 @@ class ReplitService:
                     try:
                         if redis_client.exists(redis_key):
                             continue
-                    except Exception:
-                        pass
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
 
                     # Fetch common entry-point files
                     for filename in self.ENTRY_FILES:
@@ -819,8 +822,8 @@ class ReplitService:
                                         "extracted_from": "body",
                                     },
                                 })
-                        except Exception:
-                            pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                         await asyncio.sleep(1)
 
                     with contextlib.suppress(Exception):
@@ -872,8 +875,8 @@ class PostmanService:
             key = self._today_key()
             redis_client.incr(key)
             redis_client.expire(key, 86400 * 2)
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     async def search(self, query: str = None) -> list[dict[str, Any]]:
         import hashlib
@@ -948,8 +951,8 @@ class PostmanService:
                     try:
                         if redis_client.exists(redis_key):
                             continue
-                    except Exception:
-                        pass
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
 
                     if not self._check_budget(redis_client):
                         break

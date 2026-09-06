@@ -969,8 +969,8 @@ async def _enrich_logic(cred_id: str):
                     gm_data = gm.json().get("result", {})
                     bot_username = bot_username or gm_data.get("username", "")
                     bot_id = bot_id or gm_data.get("id", "")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     bot_username = bot_username or "unknown"
     bot_id = bot_id or "0"
@@ -1093,8 +1093,8 @@ def broadcast_pending():
         try:
             from app.core.metrics import metrics
             metrics.inc("broadcast.disabled_run")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
         return "Disabled: raw message broadcast is opt-in; use the findings queue."
     # Distributed Lock to prevent race conditions (e.g. Local Worker vs Prod Worker)
     lock_key = "telegram_hunter:lock:broadcast"
@@ -1633,8 +1633,8 @@ async def _canary_findings_check_logic() -> dict:
             details=result,
             success=(result["status"] == "ok"),
         )
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     return result
 
@@ -1838,8 +1838,8 @@ async def _probe_webhook_url(url: str) -> dict:
                 if await probe_host_is_cooling(hostname):
                     result["skipped"] = "host_cooldown"
                     return result
-            except Exception:
-                pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
 
         # DNS resolution
         try:
@@ -1853,8 +1853,8 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
         # HTTP fingerprint — GET with no verify, no redirect follow
         try:
@@ -1896,8 +1896,8 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
         except httpx.TimeoutException:
             result["http_error"] = "timeout"
             if hostname:
@@ -1905,8 +1905,8 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
         except Exception as http_exc:
             result["http_error"] = f"{type(http_exc).__name__}: {str(http_exc)[:150]}"
             if hostname:
@@ -1914,8 +1914,8 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
         # TLS cert introspection (https only) — parse DER via cryptography lib
         if parsed.scheme == "https":
@@ -2103,8 +2103,8 @@ async def _probe_web_recon(base_url: str) -> dict:
             urls = re.findall(r"<loc>([^<]+)</loc>", sitemap_entry["preview"])
             if urls:
                 sitemap_entry["extracted_urls_sample"] = urls[:15]
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     return findings
 
@@ -2466,8 +2466,8 @@ async def _pin_webhook_url_logic(
             .update({"meta": new_meta})
             .eq("id", credential_id)
         )
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     return {
         "status": "ok",
@@ -2981,7 +2981,7 @@ async def _route_finding_alerts_logic(cadence: str) -> dict:
     if not settings.FINDING_ALERTS_ENABLED:
         logger.info("[FindingAlerts] skipping %s routing — FINDING_ALERTS_ENABLED=False", cadence)
         return {"status": "skipped", "cadence": cadence, "reason": "FINDING_ALERTS_ENABLED=False"}
-    
+
     from app.services.finding_alerts import route_finding_alerts
 
     try:
@@ -2996,7 +2996,7 @@ async def _weekly_finding_alerts_logic() -> dict:
     if not settings.FINDING_ALERTS_ENABLED:
         logger.info("[FindingAlerts] skipping weekly routing — FINDING_ALERTS_ENABLED=False")
         return {"status": "skipped", "reason": "FINDING_ALERTS_ENABLED=False"}
-    
+
     from app.services.finding_alerts import route_finding_alerts, weekly_alert_coverage
 
     try:
@@ -3479,8 +3479,8 @@ async def _unpin_all_webhook_messages_logic(max_credentials: int) -> dict:
                 .update({"meta": new_meta})
                 .eq("id", row["id"])
             )
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     msg = f"📌 Unpinned {unpinned} webhook messages ({failed} unpin failures)"
     logger.info(msg)
@@ -4011,8 +4011,8 @@ async def _audit_user_agent_group_membership_logic() -> dict:
                                 .eq("id", acct["id"])
                             )
                             marked_inactive.append(acct["phone"])
-                        except Exception:
-                            pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                         continue
 
                     in_group += 1
@@ -4217,8 +4217,8 @@ async def _attribution_graph_report_logic() -> dict:
                     "bot": c.get("bot_username") or "?",
                     "c2": meta.get("webhook_url") or "none",
                 }
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     lines = [
         "🕸️ **Attribution Graph Report**",
@@ -4238,8 +4238,8 @@ async def _attribution_graph_report_logic() -> dict:
                 try:
                     from urllib.parse import urlparse
                     c2_hosts.add(urlparse(url).hostname or "?")
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
         c2_str = f" → C2: {', '.join(list(c2_hosts)[:3])}" if c2_hosts else ""
         lines.append(
             f"• `subject:{subject_pseudonym}` × {len(creds)} bots "
@@ -4368,8 +4368,8 @@ async def _honeypot_redirect_sweep_logic() -> dict:
                     )
                 skipped += 1
                 continue
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
         # INTR-002 / CONC-002: atomic claim — set redirected_at='pending' only
         # if it is still NULL. If another sweep already claimed the row, this
@@ -4612,16 +4612,16 @@ async def _honeypot_redirect_one_logic(
             .update(update_payload)
             .eq("id", update_id)
         )
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     # BUG-5 FIX: Only set dedup key on successful delivery
     if sent_ok:
         try:
             from app.core.redis_srv import redis_srv
             redis_srv.client.set(f"redirect:sent:{credential_id}:{user_id}", "1")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     if sent_ok:
         logger.info(

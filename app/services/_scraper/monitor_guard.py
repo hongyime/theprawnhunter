@@ -13,10 +13,13 @@ Canonical storage of the two globals lives HERE.
 scraper_srv.py imports and re-exports them so all existing callers are unaffected.
 """
 import asyncio
+import logging
 
 import httpx
 
 from app.core.config import settings
+
+logger = logging.getLogger("scraper.monitor_guard")
 
 # Resolve MONITOR_GROUP_ID to both its username and numeric forms so comparisons
 # work regardless of which format is stored (e.g. "@theprawnhunter" vs -1003588166404).
@@ -50,8 +53,8 @@ def _resolve_monitor_group_ids_sync() -> set[str]:
             numeric = r.json().get("result", {}).get("id")
             if numeric:
                 ids.add(str(numeric))
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
     _MONITOR_GROUP_IDS = ids
     _MONITOR_GROUP_IDS_RESOLVED = True
     return _MONITOR_GROUP_IDS
