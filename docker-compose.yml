@@ -81,9 +81,11 @@ services:
       # `celery inspect ping` uses broadcast RPC — unreliable (caused 384 false-positive
       # unhealthy states). redis-cli is not in the worker image. Use Python (always present)
       # to verify broker connectivity — if the worker can't reach Redis it can't process tasks.
+      # Timeout raised from 90s to 180s: under CPU pressure the `python3 -c 'import redis'`
+      # startup can exceed 90s and cause spurious unhealthy flaps.
       test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
       interval: 60s
-      timeout: 90s
+      timeout: 180s
       retries: 3
       start_period: 120s
     logging:
@@ -111,7 +113,7 @@ services:
     healthcheck:
       test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
       interval: 60s
-      timeout: 90s
+      timeout: 180s
       retries: 3
       start_period: 120s
     logging:
@@ -139,7 +141,7 @@ services:
     healthcheck:
       test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
       interval: 60s
-      timeout: 90s
+      timeout: 180s
       retries: 3
       start_period: 120s
     logging:
@@ -172,7 +174,7 @@ services:
     healthcheck:
       test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
       interval: 60s
-      timeout: 90s
+      timeout: 180s
       retries: 3
       start_period: 120s
     logging:
