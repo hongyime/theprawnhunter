@@ -517,7 +517,7 @@ Status values: `Open`, `In Progress`, `Fixed`, `Blocked`, `Invalid`, `Deferred`.
 ## DEAD-005 — `.deepsource.toml`, `.sourcery.yml`
 - Status: **Open** — operator brought back into scope 2026-09-06
 - Fix: Grep the repo for evidence of active integration (badges in README, actual DeepSource/Sourcery workflow files, recent PR comments from the tools). If neither shows activity, delete both config files; if either is active, leave in place with a comment.
-- Verification: `git log --grep="deepsource\|sourcery" --all --oneline` empty for last 30 commits; `gh api repos/hongyime/theprawnhunter/checks` returns no DeepSource/Sourcery check runs.
+- Verification: `git log --grep="deepsource\|sourcery" --all --oneline` empty for last 30 commits; `gh api repos/<owner>/theprawnhunter/checks` returns no DeepSource/Sourcery check runs.
 
 ## DEAD-006 — `.playwright-mcp/*.yml`
 - Status: Open — Same fix as FS-002.
@@ -581,7 +581,7 @@ Actually deferred/merged after de-duplication:
 ## NEW-001 — CI failing on main (pre-existing, not caused by this cycle)
 - Status: Reported
 - Severity: P2
-- Root cause: Latest 5 CI runs on `hongyime/theprawnhunter` main branch all failed. `quality` job fails on 192 ruff issues in `app/`; `test` job fails (cause not inspected in this cycle). `frontend` job passes.
+- Root cause: Latest 5 CI runs on the main branch all failed. `quality` job fails on 192 ruff issues in `app/`; `test` job fails (cause not inspected in this cycle). `frontend` job passes.
 - Impact: PRs cannot rely on CI green as merge gate; failures may mask new regressions.
 - Files: existing 192 ruff violations across `app/`; unknown pytest failures.
 - Fix approach: Not in this cycle's selection. Recommend a dedicated ruff-clean pass under a `chore(quality)` remediation cycle. If any test failure is caused by missing tables (DATA-001) or expected-plaintext-token gates, those will be picked up in T-tasks that touch those areas.

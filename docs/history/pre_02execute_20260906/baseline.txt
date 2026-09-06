@@ -1,0 +1,238 @@
+=== Baseline captured for remediation/2026-09-06 ===
+HEAD: 3a033cfe06123627c37cbfb03662a9a543c61ebf
+Branch: remediation/2026-09-06
+
+=== ruff check app/ ===
+app\api\main.py:41:12: UP041 [*] Replace aliased errors with `TimeoutError`
+app\api\main.py:105:1: E402 Module level import not at top of file
+app\api\main.py:105:1: I001 [*] Import block is un-sorted or un-formatted
+app\api\main.py:106:1: E402 Module level import not at top of file
+app\api\main.py:107:1: E402 Module level import not at top of file
+app\api\main.py:108:1: E402 Module level import not at top of file
+app\api\main.py:111:1: E402 Module level import not at top of file
+app\api\main.py:117:1: W293 Blank line contains whitespace
+app\api\main.py:121:5: SIM102 Use a single `if` statement instead of nested `if` statements
+app\api\main.py:145:1: E402 Module level import not at top of file
+app\api\main.py:171:1: E402 Module level import not at top of file
+app\api\main.py:176:1: E402 Module level import not at top of file
+app\api\main.py:181:1: E402 Module level import not at top of file
+app\api\routers\ingest.py:201:1: E402 Module level import not at top of file
+app\api\routers\ingest.py:235:13: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+app\api\routers\media.py:32:9: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+app\api\routers\media.py:55:9: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+app\api\routers\media.py:67:9: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+app\api\routers\media.py:79:9: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+app\api\routers\scan.py:57:9: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+app\core\circuit_breaker.py:185:1: E402 Module level import not at top of file
+app\core\redis_srv.py:36:24: E701 Multiple statements on one line (colon)
+app\core\redis_srv.py:78:1: E402 Module level import not at top of file
+app\core\redis_srv.py:79:1: E402 Module level import not at top of file
+app\core\security.py:34:17: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+app\services\_scraper\lifecycle.py:83:16: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\_scraper\results.py:8:7: UP042 Class ScrapeReason inherits from both `str` and `enum.Enum`
+app\services\bot_listener.py:726:13: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+app\services\bot_listener.py:1465:16: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\bot_listener.py:1515:9: N806 Variable `_ALIVE_FILE` in function should be lowercase
+app\services\bot_listener.py:1574:21: E701 Multiple statements on one line (colon)
+app\services\bot_listener.py:1576:30: E701 Multiple statements on one line (colon)
+app\services\bot_manager_srv.py:77:20: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\broadcaster_srv.py:302:48: E701 Multiple statements on one line (colon)
+app\services\broadcaster_srv.py:408:24: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\broadcaster_srv.py:556:27: E701 Multiple statements on one line (colon)
+app\services\broadcaster_srv.py:557:25: E701 Multiple statements on one line (colon)
+app\services\broadcaster_srv.py:559:56: E701 Multiple statements on one line (colon)
+app\services\scanners.py:45:16: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\scanners.py:126:9: SIM103 Return the negated condition directly
+app\services\scanners.py:150:13: B005 Using `.strip()` with multi-character strings is misleading
+app\services\scanners.py:168:21: B005 Using `.strip()` with multi-character strings is misleading
+app\services\scanners.py:223:28: E701 Multiple statements on one line (colon)
+app\services\scanners.py:241:48: E701 Multiple statements on one line (colon)
+app\services\scanners.py:242:52: E701 Multiple statements on one line (colon)
+app\services\scanners.py:270:13: SIM114 [*] Combine `if` branches using logical `or` operator
+app\services\scanners.py:290:28: E701 Multiple statements on one line (colon)
+app\services\scanners.py:308:31: E701 Multiple statements on one line (colon)
+app\services\scanners.py:320:57: E701 Multiple statements on one line (colon)
+app\services\scanners.py:321:33: E701 Multiple statements on one line (colon)
+app\services\scanners.py:353:45: E701 Multiple statements on one line (colon)
+app\services\scanners.py:367:51: E701 Multiple statements on one line (colon)
+app\services\scanners.py:368:51: E701 Multiple statements on one line (colon)
+app\services\scanners.py:376:35: E701 Multiple statements on one line (colon)
+app\services\scanners.py:406:41: E701 Multiple statements on one line (colon)
+app\services\scanners.py:425:36: E701 Multiple statements on one line (colon)
+app\services\scanners.py:453:59: E701 Multiple statements on one line (colon)
+app\services\scanners.py:505:53: E701 Multiple statements on one line (colon)
+app\services\scanners.py:510:24: E701 Multiple statements on one line (colon)
+app\services\scanners.py:527:33: E701 Multiple statements on one line (colon)
+app\services\scanners.py:531:38: E701 Multiple statements on one line (colon)
+app\services\scanners.py:532:59: E701 Multiple statements on one line (colon)
+app\services\scanners.py:559:45: E701 Multiple statements on one line (colon)
+app\services\scanners.py:574:45: E701 Multiple statements on one line (colon)
+app\services\scanners.py:585:67: E701 Multiple statements on one line (colon)
+app\services\scanners.py:593:21: SIM114 [*] Combine `if` branches using logical `or` operator
+app\services\scanners.py:680:25: E701 Multiple statements on one line (colon)
+app\services\scanners.py:726:58: E701 Multiple statements on one line (colon)
+app\services\scanners.py:788:25: E701 Multiple statements on one line (colon)
+app\services\scanners.py:814:58: E701 Multiple statements on one line (colon)
+app\services\scanners.py:1137:32: E741 Ambiguous variable name: `l`
+app\services\scanners_extension.py:69:66: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:74:49: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:178:41: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:185:71: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:235:41: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:242:71: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:399:58: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:405:41: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:456:44: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:464:61: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:465:41: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:469:58: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:528:44: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:536:61: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:537:41: E701 Multiple statements on one line (colon)
+app\services\scanners_extension.py:541:58: E701 Multiple statements on one line (colon)
+app\services\scraper_srv.py:40:1: E402 Module level import not at top of file
+app\services\scraper_srv.py:42:1: E402 Module level import not at top of file
+app\services\scraper_srv.py:542:20: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\scraper_srv.py:586:16: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\scraper_srv.py:642:13: SIM102 Use a single `if` statement instead of nested `if` statements
+app\services\user_agent_srv.py:382:9: SIM102 Use a single `if` statement instead of nested `if` statements
+app\services\user_agent_srv.py:527:13: N806 Variable `TEMP_SESSION_PATH` in function should be lowercase
+app\services\user_agent_srv.py:724:60: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:726:40: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:727:49: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:728:49: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:845:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:860:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:864:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:868:62: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:869:21: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:870:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:871:33: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:881:75: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:883:29: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:884:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:888:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:892:62: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:893:21: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:917:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:924:9: N806 Variable `TEMP_SESSION_PATH` in function should be lowercase
+app\services\user_agent_srv.py:934:25: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:941:42: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:955:33: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:956:33: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:958:68: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:968:33: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:969:30: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:974:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:983:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1106:20: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\user_agent_srv.py:1161:24: UP041 [*] Replace aliased errors with `TimeoutError`
+app\services\user_agent_srv.py:1203:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1214:37: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1216:29: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1217:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1221:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1232:56: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1237:41: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1239:29: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1240:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1244:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1249:28: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1251:29: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1252:20: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1262:9: N806 Variable `INTER_SLEEP` in function should be lowercase
+app\services\user_agent_srv.py:1264:38: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1270:56: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1275:91: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1276:67: E701 Multiple statements on one line (colon)
+app\services\user_agent_srv.py:1317:9: N806 Variable `INTER_SLEEP` in function should be lowercase
+app\utils\helpers.py:59:9: SIM103 Return the condition `not is_pure_hex` directly
+app\workers\tasks\audit_tasks.py:37:5: N806 Variable `AUDIT_BATCH_SIZE` in function should be lowercase
+app\workers\tasks\audit_tasks.py:40:5: N806 Variable `CURSOR_KEY` in function should be lowercase
+app\workers\tasks\audit_tasks.py:261:9: N806 Variable `SELF_HEAL_BATCH` in function should be lowercase
+app\workers\tasks\audit_tasks.py:265:9: N806 Variable `HEAL_CURSOR_KEY` in function should be lowercase
+app\workers\tasks\audit_tasks.py:652:5: N806 Variable `BATCH_SIZE` in function should be lowercase
+app\workers\tasks\flow_tasks.py:998:5: N806 Variable `LOCK_TTL` in function should be lowercase
+app\workers\tasks\flow_tasks.py:999:5: N806 Variable `RENEW_EVERY` in function should be lowercase
+app\workers\tasks\flow_tasks.py:1031:9: SIM105 Use `contextlib.suppress(redis.exceptions.LockError)` instead of `try`-`except`-`pass`
+app\workers\tasks\flow_tasks.py:1056:5: N806 Variable `BROADCAST_BATCH_SIZE` in function should be lowercase
+app\workers\tasks\flow_tasks.py:1490:9: N806 Variable `CANARY_BROADCAST_POLL_SECONDS` in function should be lowercase
+app\workers\tasks\flow_tasks.py:1491:9: N806 Variable `CANARY_BROADCAST_POLL_INTERVAL` in function should be lowercase
+app\workers\tasks\flow_tasks.py:1708:21: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+app\workers\tasks\flow_tasks.py:2759:1: W293 [*] Blank line contains whitespace
+app\workers\tasks\flow_tasks.py:2774:1: W293 [*] Blank line contains whitespace
+app\workers\tasks\flow_tasks.py:3031:13: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+app\workers\tasks\flow_tasks.py:3654:5: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+app\workers\tasks\flow_tasks.py:4359:5: N806 Variable `BATCH_SIZE` in function should be lowercase
+app\workers\tasks\flow_tasks.py:4363:5: N806 Variable `SPREAD_SECONDS` in function should be lowercase
+app\workers\tasks\flow_tasks.py:4370:5: N806 Variable `BACKPRESSURE_THRESHOLD` in function should be lowercase
+app\workers\tasks\flow_tasks.py:4371:5: N806 Variable `CURSOR_KEY` in function should be lowercase
+app\workers\tasks\honeypot_redirect_tasks.py:15:1: E402 Module level import not at top of file
+app\workers\tasks\scanner_tasks.py:159:1: E402 Module level import not at top of file
+app\workers\tasks\scanner_tasks.py:161:1: E402 Module level import not at top of file
+app\workers\tasks\scanner_tasks.py:247:5: N806 Variable `COMMON_QUERIES` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:336:5: N806 Variable `DORK_CAP` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:337:5: N806 Variable `QUERY_SLEEP` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:597:5: N806 Variable `EXA_COOLDOWN_KEY` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:598:5: N806 Variable `EXA_COOLDOWN_TTL` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:705:5: N806 Variable `GOOGLE_COOLDOWN_KEY` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:706:5: N806 Variable `GOOGLE_COOLDOWN_TTL` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:776:5: N806 Variable `C2_QUERIES` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:842:1: E402 Module level import not at top of file
+app\workers\tasks\scanner_tasks.py:844:1: E402 Module level import not at top of file
+app\workers\tasks\scanner_tasks.py:845:1: E402 Module level import not at top of file
+app\workers\tasks\scanner_tasks.py:1157:5: N806 Variable `SEARCH_URL` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:1158:5: N806 Variable `AUTH_URL` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:1159:5: N806 Variable `REGISTRY_URL` in function should be lowercase
+app\workers\tasks\scanner_tasks.py:1166:42: E701 Multiple statements on one line (colon)
+app\workers\tasks\scanner_tasks.py:1185:49: E701 Multiple statements on one line (colon)
+app\workers\tasks\scanner_tasks.py:1186:29: E701 Multiple statements on one line (colon)
+app\workers\tasks\scanner_tasks.py:1191:47: E701 Multiple statements on one line (colon)
+app\workers\tasks\scanner_tasks.py:1193:29: E701 Multiple statements on one line (colon)
+app\workers\tasks\scanner_tasks.py:1202:51: E701 Multiple statements on one line (colon)
+app\workers\tasks\scanner_tasks.py:1207:37: E701 Multiple statements on one line (colon)
+app\workers\tasks\scanner_tasks.py:1211:47: E701 Multiple statements on one line (colon)
+app\workers\tasks\validation_tasks.py:414:5: N806 Variable `REFRESH_CURSOR_KEY` in function should be lowercase
+app\workers\tasks\validation_tasks.py:415:5: N806 Variable `REFRESH_BATCH_SIZE` in function should be lowercase
+Found 191 errors.
+[*] 15 fixable with the `--fix` option (3 hidden fixes can be enabled with the `--unsafe-fixes` option).
+
+ruff exit: 1
+
+=== pytest -q (dry collection first) ===
+        <Coroutine test_webhook_present_delete_allowed_retries_polling>
+        <Coroutine test_webhook_delete_failure_is_conflict>
+        <Coroutine test_bot_api_reader_classifies_getupdates_409>
+
+======================== 398 tests collected in 39.00s ========================
+
+
+=== docker image tags ===
+theprawnhunter_api image=theprawnhunter-api created=2026-08-28 21:54:10 +0800 +08
+theprawnhunter_beat image=theprawnhunter-beat created=2026-08-28 16:56:10 +0800 +08
+theprawnhunter_worker-core image=theprawnhunter-worker-core created=2026-08-28 16:56:08 +0800 +08
+theprawnhunter_bot image=theprawnhunter-bot created=2026-08-28 16:56:06 +0800 +08
+theprawnhunter_flower image=theprawnhunter-flower created=2026-08-28 16:55:55 +0800 +08
+theprawnhunter_worker-validators image=theprawnhunter-worker-validators created=2026-08-28 16:55:46 +0800 +08
+theprawnhunter_worker-scrape image=theprawnhunter-worker-scrape created=2026-08-28 16:55:40 +0800 +08
+theprawnhunter_worker-scanners image=theprawnhunter-worker-scanners created=2026-08-28 16:55:01 +0800 +08
+theprawnhunter_frontend image=theprawnhunter-frontend created=2026-08-28 16:54:37 +0800 +08
+theprawnhunter_redis image=redis:7-alpine created=2026-08-08 13:36:18 +0800 +08
+
+
+=== ruff full count ===
+ruff app/: 192 issues
+ruff .: 232 issues
+
+=== pytest collect tail ===
+        <Coroutine test_webhook_present_delete_denied_is_conflict>`n        <Coroutine test_webhook_present_delete_allowed_retries_polling>`n        <Coroutine test_webhook_delete_failure_is_conflict>`n        <Coroutine test_bot_api_reader_classifies_getupdates_409>`n`n======================== 398 tests collected in 29.43s ========================
+
+=== CI status on main (as of remediation branch cut) ===
+Latest 5 CI runs on main: ALL FAILED.
+Failing jobs: `quality` (ruff — 192 issues in app/), `test` (pytest — cause not inspected here).
+Passing job: `frontend`.
+This is pre-existing; NOT introduced by this cycle. Logged as NEW-001 in bugfix.md.
+
+=== Container image tags (pre-cycle) ===
+Recorded via docker inspect at T01 start.
+All theprawnhunter_* containers were created 2026-08-28. This is the rollback target if T48 needs reverting.
