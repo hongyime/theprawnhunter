@@ -392,15 +392,23 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
     return response.data or []
 
 
-async def _update_message_broadcast_success(msg_id: str) -> None:
+async def _update_message_broadcast_success(
+    msg_id: str,
+    broadcast_message_id: int | None = None,
+) -> None:
     from datetime import datetime
 
     now_iso = datetime.now(UTC).isoformat()
-    payload = {
+    payload: dict[str, Any] = {
         "is_broadcasted": True,
         "broadcast_claimed_at": None,
         "broadcasted_at": now_iso,
     }
+    if broadcast_message_id is not None:
+        # INTR-001: persist so retries recognise a prior successful send
+        # and skip the duplicate `sendMessage` call.
+        payload["broadcast_message_id"] = broadcast_message_id
+        payload["broadcast_status"] = "sent"
     if _can_use_broadcast_reliability_columns():
         try:
             await async_execute(
@@ -415,13 +423,38 @@ async def _update_message_broadcast_success(msg_id: str) -> None:
             _set_broadcast_reliability_columns_available(True)
             return
         except Exception as exc:
+            exc_str = str(exc)
             if _is_missing_broadcast_reliability_column(exc):
                 _set_broadcast_reliability_columns_available(False)
                 logger.warning(
                     "[Broadcast] Reliability columns missing on success update; "
                     "falling back to legacy broadcast status update."
                 )
-            elif "broadcasted_at" in str(exc):
+                # Drop the new columns (broadcast_message_id, broadcast_status)
+                # from the fallback path so a pre-migration DB doesn't reject.
+                payload.pop("broadcast_message_id", None)
+                payload.pop("broadcast_status", None)
+            elif "broadcast_message_id" in exc_str or "broadcast_status" in exc_str:
+                # Migration 20260906000003 not applied yet — drop those two
+                # columns and retry the full update in this same block.
+                logger.warning(
+                    "[Broadcast] broadcast_message_id/broadcast_status column missing; "
+                    "apply supabase/migrations/20260906000003_broadcast_reliability_ext.sql. "
+                    "Falling back to update without idempotency tracking."
+                )
+                payload.pop("broadcast_message_id", None)
+                payload.pop("broadcast_status", None)
+                await async_execute(
+                    db.table("exfiltrated_messages")
+                    .update({
+                        **payload,
+                        "broadcast_error": None,
+                        "next_retry_at": None,
+                    })
+                    .eq("id", msg_id)
+                )
+                return
+            elif "broadcasted_at" in exc_str:
                 # Column not yet migrated — retry without it
                 logger.warning(
                     "[Broadcast] broadcasted_at column missing; apply migration "
@@ -429,6 +462,8 @@ async def _update_message_broadcast_success(msg_id: str) -> None:
                     "Falling back to legacy update."
                 )
                 payload.pop("broadcasted_at", None)
+                payload.pop("broadcast_message_id", None)
+                payload.pop("broadcast_status", None)
                 await async_execute(
                     db.table("exfiltrated_messages").update(payload).eq("id", msg_id)
                 )
@@ -437,6 +472,10 @@ async def _update_message_broadcast_success(msg_id: str) -> None:
                 raise
 
     # Legacy path — column-existence unknown, try WITH broadcasted_at first
+    # broadcast_message_id and broadcast_status are stripped here because
+    # they're guarded by the new migration 20260906000003.
+    payload.pop("broadcast_message_id", None)
+    payload.pop("broadcast_status", None)
     try:
         await async_execute(
             db.table("exfiltrated_messages").update(payload).eq("id", msg_id)
@@ -461,6 +500,66 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
     retry_after_seconds = getattr(exc, "retry_after_seconds", None)
     now = datetime.now(UTC)
     attempts = int(msg.get("broadcast_attempts") or 0) + 1
+
+    # DATA-003 / REL-003: cap infinite retry. When attempts exceed the budget,
+    # move the row to a terminal `permanent_failed` state so the retry pool
+    # stops churning on it. Row stays visible for operator triage via
+    # broadcast_status='permanent_failed'.
+    max_attempts = int(os.getenv("MAX_BROADCAST_ATTEMPTS", 8))
+    if attempts >= max_attempts:
+        terminal_payload: dict[str, Any] = {
+            "is_broadcasted": True,  # exits the retry pool
+            "broadcast_claimed_at": None,
+            "broadcast_status": "permanent_failed",
+            "broadcast_error": {
+                "reason": reason,
+                "detail": str(detail)[:500],
+                "retryable": False,
+                "failed_at": now.isoformat(),
+                "terminal_at_attempts": attempts,
+            },
+            "broadcast_attempts": attempts,
+            "next_retry_at": None,
+        }
+        try:
+            await async_execute(
+                db.table("exfiltrated_messages").update(terminal_payload).eq("id", msg_id)
+            )
+            _set_broadcast_reliability_columns_available(True)
+        except Exception as terminal_exc:
+            terminal_str = str(terminal_exc)
+            # If the new broadcast_status column isn't migrated yet, drop it
+            # and try again — we still want to exit the retry pool.
+            if "broadcast_status" in terminal_str:
+                terminal_payload.pop("broadcast_status", None)
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("exfiltrated_messages")
+                        .update(terminal_payload)
+                        .eq("id", msg_id)
+                    )
+            else:
+                logger.error(
+                    f"[Broadcast] terminal update failed for {msg_id}: {terminal_str[:200]}"
+                )
+        AuditLogger.log(
+            AuditEvent.BROADCAST_FAILED,
+            credential_id=msg.get("credential_id"),
+            details={
+                "message_id": msg_id,
+                "reason": reason,
+                "retryable": False,
+                "attempts": attempts,
+                "terminal": True,
+            },
+            success=False,
+        )
+        logger.warning(
+            f"    🛑 [Broadcast] {msg_id} moved to permanent_failed after "
+            f"{attempts} attempts (reason={reason})"
+        )
+        return
+
     delay_seconds = _broadcast_retry_delay_seconds(reason, retryable, retry_after_seconds)
     next_retry_at = (now + timedelta(seconds=delay_seconds)).isoformat()
     payload = {
@@ -870,8 +969,8 @@ async def _enrich_logic(cred_id: str):
                     gm_data = gm.json().get("result", {})
                     bot_username = bot_username or gm_data.get("username", "")
                     bot_id = bot_id or gm_data.get("id", "")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     bot_username = bot_username or "unknown"
     bot_id = bot_id or "0"
@@ -989,6 +1088,13 @@ async def _enrich_logic(cred_id: str):
 @app.task(name="flow.broadcast_pending")
 def broadcast_pending():
     if not settings.ENABLE_RAW_MESSAGE_BROADCAST:
+        # LOGIC-003: surface disabled-run counter so operators can distinguish
+        # "beat is firing but skipped" from "beat is not firing".
+        try:
+            from app.core.metrics import metrics
+            metrics.inc("broadcast.disabled_run")
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
         return "Disabled: raw message broadcast is opt-in; use the findings queue."
     # Distributed Lock to prevent race conditions (e.g. Local Worker vs Prod Worker)
     lock_key = "telegram_hunter:lock:broadcast"
@@ -1001,6 +1107,9 @@ def broadcast_pending():
 
     acquired = lock.acquire()
     if not acquired:
+        # CONC-001: surface skip to operator logs so beat cadence is visible
+        # even when a concurrent run holds the lock.
+        logger.info("[Broadcast] Skipped — lock held by another worker")
         return "Skipped: Broadcast task already running (Lock active)."
 
     # Check Pause State
@@ -1068,201 +1177,254 @@ async def _broadcast_logic():
     # Local cache to avoid DB roundtrips within this batch if multiple messages for same cred
     cached_topic_ids = {}
 
-    for msg in messages:
-        msg_id = msg["id"]
+    # PERF-002: parallelise broadcast across cred_id groups. Each cred_id's
+    # messages stay sequential (Telegram flood-wait is per-chat/topic), but up
+    # to BROADCAST_MAX_PARALLEL_TOPICS distinct topics run concurrently. The
+    # bot pool has itertools.cycle rotation, so effective concurrency is bounded
+    # by min(MAX_PARALLEL_TOPICS, len(bot_pool)).
+    _max_parallel = int(os.getenv("BROADCAST_MAX_PARALLEL_TOPICS", 5))
+    _inter_message_delay = float(os.getenv("BROADCAST_INTER_MESSAGE_DELAY_SECONDS", 0.5))
+    _topic_semaphore = asyncio.Semaphore(_max_parallel)
 
-        try:
-            # ==========================================================
-            # STEP 1: ATOMIC CLAIM via DB (works across ALL environments)
-            # ==========================================================
-            # Single conditional UPDATE — only succeeds if message is unclaimed and not yet broadcast.
-            # This eliminates the TOCTOU race between check and claim.
-            claim_time = datetime.now(UTC).isoformat()
+    from collections import defaultdict
+    _grouped: dict[str, list[dict]] = defaultdict(list)
+    for _m in messages:
+        _grouped[_m["credential_id"]].append(_m)
 
-            # Attempt to claim an unclaimed message
-            claim_result = await async_execute(db.table("exfiltrated_messages")\
-                .update({"broadcast_claimed_at": claim_time})\
-                .eq("id", msg_id)\
-                .eq("is_broadcasted", False)\
-                .is_("broadcast_claimed_at", "null")\
-                )
+    async def _process_topic_group(cred_id: str, group_msgs: list[dict]) -> tuple[int, int]:
+        """Process all pending messages for a single cred_id sequentially.
+        Returns (sent, skipped) counters for this group.
+        """
+        local_sent = 0
+        local_skipped = 0
 
-            if not claim_result.data:
-                # Either already broadcasted, or claimed by another worker.
-                # Try reclaiming if the existing claim is stale.
-                stale_iso = stale_threshold.isoformat()
-                reclaim_result = await async_execute(db.table("exfiltrated_messages")\
-                    .update({"broadcast_claimed_at": claim_time})\
-                    .eq("id", msg_id)\
-                    .eq("is_broadcasted", False)\
-                    .lt("broadcast_claimed_at", stale_iso)\
-                    )
+        async with _topic_semaphore:
+            for msg in group_msgs:
+                msg_id = msg["id"]
 
-                if not reclaim_result.data:
-                    # Could not claim — either done or freshly claimed by another worker
-                    skipped_count += 1
-                    continue
-
-                logger.warning(f"    🔄 Stale claim reclaimed for {msg_id}")
-
-            logger.info(f"    📌 Claimed message {msg_id}")
-
-            cred_id = msg["credential_id"]
-            # Extract meta from the joined discovered_credentials
-            cred_info = msg.get("discovered_credentials", {})
-            meta = cred_info.get("meta", {}) if cred_info else {}
-
-            # 1. Resolve Topic Name (Always needed for potential recreation)
-            # Priority: @username / botid -> chat_name -> Cred-ID
-            bot_username = meta.get("bot_username")
-            bot_id = meta.get("bot_id")
-
-            # Resolve unknown usernames via getMe before creating/finding topics
-            if (not bot_username or bot_username == "unknown") and bot_id:
                 try:
-                    cred_res = await async_execute(
-                        db.table("discovered_credentials")
-                        .select("bot_token").eq("id", cred_id).single()
-                    )
-                    if cred_res.data:
-                        raw_token = cred_res.data.get("bot_token") if isinstance(cred_res.data, dict) else cred_res.data[0]["bot_token"]
-                        decrypted = security.decrypt(raw_token).strip()
-                        async with httpx.AsyncClient(timeout=10.0) as _hc:
-                            gm = await _hc.get(f"https://api.telegram.org/bot{decrypted}/getMe")
-                            if gm.status_code == 200:
-                                gm_data = gm.json().get("result", {})
-                                resolved_username = gm_data.get("username")
-                                if resolved_username:
-                                    bot_username = resolved_username
-                                    # Persist resolved username to DB
-                                    fresh_meta = await async_execute(
-                                        db.table("discovered_credentials")
-                                        .select("meta").eq("id", cred_id).single()
-                                    )
-                                    upd_meta = dict((fresh_meta.data or {}).get("meta") or {})
-                                    upd_meta["bot_username"] = bot_username
-                                    await async_execute(
-                                        db.table("discovered_credentials")
-                                        .update({"meta": upd_meta}).eq("id", cred_id)
-                                    )
-                                    # Rename existing @unknown topic if it has a cached thread_id
-                                    old_topic_id = upd_meta.get("topic_id")
-                                    if old_topic_id:
-                                        new_name = f"@{bot_username} / {bot_id}"
-                                        await broadcaster.rename_topic(group_id, old_topic_id, new_name)
-                                        logger.info(f"    Renamed topic {old_topic_id} from @unknown to @{bot_username}")
-                except Exception as e_resolve:
-                    logger.debug(f"[Broadcast] Could not resolve username for bot_id {bot_id}: {e_resolve}")
+                    # ==========================================================
+                    # STEP 1: ATOMIC CLAIM via DB (works across ALL environments)
+                    # ==========================================================
+                    # Single conditional UPDATE — only succeeds if message is unclaimed and not yet broadcast.
+                    # This eliminates the TOCTOU race between check and claim.
+                    claim_time = datetime.now(UTC).isoformat()
 
-            if bot_username and bot_username != "unknown" and bot_id:
-                 topic_name = f"@{bot_username} / {bot_id}"
-            elif bot_id:
-                 topic_name = f"@unknown / {bot_id}"
-            elif meta.get("chat_name"):
-                 topic_name = f"{meta.get('chat_name')} (Legacy)"
-            else:
-                 topic_name = f"Cred-{cred_id[:8]}"
+                    # Attempt to claim an unclaimed message
+                    claim_result = await async_execute(db.table("exfiltrated_messages")\
+                        .update({"broadcast_claimed_at": claim_time})\
+                        .eq("id", msg_id)\
+                        .eq("is_broadcasted", False)\
+                        .is_("broadcast_claimed_at", "null")\
+                        )
 
-            # 2. Check Cache/DB for ID
-            thread_id = cached_topic_ids.get(cred_id) or meta.get("topic_id")
+                    if not claim_result.data:
+                        # Either already broadcasted, or claimed by another worker.
+                        # Try reclaiming if the existing claim is stale.
+                        stale_iso = stale_threshold.isoformat()
+                        reclaim_result = await async_execute(db.table("exfiltrated_messages")\
+                            .update({"broadcast_claimed_at": claim_time})\
+                            .eq("id", msg_id)\
+                            .eq("is_broadcasted", False)\
+                            .lt("broadcast_claimed_at", stale_iso)\
+                            )
 
-            if not thread_id:
-                # Determines if we need to fetch token for legacy fallback
-                if "unknown" in topic_name and not bot_id:
-                     try:
-                        cred_res = await async_execute(db.table("discovered_credentials").select("bot_token").eq("id", cred_id).single())
-                        if cred_res.data:
-                            # .single() returns a dict, not a list — access directly
-                            raw_token = cred_res.data.get("bot_token") if isinstance(cred_res.data, dict) else cred_res.data[0]["bot_token"]
-                            decrypted = security.decrypt(raw_token)
-                            if ":" in decrypted:
-                                bot_id = decrypted.split(":")[0]
-                                meta["bot_id"] = bot_id
-                                topic_name = f"@unknown / {bot_id}"
-                     except Exception as e_dec:
+                        if not reclaim_result.data:
+                            # Could not claim — either done or freshly claimed by another worker
+                            local_skipped += 1
+                            continue
+
+                        logger.warning(f"    🔄 Stale claim reclaimed for {msg_id}")
+
+                    logger.info(f"    📌 Claimed message {msg_id}")
+
+                    # Extract meta from the joined discovered_credentials
+                    cred_info = msg.get("discovered_credentials", {})
+                    meta = cred_info.get("meta", {}) if cred_info else {}
+
+                    # 1. Resolve Topic Name (Always needed for potential recreation)
+                    # Priority: @username / botid -> chat_name -> Cred-ID
+                    bot_username = meta.get("bot_username")
+                    bot_id = meta.get("bot_id")
+
+                    # Resolve unknown usernames via getMe before creating/finding topics
+                    if (not bot_username or bot_username == "unknown") and bot_id:
+                        try:
+                            cred_res = await async_execute(
+                                db.table("discovered_credentials")
+                                .select("bot_token").eq("id", cred_id).single()
+                            )
+                            if cred_res.data:
+                                raw_token = cred_res.data.get("bot_token") if isinstance(cred_res.data, dict) else cred_res.data[0]["bot_token"]
+                                decrypted = security.decrypt(raw_token).strip()
+                                async with httpx.AsyncClient(timeout=10.0) as _hc:
+                                    gm = await _hc.get(f"https://api.telegram.org/bot{decrypted}/getMe")
+                                    if gm.status_code == 200:
+                                        gm_data = gm.json().get("result", {})
+                                        resolved_username = gm_data.get("username")
+                                        if resolved_username:
+                                            bot_username = resolved_username
+                                            # Persist resolved username to DB
+                                            fresh_meta = await async_execute(
+                                                db.table("discovered_credentials")
+                                                .select("meta").eq("id", cred_id).single()
+                                            )
+                                            upd_meta = dict((fresh_meta.data or {}).get("meta") or {})
+                                            upd_meta["bot_username"] = bot_username
+                                            await async_execute(
+                                                db.table("discovered_credentials")
+                                                .update({"meta": upd_meta}).eq("id", cred_id)
+                                            )
+                                            # Rename existing @unknown topic if it has a cached thread_id
+                                            old_topic_id = upd_meta.get("topic_id")
+                                            if old_topic_id:
+                                                new_name = f"@{bot_username} / {bot_id}"
+                                                await broadcaster.rename_topic(group_id, old_topic_id, new_name)
+                                                logger.info(f"    Renamed topic {old_topic_id} from @unknown to @{bot_username}")
+                        except Exception as e_resolve:
+                            logger.debug(f"[Broadcast] Could not resolve username for bot_id {bot_id}: {e_resolve}")
+
+                    if bot_username and bot_username != "unknown" and bot_id:
+                        topic_name = f"@{bot_username} / {bot_id}"
+                    elif bot_id:
+                        topic_name = f"@unknown / {bot_id}"
+                    elif meta.get("chat_name"):
+                        topic_name = f"{meta.get('chat_name')} (Legacy)"
+                    else:
+                        topic_name = f"Cred-{cred_id[:8]}"
+
+                    # 2. Check Cache/DB for ID
+                    thread_id = cached_topic_ids.get(cred_id) or meta.get("topic_id")
+
+                    if not thread_id:
+                        # Determines if we need to fetch token for legacy fallback
+                        if "unknown" in topic_name and not bot_id:
+                            try:
+                                cred_res = await async_execute(db.table("discovered_credentials").select("bot_token").eq("id", cred_id).single())
+                                if cred_res.data:
+                                    # .single() returns a dict, not a list — access directly
+                                    raw_token = cred_res.data.get("bot_token") if isinstance(cred_res.data, dict) else cred_res.data[0]["bot_token"]
+                                    decrypted = security.decrypt(raw_token)
+                                    if ":" in decrypted:
+                                        bot_id = decrypted.split(":")[0]
+                                        meta["bot_id"] = bot_id
+                                        topic_name = f"@unknown / {bot_id}"
+                            except Exception as e_dec:
                                 logger.debug(f"[Broadcast] Could not decrypt token for legacy bot_id extraction: {e_dec}")
 
-                # Ensure Topic — raises on failure so message is retried later
-                try:
-                    thread_id = await broadcaster.ensure_topic(group_id, topic_name)
-                except Exception as e_topic:
-                    logger.error(f"    ❌ [Broadcast] Topic creation failed for {cred_id}: {e_topic}")
-                    from app.services.broadcaster_srv import BroadcastSendError
+                        # Ensure Topic — raises on failure so message is retried later
+                        try:
+                            thread_id = await broadcaster.ensure_topic(group_id, topic_name)
+                        except Exception as e_topic:
+                            logger.error(f"    ❌ [Broadcast] Topic creation failed for {cred_id}: {e_topic}")
+                            from app.services.broadcaster_srv import BroadcastSendError
 
-                    await _mark_broadcast_failure(
-                        msg,
-                        BroadcastSendError(
-                            "topic_missing",
-                            f"Could not create topic '{topic_name}': {e_topic}",
-                            retryable=True,
-                        ),
-                    )
-                    continue
+                            await _mark_broadcast_failure(
+                                msg,
+                                BroadcastSendError(
+                                    "topic_missing",
+                                    f"Could not create topic '{topic_name}': {e_topic}",
+                                    retryable=True,
+                                ),
+                            )
+                            continue
 
-                # Re-fetch meta before write — prevents overwriting concurrent enrich updates
-                fresh = await async_execute(db.table("discovered_credentials").select("meta").eq("id", cred_id).single())
-                meta = dict((fresh.data or {}).get("meta") or {})
-                meta["topic_id"] = thread_id
-                await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
-                logger.info(f"    📝 [Broadcast] Saved topic_id {thread_id} for {cred_id}")
-
-            # Update local cache
-            cached_topic_ids[cred_id] = thread_id
-
-            # Send Message (with retry for deleted topics)
-            send_success = False
-            try:
-                await broadcaster.send_message(group_id, thread_id, msg)
-                send_success = True
-            except Exception as e:
-                # Check for topic deletion/not found
-                err_str = str(e)
-                failure_reason = getattr(e, "reason", "")
-                if (
-                    failure_reason == "topic_missing"
-                    or "Topic_deleted" in err_str
-                    or "message thread not found" in err_str
-                    or "TOPIC_DELETED" in err_str
-                ):
-                    logger.warning(f"    ⚠️ Topic {thread_id} deleted! Recreating '{topic_name}'...")
-                    try:
-                        thread_id = await broadcaster.ensure_topic(group_id, topic_name)
-                        # Re-fetch meta before write
-                        fresh2 = await async_execute(db.table("discovered_credentials").select("meta").eq("id", cred_id).single())
-                        meta = dict((fresh2.data or {}).get("meta") or {})
+                        # Re-fetch meta before write — prevents overwriting concurrent enrich updates
+                        fresh = await async_execute(db.table("discovered_credentials").select("meta").eq("id", cred_id).single())
+                        meta = dict((fresh.data or {}).get("meta") or {})
                         meta["topic_id"] = thread_id
                         await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
-                        cached_topic_ids[cred_id] = thread_id
-                        # Retry Send
-                        await broadcaster.send_message(group_id, thread_id, msg)
+                        logger.info(f"    📝 [Broadcast] Saved topic_id {thread_id} for {cred_id}")
+
+                    # Update local cache
+                    cached_topic_ids[cred_id] = thread_id
+
+                    # INTR-001: idempotent broadcast — if a prior run already sent this
+                    # message (Telegram message-id persisted), skip the send call and
+                    # mark broadcasted directly. Prevents duplicate broadcast when a
+                    # worker was killed between successful send and DB write.
+                    prior_broadcast_msg_id = msg.get("broadcast_message_id")
+
+                    # Send Message (with retry for deleted topics)
+                    send_success = False
+                    sent_message_id: int | None = None
+                    if prior_broadcast_msg_id is not None:
+                        logger.info(
+                            f"    ⏭️  Skipping send — broadcast_message_id={prior_broadcast_msg_id} "
+                            f"already recorded for msg {msg_id}"
+                        )
+                        sent_message_id = int(prior_broadcast_msg_id)
                         send_success = True
-                    except Exception as retry_e:
-                        logger.error(f"    ❌ Failed after topic recreation: {retry_e}")
-                        await _mark_broadcast_failure(msg, retry_e)
-                else:
-                    logger.error(f"    ❌ Send failed: {e}")
-                    await _mark_broadcast_failure(msg, e)
+                    else:
+                        try:
+                            sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
+                            send_success = True
+                        except Exception as e:
+                            # Check for topic deletion/not found
+                            err_str = str(e)
+                            failure_reason = getattr(e, "reason", "")
+                            if (
+                                failure_reason == "topic_missing"
+                                or "Topic_deleted" in err_str
+                                or "message thread not found" in err_str
+                                or "TOPIC_DELETED" in err_str
+                            ):
+                                logger.warning(f"    ⚠️ Topic {thread_id} deleted! Recreating '{topic_name}'...")
+                                try:
+                                    thread_id = await broadcaster.ensure_topic(group_id, topic_name)
+                                    # Re-fetch meta before write
+                                    fresh2 = await async_execute(db.table("discovered_credentials").select("meta").eq("id", cred_id).single())
+                                    meta = dict((fresh2.data or {}).get("meta") or {})
+                                    meta["topic_id"] = thread_id
+                                    await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
+                                    cached_topic_ids[cred_id] = thread_id
+                                    # Retry Send
+                                    sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
+                                    send_success = True
+                                except Exception as retry_e:
+                                    logger.error(f"    ❌ Failed after topic recreation: {retry_e}")
+                                    await _mark_broadcast_failure(msg, retry_e)
+                            else:
+                                logger.error(f"    ❌ Send failed: {e}")
+                                await _mark_broadcast_failure(msg, e)
 
-            if send_success:
-                # ==============================================
-                # SUCCESS: Mark as broadcasted and clear claim
-                # ==============================================
-                await _update_message_broadcast_success(msg_id)
-                sent_count += 1
-                logger.info(f"    ✅ Broadcasted msg {msg_id}")
-            else:
-                logger.warning(f"    🔄 Broadcast failure recorded for retry: {msg_id}")
+                    if send_success:
+                        # ==============================================
+                        # SUCCESS: Mark as broadcasted and clear claim
+                        # ==============================================
+                        await _update_message_broadcast_success(msg_id, broadcast_message_id=sent_message_id)
+                        local_sent += 1
+                        logger.info(f"    ✅ Broadcasted msg {msg_id}")
+                    else:
+                        logger.warning(f"    🔄 Broadcast failure recorded for retry: {msg_id}")
 
-            # Rate limit
-            await asyncio.sleep(2.0)
+                    # PERF-002: reduced from 2.0s to configurable delay.
+                    # Per-topic serial send with modest delay + cross-topic
+                    # parallelism yields the throughput gain.
+                    await asyncio.sleep(_inter_message_delay)
 
-        except Exception as e:
-            logger.error(f"Error broadcasting msg {msg_id}: {e}")
-            try:
-                await _mark_broadcast_failure(msg, e)
-            except Exception as e_claim:
-                logger.error(f"Failed to clear broadcast claim for msg {msg_id}: {e_claim} — message may be stuck until stale-claim TTL expires")
+                except Exception as e:
+                    logger.error(f"Error broadcasting msg {msg_id}: {e}")
+                    try:
+                        await _mark_broadcast_failure(msg, e)
+                    except Exception as e_claim:
+                        logger.error(f"Failed to clear broadcast claim for msg {msg_id}: {e_claim} — message may be stuck until stale-claim TTL expires")
+                    continue
+
+        return local_sent, local_skipped
+
+    # Fan out per-cred_id groups in parallel.
+    _group_results = await asyncio.gather(
+        *[_process_topic_group(cid, grp) for cid, grp in _grouped.items()],
+        return_exceptions=True,
+    )
+    for _r in _group_results:
+        if isinstance(_r, Exception):
+            logger.error(f"[Broadcast] topic-group crashed: {_r}")
             continue
+        _s, _sk = _r
+        sent_count += _s
+        skipped_count += _sk
 
     result = f"Broadcasted {sent_count}/{len(messages)} messages"
     if skipped_count > 0:
@@ -1416,6 +1578,103 @@ def canary_flow_check():
     from app.workers.celery_app import get_worker_loop
 
     return get_worker_loop().run_until_complete(_canary_flow_check_logic())
+
+
+@app.task(name="flow.canary_findings_check")
+def canary_findings_check():
+    """LOGIC-001: end-to-end canary that DOES NOT require the raw broadcast
+    pipeline. Inserts a synthetic finding, verifies it lands, then cleans up.
+
+    Runs even when ENABLE_RAW_MESSAGE_BROADCAST is False (findings-first
+    workflow default post-2026-09-06). Returns {status:'disabled', reason:
+    'findings_table_missing'} gracefully if the DATA-001 migration hasn't
+    been applied — so it never fails loudly on a fresh Supabase.
+    """
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_canary_findings_check_logic())
+
+
+async def _canary_findings_check_logic() -> dict:
+    from datetime import datetime
+    from uuid import uuid4
+
+    canary_key = f"canary-findings-{uuid4()}"
+    now = datetime.now(UTC)
+    row = {
+        "type": "canary",
+        "title": "Synthetic canary — safe to ignore",
+        "summary": "flow.canary_findings_check verification row",
+        "priority": 1,
+        "status": "triaged",
+        "signature": canary_key,
+        "created_at": now.isoformat(),
+    }
+
+    result: dict[str, Any] = {"status": "started", "signature": canary_key}
+    try:
+        try:
+            insert_res = await async_execute(db.table("findings").insert(row))
+        except Exception as insert_exc:
+            exc_str = str(insert_exc)
+            if "findings" in exc_str and ("does not exist" in exc_str or "PGRST205" in exc_str):
+                return {
+                    "status": "disabled",
+                    "reason": "findings_table_missing",
+                    "hint": (
+                        "Apply supabase/migrations/20260904000002_insight_queue.sql "
+                        "then re-enable this canary."
+                    ),
+                }
+            raise
+
+        inserted_rows = insert_res.data or []
+        row_id = inserted_rows[0].get("id") if inserted_rows else None
+        result["inserted"] = bool(row_id)
+
+        # Read-back to prove the row landed.
+        try:
+            check = await async_execute(
+                db.table("findings")
+                .select("id, signature")
+                .eq("signature", canary_key)
+                .limit(1)
+            )
+            result["visible"] = bool(check.data)
+        except Exception as check_exc:
+            result["visible"] = False
+            result["visible_error"] = str(check_exc)[:200]
+
+        # Best-effort cleanup so the synthetic row doesn't pollute the queue.
+        try:
+            if row_id:
+                await async_execute(
+                    db.table("findings").delete().eq("id", row_id)
+                )
+            else:
+                await async_execute(
+                    db.table("findings").delete().eq("signature", canary_key)
+                )
+            result["cleaned_up"] = True
+        except Exception as cleanup_exc:
+            result["cleaned_up"] = False
+            result["cleanup_error"] = str(cleanup_exc)[:200]
+
+        result["status"] = "ok" if result.get("inserted") and result.get("visible") else "failed"
+    except Exception as e:
+        result["status"] = "failed"
+        result["error"] = str(e)[:300]
+
+    try:
+        AuditLogger.log(
+            AuditEvent.CANARY_FLOW_CHECK,
+            details=result,
+            success=(result["status"] == "ok"),
+        )
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
+
+    return result
 
 
 async def _canary_flow_check_logic():
@@ -1617,8 +1876,8 @@ async def _probe_webhook_url(url: str) -> dict:
                 if await probe_host_is_cooling(hostname):
                     result["skipped"] = "host_cooldown"
                     return result
-            except Exception:
-                pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
 
         # DNS resolution
         try:
@@ -1632,15 +1891,18 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
         # HTTP fingerprint — GET with no verify, no redirect follow
         try:
             start = time.monotonic()
+            # SEC-004: TLS verify defaults to False for backward compat.
+            # Setting TLS_VERIFY_WEBHOOK_PROBES=True enforces validation on
+            # probes so MITM'd C2 hosts fail loudly.
             async with httpx.AsyncClient(
                 timeout=_WEBHOOK_PROBE_TIMEOUT_SECONDS,
-                verify=False,
+                verify=settings.TLS_VERIFY_WEBHOOK_PROBES,
                 follow_redirects=False,
             ) as client:
                 resp = await client.get(url)
@@ -1672,8 +1934,8 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
         except httpx.TimeoutException:
             result["http_error"] = "timeout"
             if hostname:
@@ -1681,8 +1943,8 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
         except Exception as http_exc:
             result["http_error"] = f"{type(http_exc).__name__}: {str(http_exc)[:150]}"
             if hostname:
@@ -1690,8 +1952,8 @@ async def _probe_webhook_url(url: str) -> dict:
                     from app.core.redis_srv import probe_host_mark_failure
 
                     await probe_host_mark_failure(hostname)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
         # TLS cert introspection (https only) — parse DER via cryptography lib
         if parsed.scheme == "https":
@@ -1843,8 +2105,9 @@ async def _probe_web_recon(base_url: str) -> dict:
         return path, entry
 
     findings: dict[str, dict] = {}
+    # SEC-004: gate verify on the same setting as the primary probe.
     async with httpx.AsyncClient(
-        timeout=5.0, verify=False, follow_redirects=False
+        timeout=5.0, verify=settings.TLS_VERIFY_WEBHOOK_PROBES, follow_redirects=False
     ) as client:
         # Fan out all path probes concurrently on a single client (connection
         # pooled, tight per-request timeout). httpx.AsyncClient is safe for
@@ -1878,8 +2141,8 @@ async def _probe_web_recon(base_url: str) -> dict:
             urls = re.findall(r"<loc>([^<]+)</loc>", sitemap_entry["preview"])
             if urls:
                 sitemap_entry["extracted_urls_sample"] = urls[:15]
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     return findings
 
@@ -2241,8 +2504,8 @@ async def _pin_webhook_url_logic(
             .update({"meta": new_meta})
             .eq("id", credential_id)
         )
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     return {
         "status": "ok",
@@ -2752,6 +3015,11 @@ def weekly_finding_alerts():
 
 
 async def _route_finding_alerts_logic(cadence: str) -> dict:
+    from app.core.config import settings
+    if not settings.FINDING_ALERTS_ENABLED:
+        logger.info("[FindingAlerts] skipping %s routing — FINDING_ALERTS_ENABLED=False", cadence)
+        return {"status": "skipped", "cadence": cadence, "reason": "FINDING_ALERTS_ENABLED=False"}
+
     from app.services.finding_alerts import route_finding_alerts
 
     try:
@@ -2762,6 +3030,11 @@ async def _route_finding_alerts_logic(cadence: str) -> dict:
 
 
 async def _weekly_finding_alerts_logic() -> dict:
+    from app.core.config import settings
+    if not settings.FINDING_ALERTS_ENABLED:
+        logger.info("[FindingAlerts] skipping weekly routing — FINDING_ALERTS_ENABLED=False")
+        return {"status": "skipped", "reason": "FINDING_ALERTS_ENABLED=False"}
+
     from app.services.finding_alerts import route_finding_alerts, weekly_alert_coverage
 
     try:
@@ -2963,7 +3236,9 @@ def hash_exfil_media(max_messages: int = 100):
 async def _hash_exfil_media_logic(max_messages: int) -> dict:
     import hashlib
 
-    # Find media messages that don't have a hash entry yet
+    # Find media messages that don't have a hash entry yet.
+    # LOGIC-002 / DATA-004: pre-filter empty JSONB payloads so rows without a
+    # file_id don't waste a download attempt and end up as failure rows.
     try:
         res = await async_execute(
             db.table("exfiltrated_messages")
@@ -2977,8 +3252,21 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
         return {"status": "db_lookup_failed", "error": str(e)[:200]}
 
     candidate_rows = res.data or []
+    # Python-side filter: JSONB '{}' is not NULL so it slips past the `.is_("file_meta","null")`
+    # filter. Real download requires a file_id (or a Telethon (id, access_hash) pair).
+    def _has_downloadable(fm: dict | None) -> bool:
+        if not isinstance(fm, dict):
+            return False
+        if fm.get("file_id"):
+            return True
+        # Telethon-style bot-independent handle
+        return bool(fm.get("id") and fm.get("access_hash"))
+
+    empty_filtered = [r for r in candidate_rows if _has_downloadable(r.get("file_meta") or {})]
+    empty_dropped = len(candidate_rows) - len(empty_filtered)
+    candidate_rows = empty_filtered
     if not candidate_rows:
-        return {"status": "no_candidates"}
+        return {"status": "no_candidates", "empty_file_meta_dropped": empty_dropped}
 
     # Filter to unhashed ones
     ids = [r["id"] for r in candidate_rows]
@@ -2992,7 +3280,11 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
 
     to_hash = [r for r in candidate_rows if r["id"] not in hashed_ids][:max_messages]
     if not to_hash:
-        return {"status": "all_hashed", "candidates_seen": len(candidate_rows)}
+        return {
+            "status": "all_hashed",
+            "candidates_seen": len(candidate_rows),
+            "empty_file_meta_dropped": empty_dropped,
+        }
 
     # Reuse broadcaster's media download logic (uses source bot's token)
     broadcaster = get_broadcaster()
@@ -3017,21 +3309,41 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
             error = None
 
         if not data:
-            # Log failure so we don't retry it forever
+            # INTR-005: structured failure marker replaces the legacy
+            # sha256='__failed__<id>' sentinel. Backward-compat: keep writing
+            # the sentinel string too so pre-migration deployments still
+            # satisfy the sha256-column NOT NULL constraint.
             try:
                 await async_execute(
                     db.table("media_hashes").insert(
                         {
                             "message_id": msg_id,
                             "credential_id": cred_id,
-                            "sha256": f"__failed__{msg_id[:8]}",  # sentinel unique per row
+                            "sha256": f"__failed__{msg_id[:8]}",
                             "media_type": media_type,
+                            "is_failure": True,
+                            "failure_reason": error or "download_returned_none",
                             "error": error or "download_returned_none",
                         }
                     )
                 )
-            except Exception:
-                pass
+            except Exception as insert_exc:
+                exc_str = str(insert_exc)
+                if "is_failure" in exc_str or "failure_reason" in exc_str:
+                    # Migration 20260906000004 not applied yet — fall back
+                    # to the legacy sentinel-only insert.
+                    with contextlib.suppress(Exception):
+                        await async_execute(
+                            db.table("media_hashes").insert(
+                                {
+                                    "message_id": msg_id,
+                                    "credential_id": cred_id,
+                                    "sha256": f"__failed__{msg_id[:8]}",
+                                    "media_type": media_type,
+                                    "error": error or "download_returned_none",
+                                }
+                            )
+                        )
             failed_count += 1
             continue
 
@@ -3205,8 +3517,8 @@ async def _unpin_all_webhook_messages_logic(max_credentials: int) -> dict:
                 .update({"meta": new_meta})
                 .eq("id", row["id"])
             )
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     msg = f"📌 Unpinned {unpinned} webhook messages ({failed} unpin failures)"
     logger.info(msg)
@@ -3737,8 +4049,8 @@ async def _audit_user_agent_group_membership_logic() -> dict:
                                 .eq("id", acct["id"])
                             )
                             marked_inactive.append(acct["phone"])
-                        except Exception:
-                            pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                         continue
 
                     in_group += 1
@@ -3943,8 +4255,8 @@ async def _attribution_graph_report_logic() -> dict:
                     "bot": c.get("bot_username") or "?",
                     "c2": meta.get("webhook_url") or "none",
                 }
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     lines = [
         "🕸️ **Attribution Graph Report**",
@@ -3964,8 +4276,8 @@ async def _attribution_graph_report_logic() -> dict:
                 try:
                     from urllib.parse import urlparse
                     c2_hosts.add(urlparse(url).hostname or "?")
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
         c2_str = f" → C2: {', '.join(list(c2_hosts)[:3])}" if c2_hosts else ""
         lines.append(
             f"• `subject:{subject_pseudonym}` × {len(creds)} bots "
@@ -4004,7 +4316,7 @@ def honeypot_redirect_sweep():
 
 async def _honeypot_redirect_sweep_logic() -> dict:
     if not settings.HONEYPOT_REDIRECT_MODE:
-        return {"status": "disabled"}
+        return {"status": "disabled", "reason": "mode_disabled"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
 
@@ -4027,6 +4339,15 @@ async def _honeypot_redirect_sweep_logic() -> dict:
 
     dispatched = 0
     skipped = 0
+
+    # INTR-002 / CONC-002: claim-before-dispatch. Marker string 'pending' so a
+    # concurrent sweep never re-dispatches the same row before honeypot_redirect_one
+    # writes the final timestamp. On dispatch success the sub-task flips it to a
+    # real ISO timestamp; on send failure it clears it back to NULL.
+    #
+    # Value is inlined below because Supabase update() takes the literal.
+
+
 
     for row in rows:
         payload = row.get("payload") or {}
@@ -4085,8 +4406,27 @@ async def _honeypot_redirect_sweep_logic() -> dict:
                     )
                 skipped += 1
                 continue
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
+
+        # INTR-002 / CONC-002: atomic claim — set redirected_at='pending' only
+        # if it is still NULL. If another sweep already claimed the row, this
+        # returns zero rows and we move on. Prevents duplicate DM to victim.
+        try:
+            claim_res = await async_execute(
+                db.table("honeypot_updates")
+                .update({"redirected_at": "pending"})
+                .eq("id", row["id"])
+                .is_("redirected_at", "null")
+            )
+            if not claim_res.data:
+                logger.debug(f"[HoneypotSweep] claim contended for row {row['id']}")
+                skipped += 1
+                continue
+        except Exception as claim_exc:
+            logger.warning(f"[HoneypotSweep] claim failed for row {row['id']}: {claim_exc}")
+            skipped += 1
+            continue
 
         # Dispatch redirect with update_type for specialized handling
         app.send_task(
@@ -4133,6 +4473,34 @@ async def _honeypot_redirect_one_logic(
 
     from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
 
+    # Recheck both safety gates for queued jobs. Report the ACTUAL gate that
+    # failed — the previous shared "not_authorized" reason for both was
+    # misleading when triaging (LOGIC-005). If the gates are off we also release
+    # the sweep-side "pending" claim so the row can be tried again once the
+    # operator flips the gate back on.
+    async def _release_pending_claim(reason_tag: str) -> None:
+        try:
+            await async_execute(
+                db.table("honeypot_updates")
+                .update({"redirected_at": None})
+                .eq("id", update_id)
+                .eq("redirected_at", "pending")
+            )
+            logger.debug(
+                f"[HoneypotRedirect] released pending claim on {update_id} ({reason_tag})"
+            )
+        except Exception as _release_exc:
+            logger.debug(
+                f"[HoneypotRedirect] could not release pending claim: {_release_exc}"
+            )
+
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        await _release_pending_claim("mode_disabled")
+        return {"status": "skipped", "reason": "mode_disabled"}
+    if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
+        await _release_pending_claim("not_authorized")
+        return {"status": "skipped", "reason": "not_authorized"}
+
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
@@ -4163,6 +4531,10 @@ async def _honeypot_redirect_one_logic(
                 update_id, user_id, redirect_bot
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        else:
+            # INTR-002: release the sweep-side "pending" claim so the next
+            # sweep can retry this row instead of leaving it stuck.
+            await _release_pending_claim("callback_send_failed")
 
         logger.info(
             f"🔀 [Callback] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
@@ -4197,6 +4569,9 @@ async def _honeypot_redirect_one_logic(
                 update_id, user_id, redirect_bot
             )
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+        else:
+            # INTR-002: release the sweep-side "pending" claim on failure.
+            await _release_pending_claim("inline_send_failed")
 
         logger.info(
             f"🔀 [Inline] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
@@ -4263,7 +4638,10 @@ async def _honeypot_redirect_one_logic(
                 "redirect_attempt": 1,
             }
         else:
+            # INTR-002: on failure, ALSO clear the sweep-side "pending" claim
+            # by writing redirected_at=None so the next sweep can retry.
             update_payload = {
+                "redirected_at": None,
                 "redirect_error": str(resp.get("description") or resp.get("error", "unknown"))[:200],
                 "sender_user_id": user_id,
             }
@@ -4272,16 +4650,16 @@ async def _honeypot_redirect_one_logic(
             .update(update_payload)
             .eq("id", update_id)
         )
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     # BUG-5 FIX: Only set dedup key on successful delivery
     if sent_ok:
         try:
             from app.core.redis_srv import redis_srv
             redis_srv.client.set(f"redirect:sent:{credential_id}:{user_id}", "1")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     if sent_ok:
         logger.info(

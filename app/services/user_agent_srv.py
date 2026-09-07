@@ -77,8 +77,8 @@ def _telethon_media_info(message) -> tuple[str, dict]:
         file_id = telethon_utils.pack_bot_file_id(message.media)
         if file_id:
             file_meta["file_id"] = file_id
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     if isinstance(message.media, types.MessageMediaPhoto):
         photo = getattr(message.media, "photo", None)
@@ -952,7 +952,8 @@ class UserAgentService:
                             await self.promote_to_admin(group_id, me.username, anonymous=False)
                     elif not member.get("is_admin"):
                         await self.promote_to_admin(group_id, bot_id, anonymous=False)
-                except Exception: pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
             if not self.sessions: self._discover_sessions()
             for session_path in self.sessions:
                 if not await self._connect_to_session(session_path): continue
@@ -965,7 +966,8 @@ class UserAgentService:
                             await self.promote_to_admin(group_id, me.id, anonymous=True)
                     else:
                         logger.warning(f"    ⚠️ User @{me.username} is NOT in Hub. Please add manually.")
-                except Exception: pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
         except Exception as e: logger.error(f"    ❌ [UserAgent] Membership sync fatal error: {e}")
 
     async def send_message(self, target: int | str, message: str, thread_id: int | None = None) -> bool:
@@ -1103,7 +1105,7 @@ class UserAgentService:
                     timeout=settings.ARCHIVE_UPLOAD_TIMEOUT_SECONDS,
                 )
                 return ArchiveMediaResult(ok=True)
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 last_error = e
                 code = "timeout"
             except Exception as e:
@@ -1158,7 +1160,7 @@ class UserAgentService:
                         self.client.download_media(message, file=temp_path),
                         timeout=settings.ARCHIVE_DOWNLOAD_TIMEOUT_SECONDS,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     return ArchiveMediaResult(
                         ok=False,
                         code="timeout",
@@ -1211,7 +1213,8 @@ class UserAgentService:
                     try:
                         await self.client(EditBannedRequest(channel=entity, participant=user, banned_rights=ChatBannedRights(until_date=None, view_messages=False)))
                         cleared_count += 1
-                    except Exception: pass
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
                 return cleared_count
             except Exception: return 0
             finally: await self._disconnect()
@@ -1234,7 +1237,8 @@ class UserAgentService:
                         try:
                             await self.client.delete_messages(entity, [message.id])
                             deleted_count += 1
-                        except Exception: pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                 return deleted_count
             except Exception: return 0
             finally: await self._disconnect()

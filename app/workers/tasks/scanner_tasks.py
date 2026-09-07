@@ -1183,7 +1183,8 @@ async def _scan_dockerhub_async():
             seen_key = f"dockerhub:seen:{img_name}"
             try:
                 if redis_client.exists(seen_key): continue
-            except Exception: pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
 
             try:
                 # 2a. Get anonymous bearer token for the specific repo

@@ -29,6 +29,8 @@ async def _redirect_touch2_logic() -> dict:
     Find users who received redirect_1 but not redirect_2.
     Send second message (urgent tone).
     """
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        return {"status": "skipped", "reason": "not_authorized"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
@@ -104,6 +106,8 @@ def honeypot_redirect_touch3():
 
 async def _redirect_touch3_logic() -> dict:
     """Send third and final message (last notice tone)."""
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        return {"status": "skipped", "reason": "not_authorized"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
@@ -175,6 +179,8 @@ async def _proactive_outreach_logic() -> dict:
     Find ALL unique users across all captured bots who haven't been redirected yet.
     Send proactive message asking them to use inline mode.
     """
+    if not settings.HONEYPOT_REDIRECT_MODE:
+        return {"status": "skipped", "reason": "not_authorized"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
@@ -208,8 +214,8 @@ async def _proactive_outreach_logic() -> dict:
                 from app.core.redis_srv import redis_srv
                 if redis_srv.client.exists(key):
                     continue
-            except Exception:
-                pass
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
 
             bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
             if not bot_token:
@@ -232,8 +238,8 @@ async def _proactive_outreach_logic() -> dict:
                 try:
                     from app.core.redis_srv import redis_srv
                     redis_srv.client.setex(key, 86400, "1")
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
                 sent += 1
                 logger.info(f"🔗 [Proactive] sent cred:{credential_id[:8]}...")

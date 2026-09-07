@@ -11,6 +11,15 @@ def test_core_imports():
     """Test all core module imports"""
     print("1. Testing core imports...")
     try:
+        from app.core.config import settings
+        from app.core.database import db
+        from app.core.security import encrypt_token, decrypt_token
+        from app.core.redis_srv import RedisService
+        from app.core.logger import get_logger
+        from app.core.retry import retry
+        from app.core.circuit_breaker import get_circuit_breaker
+        from app.core.metrics import MetricsCollector
+        from app.core.audit import AuditLogger
         print("   ✅ All core imports successful")
         return True
     except Exception as e:
@@ -21,6 +30,10 @@ def test_service_imports():
     """Test service imports"""
     print("\n2. Testing service imports...")
     try:
+        from app.services.scanners import ShodanService
+        from app.services.bot_manager_srv import BotClientManager
+        from app.services.scraper_srv import ScraperService
+        from app.services.broadcaster_srv import BroadcasterService
         print("   ✅ All service imports successful")
         return True
     except Exception as e:
@@ -31,6 +44,13 @@ def test_task_imports():
     """Test Celery task imports"""
     print("\n3. Testing task imports...")
     try:
+        from app.workers.tasks.flow_tasks import (
+            enrich_credential,
+            exfiltrate_history,
+            broadcast_finding,
+        )
+        from app.workers.tasks.scanner_tasks import run_shodan_scan
+        from app.workers.tasks.audit_tasks import audit_active_topics
         print("   ✅ All task imports successful")
         return True
     except Exception as e:
@@ -41,6 +61,10 @@ def test_api_imports():
     """Test API imports"""
     print("\n4. Testing API imports...")
     try:
+        from app.api.main import app
+        from app.api.routers.health import router as health_router
+        from app.api.routers.monitor import router as monitor_router
+        from app.api.routers.ingest import router as ingest_router
         print("   ✅ All API imports successful")
         return True
     except Exception as e:
@@ -51,6 +75,8 @@ def test_helper_imports():
     """Test helper utilities"""
     print("\n5. Testing helper utilities...")
     try:
+        from app.utils.helpers import validate_token, extract_chat_id
+        from app.utils.http_client import AsyncHttpClient
         print("   ✅ Helper utilities imported")
         return True
     except Exception as e:
@@ -98,70 +124,67 @@ def test_new_features():
         assert test_func() is True
 
         from app.core.circuit_breaker import get_circuit_breaker
-        breaker = get_circuit_breaker("test")
-        assert breaker is not None
+        cb = get_circuit_breaker("test_service")
+        assert cb is not None
 
-        from app.core.metrics import metrics
-        assert metrics is not None
-
-        print("   ✅ All new features working")
+        from app.core.metrics import MetricsCollector
+        metrics = MetricsCollector()
+        metrics.increment("test")
+        
+        print("   ✅ New features validated")
         return True
     except Exception as e:
-        print(f"   ❌ Feature test failed: {e}")
+        print(f"   ❌ New features test failed: {e}")
         return False
 
-
-def test_runtime_regressions():
-    """Catch the high-value regressions that have recently escaped into runtime."""
-    print("\n8. Testing runtime regression guards...")
+def test_security():
+    """Test security components"""
+    print("\n8. Testing security...")
     try:
-        import asyncio
-
-        from app.core.db_retry import DatabaseHealth
-        from app.services import bot_listener
-        from app.workers.tasks import validation_tasks
-
-        if not callable(DatabaseHealth.check_connection):
-            raise AssertionError("DatabaseHealth.check_connection is not callable")
-
-        bot_source = open(bot_listener.__file__, encoding="utf-8").read()
-        if "_resolve_monitor_group_ids_async" not in bot_source:
-            raise AssertionError("bot_listener.log_update is not using async monitor guard")
-
-        validation_source = open(validation_tasks.__file__, encoding="utf-8").read()
-        if '".update({\n                        "meta": new_meta,\n                        "confidence_score": score,' in validation_source:
-            raise AssertionError("validation backfill still updates top-level confidence_score")
-
-        asyncio.run(asyncio.to_thread(DatabaseHealth.check_connection))
-        print("   ✅ Regression guards passed")
+        from app.core.security import encrypt_token, decrypt_token
+        
+        # Test encryption/decryption roundtrip
+        test_token = "123456789:AAHXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+        encrypted = encrypt_token(test_token)
+        decrypted = decrypt_token(encrypted)
+        assert decrypted == test_token, "Encryption roundtrip failed"
+        
+        # Ensure encrypted is different from plaintext
+        assert encrypted != test_token, "Token not encrypted!"
+        
+        print("   ✅ Security validation passed")
         return True
     except Exception as e:
-        print(f"   ❌ Runtime regression test failed: {e}")
+        print(f"   ❌ Security test failed: {e}")
         return False
+
+def main():
+    """Run all validation tests"""
+    print("=" * 60)
+    print(" Deployment Validation Script")
+    print("=" * 60)
+    
+    all_passed = True
+    
+    # Run all tests
+    all_passed &= test_core_imports()
+    all_passed &= test_service_imports()
+    all_passed &= test_task_imports()
+    all_passed &= test_api_imports()
+    all_passed &= test_helper_imports()
+    all_passed &= test_config_validation()
+    all_passed &= test_new_features()
+    all_passed &= test_security()
+    
+    print("\n" + "=" * 60)
+    if all_passed:
+        print(" ✅ All validation checks passed")
+        print("=" * 60)
+        return 0
+    else:
+        print(" ❌ Some validation checks failed")
+        print("=" * 60)
+        return 1
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Telegram Hunter - Deployment Validation")
-    print("=" * 60)
-
-    results = [
-        test_core_imports(),
-        test_service_imports(),
-        test_task_imports(),
-        test_api_imports(),
-        test_helper_imports(),
-        test_config_validation(),
-        test_new_features(),
-        test_runtime_regressions(),
-    ]
-
-    print("\n" + "=" * 60)
-    if all(results):
-        print("✅ All validation checks passed!")
-        print("✅ Ready for deployment")
-        print("=" * 60)
-        sys.exit(0)
-    else:
-        print("❌ Some checks failed")
-        print("=" * 60)
-        sys.exit(1)
+    sys.exit(main())

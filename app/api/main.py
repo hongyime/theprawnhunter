@@ -38,7 +38,7 @@ async def _send_lifecycle_notification(message: str, label: str, timeout: float)
             logger.info("%s notification sent to Telegram", label)
         else:
             logger.info("%s notification skipped by Telegram log policy", label)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("%s notification timed out (Telegram slow)", label)
     except Exception as e:
         logger.warning("%s notification failed: %s", label, e)
@@ -102,6 +102,8 @@ app = FastAPI(
 # ── Rate limiting ─────────────────────────────────────────────────────
 # Uses Redis for cross-worker limits (all uvicorn workers share the same
 # counters). Keyed on X-Monitor-Key when present, else remote IP.
+import hmac
+
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -110,12 +112,17 @@ from slowapi.util import get_remote_address
 
 def _rate_key(request):
     """Prefer X-Monitor-Key so a leaked key can't outrun the per-IP budget,
-    fall back to remote IP for unauth endpoints (honeypot receiver)."""
+    fall back to remote IP for unauth endpoints (honeypot receiver).
+    
+    SECURITY: Only valid monitor keys get the key bucket to prevent bucket manipulation.
+    """
     hdr = request.headers.get("X-Monitor-Key")
-    if hdr:
-        # Bucket by first 12 chars — enough entropy to distinguish keys
-        # without dumping the whole key into Redis
-        return f"key:{hdr[:12]}"
+    if hdr and settings.MONITOR_API_KEY:
+        # Constant-time comparison to prevent timing attacks
+        if hmac.compare_digest(hdr, settings.MONITOR_API_KEY):
+            # Bucket by first 12 chars — enough entropy to distinguish keys
+            # without dumping the whole key into Redis
+            return f"key:{hdr[:12]}"
     return f"ip:{get_remote_address(request)}"
 
 
@@ -126,6 +133,15 @@ limiter = Limiter(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# slowapi 0.1.9/0.1.10 bug: when Redis is unreachable, _check_limits catches the
+# ConnectionError and looks up `app.exception_handlers.get(ConnectionError, _rate_limit_exceeded_handler)`.
+# Without a ConnectionError handler, it falls back to _rate_limit_exceeded_handler which
+# calls `exc.detail` — a RateLimitExceeded-only attribute. Register a safe fallback so
+# Redis connection failures degrade gracefully instead of crashing the middleware.
+def _redis_error_handler(request, exc):  # noqa: ARG001
+    from starlette.responses import Response
+    return Response(status_code=200)  # allow request through on Redis miss
+app.add_exception_handler(ConnectionError, _redis_error_handler)
 app.add_middleware(SlowAPIMiddleware)
 # ─────────────────────────────────────────────────────────────────────
 

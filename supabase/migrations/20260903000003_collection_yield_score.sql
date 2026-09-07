@@ -298,11 +298,11 @@ BEGIN
         v_severity,
         v_priority,
         format(
-            'type=%s entity=%s evidence=%s confidence=%.2f => severity=%s priority=%s',
+            'type=%s entity=%s evidence=%s confidence=%s => severity=%s priority=%s',
             p_finding_type,
             COALESCE(p_entity_type, 'unknown'),
             v_ev,
-            v_conf,
+            ROUND(v_conf::NUMERIC, 2),
             v_severity,
             v_priority
         )::TEXT;

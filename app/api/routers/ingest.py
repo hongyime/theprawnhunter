@@ -79,6 +79,15 @@ async def ingest_extension_credentials(payload: ExtensionIngestRequest):
             continue
         seen_hashes.add(token_hash)
 
+        # LOGIC-006: reject own-bot tokens BEFORE we do the expensive Fernet
+        # encrypt work below. The extension route bypasses the scanner ->
+        # validate_token pipeline where _is_own_bot_token normally fires.
+        from app.workers.tasks.scanner_tasks import _is_own_bot_token
+        if _is_own_bot_token(token):
+            logger.warning(f"Ingest: rejected own-bot token {token[:10]}...")
+            skipped += 1
+            continue
+
         try:
             existing = await _exec(
                 db.table("discovered_credentials")
@@ -153,15 +162,7 @@ async def ingest_extension_credentials(payload: ExtensionIngestRequest):
             "meta": base_meta,
         }
 
-        # Guard: never persist our own monitor/protected bot tokens.
-        # The ingest endpoint bypasses the scanner->validate_token path so
-        # the own-bot check that lives in _is_own_bot_token() would be skipped
-        # without this explicit gate.
-        from app.workers.tasks.scanner_tasks import _is_own_bot_token
-        if _is_own_bot_token(token):
-            logger.warning(f"Ingest: rejected own-bot token {token[:10]}...")
-            skipped += 1
-            continue
+        # Own-bot rejection already handled above (LOGIC-006).
 
         try:
             res = await _exec(db.table("discovered_credentials").insert(new_data))
@@ -314,8 +315,8 @@ async def ingest_tokens(request: Request):
                     try:
                         from app.workers.tasks.flow_tasks import enrich_credential
                         enrich_credential.delay(new_id)
-                    except Exception:
-                        pass
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
         except Exception as e:
             logger.warning(f"Insert failed for token_hash {token_hash[:12]}...: {e}")
             skipped += 1

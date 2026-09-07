@@ -1,6 +1,10 @@
+import logging
+
 import redis
 
 from app.core.config import settings
+
+logger = logging.getLogger("redis_srv")
 
 
 class RedisService:
@@ -164,5 +168,5 @@ async def probe_host_mark_failure(hostname: str) -> None:
                 "active",
                 ex=_PROBE_COOLDOWN_SECONDS,
             )
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")

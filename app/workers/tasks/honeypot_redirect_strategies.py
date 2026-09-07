@@ -222,8 +222,8 @@ class HoneypotRedirectStrategies:
                 redis_srv.client.setex(key, ttl, "1")
             else:
                 redis_srv.client.set(key, "1")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     @staticmethod
     def check_multi_touch_sent(credential_id: str, user_id: int, message_num: int) -> bool:
@@ -241,8 +241,8 @@ class HoneypotRedirectStrategies:
             key = f"redirect:touch{message_num}:{credential_id}:{user_id}"
             # TTL: 24 hours between each message
             redis_srv.client.setex(key, 86400, "1")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     @staticmethod
     async def get_bot_token(credential_id: str) -> str | None:

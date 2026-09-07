@@ -19,7 +19,7 @@ class TelemetryEntityParser:
     )
     USERNAME_PATTERN = re.compile(r"@([a-zA-Z0-9_]{5,32})")
     PHONE_PATTERN = re.compile(
-        r"\b\+?[1-9]\d{1,2}[\s-]?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}\b"
+        r"\+?[1-9]\d{0,2}\s\d{4}\s\d{4}|\+?[1-9]\d{0,2}[\s-]?\(\d{2,4}\)[\s-]?\d{3,4}[\s-]?\d{3,4}|\+?[1-9]\d{1,2}[\s-]?\d{3,4}[\s-]?\d{4}"
     )
     IP_PATTERN = re.compile(
         r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
@@ -74,11 +74,17 @@ class TelemetryEntityParser:
         for wallet in cls.CRYPTO_PATTERN.findall(content):
             indicators.append({"type": "wallet_address", "value": wallet.strip()})
 
+        # Extract usernames but skip if part of an email address
+        for match in cls.USERNAME_PATTERN.finditer(content):
+            username = match.group(1)
+            # Check if this @ is part of an email (preceded by word char)
+            start = match.start()
+            if start > 0 and re.match(r'[A-Za-z0-9._%+-]', content[start-1]):
+                continue  # Skip - this is part of an email
+            indicators.append({"type": "telegram_username", "value": f"@{username}"})
+
         for email in cls.EMAIL_PATTERN.findall(content):
             indicators.append({"type": "email_address", "value": email.strip().lower()})
-
-        for username in cls.USERNAME_PATTERN.findall(content):
-            indicators.append({"type": "telegram_username", "value": f"@{username}"})
 
         for phone in cls.PHONE_PATTERN.findall(content):
             indicators.append({"type": "phone_number", "value": phone.strip()})

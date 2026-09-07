@@ -196,8 +196,8 @@ class MetricsCollector:
                         val = r.get(key)
                         if val:
                             redis_totals.setdefault(name, {})[field_name] = int(val)
-        except Exception:
-            pass  # Redis unavailable — show in-memory only
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")  # Redis unavailable — show in-memory only
 
         result = {}
         all_names = set(self._metrics.keys()) | set(redis_totals.keys())

@@ -148,8 +148,8 @@ async def _poll_github_events_async():
                             if redis_client.exists(seen_key):
                                 continue
                             redis_client.setex(seen_key, 7 * 86400, "1")
-                        except Exception:
-                            pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
 
                         try:
                             cr = await client.get(commit_url)

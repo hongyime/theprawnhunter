@@ -15,8 +15,11 @@ async def test_health_endpoint_sustains_bounded_concurrency():
         pytest.skip("set RUN_HTTP_LOAD_TEST=1 to enable the bounded HTTP load test")
 
     base_url = os.getenv("LOAD_TEST_BASE_URL", "http://127.0.0.1:8011").rstrip("/")
-    request_count = int(os.getenv("LOAD_TEST_REQUESTS", "200"))
-    concurrency = int(os.getenv("LOAD_TEST_CONCURRENCY", "20"))
+    # Stay below the API's intentional 120/minute global limit so this probe
+    # measures transport/latency rather than asserting that rate limiting is
+    # disabled. Higher custom counts may legitimately receive HTTP 429.
+    request_count = int(os.getenv("LOAD_TEST_REQUESTS", "100"))
+    concurrency = int(os.getenv("LOAD_TEST_CONCURRENCY", "5"))
     max_p95_ms = float(os.getenv("LOAD_TEST_MAX_P95_MS", "1000"))
 
     assert 1 <= request_count <= 10_000

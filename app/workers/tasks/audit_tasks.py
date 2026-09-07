@@ -68,8 +68,8 @@ async def _audit_active_topics_async():
                 # End of table — reset cursor for next full sweep
                 _r.delete(CURSOR_KEY)
                 logger.info("    [Audit] Full sweep complete, cursor reset.")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
         logger.info(f"    [Audit] Checking {len(creds)} credentials (batch cap: {AUDIT_BATCH_SIZE}, cursor: {cursor_val or 'start'})...")
     except Exception as e:
@@ -291,8 +291,8 @@ async def _system_self_heal_async():
             else:
                 _rh.delete(HEAL_CURSOR_KEY)
                 logger.info("    [Self-Heal] Full sweep complete, cursor reset.")
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
     except Exception as e:
         logger.error(f"    ❌ [Self-Heal] DB Error: {e}")
         return f"DB Error: {e}"

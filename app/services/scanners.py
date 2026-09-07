@@ -19,36 +19,14 @@ import httpx
 import urllib3
 
 from app.core.config import settings
-from app.utils.http_client import get_async_http_client
+from app.utils.http_client import (  # noqa: F401 — retry_with_backoff moved here in DEAD-007, re-exported for existing importers
+    get_async_http_client,
+    retry_with_backoff,
+)
 
 logger = logging.getLogger("scanners")
 
-# NEW: Resilience Helper
-async def retry_with_backoff(func, max_retries=3, initial_delay=2, backoff_factor=2):
-    """Exponential backoff decorator for async functions."""
-    retries = 0
-    delay = initial_delay
-    while retries <= max_retries:
-        try:
-            return await func()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429: # Rate limit
-                retry_after = e.response.headers.get("Retry-After")
-                wait_time = int(retry_after) if retry_after and retry_after.isdigit() else delay
-                logger.warning(f"⚠️ Rate limited. Waiting {wait_time}s...")
-                await asyncio.sleep(wait_time)
-            elif e.response.status_code in [500, 502, 503, 504]: # Server errors
-                logger.warning(f"⚠️ Server error {e.response.status_code}. Retrying in {delay}s...")
-                await asyncio.sleep(delay)
-            else:
-                raise # 400, 401, 403, 404 should probably fail immediately
-        except (httpx.RequestError, asyncio.TimeoutError) as e:
-            logger.warning(f"⚠️ Network error: {e}. Retrying in {delay}s...")
-            await asyncio.sleep(delay)
-
-        retries += 1
-        delay *= backoff_factor
-    return None # exhausted retries
+# retry_with_backoff was previously defined here; canonical home is app/utils/http_client.py.
 
 # Suppress SSL warnings for active scanning of random IPs (self-signed certs etc)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -259,17 +237,15 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
             pass
         except httpx.HTTPStatusError:
             pass
-        except Exception:
-            pass
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
         # Deduplicate
         final_map = {}
         for item in found_results:
             t = item['token']
             c = item['chat_id']
-            if t not in final_map:
-                final_map[t] = c
-            elif not final_map[t] and c:
+            if t not in final_map or not final_map[t] and c:
                 final_map[t] = c
 
         return [{'token': t, 'chat_id': c} for t, c in final_map.items()]
@@ -299,7 +275,7 @@ class ShodanService:
             params = {'key': self.api_key, 'query': full_query}
 
             async def do_search():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, params=params)
                     res.raise_for_status()
                     return res.json().get('matches', [])
@@ -318,7 +294,8 @@ class ShodanService:
                     if ts:
                         match_time = datetime.fromisoformat(ts.replace('Z', '+00:00').split('+')[0])
                         if match_time >= three_hours_ago: recent_matches.append(m)
-                except Exception: pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
             matches = recent_matches if len(recent_matches) > len(matches[:300]) else matches[:300]
 
@@ -350,7 +327,8 @@ class ShodanService:
                                 target_url = f"{proto}://{ip}:{port}"
                                 active_found = await _perform_active_deep_scan(target_url, client=scan_client)
                                 local_found.extend(active_found)
-                            except Exception: pass
+                            except Exception as _swallowed:
+                                logger.debug(f"[suppressed] {_swallowed}")
 
                         return (ip, port, local_found)
 
@@ -415,7 +393,7 @@ class FofaService:
             logger.info(f"    [FOFA] Searching: {full_query}")
 
             async def do_fofa():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, params=params)
                     if res.status_code != 200:
                         res.raise_for_status() # Trigger retry on non-200
@@ -500,7 +478,7 @@ class UrlScanService:
             logger.info(f"    [URLScan] Searching: {api_query[:50]}...")
 
             async def do_urlscan():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.search_url, headers=headers, params=params)
                     if res.status_code in [401, 403]: raise Exception("Invalid URLScan Key")
                     res.raise_for_status()
@@ -524,7 +502,8 @@ class UrlScanService:
                         scan_time = datetime.fromisoformat(ts.replace('Z', '+00:00').split('+')[0])
                         if scan_time >= three_hours_ago:
                             valid_items.append(r)
-                except Exception: pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
             # Sort and Cap
             valid_items = sorted(valid_items, key=lambda x: x.get('task', {}).get('time', ''), reverse=True)
@@ -556,7 +535,8 @@ class UrlScanService:
                                      cid = cids[0] if cids else None
                                      for t in tokens:
                                          item_found_tokens.append({'token': t, 'chat_id': cid})
-                            except Exception: pass
+                            except Exception as _swallowed:
+                                logger.debug(f"[suppressed] {_swallowed}")
 
                         # 2. Live Deep Scan
                         if page_url:
@@ -571,7 +551,8 @@ class UrlScanService:
                                 # Deep Scan
                                 live_items = await _perform_active_deep_scan(page_url, client=scan_client)
                                 item_found_tokens.extend(live_items)
-                            except Exception: pass
+                            except Exception as _swallowed:
+                                logger.debug(f"[suppressed] {_swallowed}")
 
                         return (item, item_found_tokens)
 
@@ -590,9 +571,7 @@ class UrlScanService:
                 for f_item in found:
                     t = f_item['token']
                     c = f_item['chat_id']
-                    if t not in final_map:
-                        final_map[t] = c
-                    elif not final_map[t] and c:
+                    if t not in final_map or not final_map[t] and c:
                         final_map[t] = c
 
                 for t, cid in final_map.items():
@@ -668,7 +647,7 @@ class GithubService:
             params = {'q': query, 'per_page': 100, 'sort': 'indexed', 'order': 'desc'}
 
             async def do_github():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, headers=headers, params=params)
                     if res.status_code in [403, 429]:
                         # Check Rate Limit sleep
@@ -779,7 +758,7 @@ class GitlabService:
             params = {"scope": "blobs", "search": query}
 
             async def do_gitlab_search():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.base_url, headers=headers, params=params)
                     res.raise_for_status()
                     return res.json()
@@ -891,7 +870,7 @@ class ExaService:
             }
 
             async def do_exa():
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.post(self.base_url, headers=headers, json=payload)
                     if res.status_code in [401, 403]:
                         raise httpx.HTTPStatusError(
@@ -1011,8 +990,8 @@ class WaybackService:
                 try:
                     if redis_client.exists(redis_key):
                         continue
-                except Exception:
-                    pass  # Redis down — process anyway, we'll skip the marker
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")  # Redis down — process anyway, we'll skip the marker
 
                 # Step 2: Extract token from URL itself
                 url_tokens = TOKEN_PATTERN.findall(original)
@@ -1158,8 +1137,8 @@ class CommonCrawlService:
                 try:
                     if _redis.client.exists(redis_key):
                         continue
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
                 # Extract tokens directly from URL
                 url_tokens = TOKEN_PATTERN.findall(url)
@@ -1269,8 +1248,8 @@ class SourcegraphService:
                         try:
                             if _redis.client.exists(redis_key):
                                 continue
-                        except Exception:
-                            pass
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
 
                         # Aggregate matched line text
                         line_matches = m.get("lineMatches") or []

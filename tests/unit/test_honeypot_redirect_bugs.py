@@ -85,23 +85,41 @@ def test_redirect_one_defines_text_before_send():
 
 def test_redirect_one_writes_redirect_1_sent_at_on_success():
     """On a successful first redirect, the code must persist redirect_1_sent_at
-    so the touch-2 sweep can find eligible candidates."""
+    so the touch-2 sweep can find eligible candidates.
+
+    We look for a `"redirected_at"` key that appears within 500 chars of
+    `"redirect_1_sent_at"` — the success-branch payload. INTR-002 adds an
+    earlier `"redirected_at"` reference inside `_release_pending_claim` that
+    is unrelated to the success payload, so a naive first-occurrence search
+    would false-fail; iterate to find the pairing that matters.
+    """
     source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flow_tasks.py"
     text_src = source.read_text(encoding="utf-8")
 
     fn_start = text_src.find("async def _honeypot_redirect_one_logic")
     assert fn_start != -1
 
-    # Find the success branch update_payload block
-    success_block_start = text_src.find('"redirected_at"', fn_start)
-    assert success_block_start != -1, (
-        '"redirected_at" key not found in _honeypot_redirect_one_logic'
-    )
+    # Scan every "redirected_at" occurrence in the function and require that
+    # AT LEAST ONE of them is co-located (within 500 chars either direction)
+    # with the redirect_1_sent_at write. That is the success-branch payload.
+    fn_end = text_src.find("\n@app.task", fn_start)
+    if fn_end == -1:
+        fn_end = fn_start + 20_000
+    fn_body = text_src[fn_start:fn_end]
 
-    # redirect_1_sent_at must appear in the same update_payload block
-    # (within 500 chars of redirected_at to ensure same dict)
-    nearby = text_src[success_block_start : success_block_start + 500]
-    assert "redirect_1_sent_at" in nearby, (
+    found_success_pair = False
+    idx = 0
+    while True:
+        pos = fn_body.find('"redirected_at"', idx)
+        if pos == -1:
+            break
+        nearby = fn_body[max(0, pos - 500) : pos + 500]
+        if "redirect_1_sent_at" in nearby:
+            found_success_pair = True
+            break
+        idx = pos + 1
+
+    assert found_success_pair, (
         "redirect_1_sent_at must be written in the same update_payload as "
         "redirected_at on successful first send"
     )
@@ -180,6 +198,10 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
 
     import app.workers.tasks.flow_tasks as ft
 
+    # NEW-002 fix: enable both redirect gates so the recheck path doesn't short-circuit.
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
     fake_redis_srv = types.SimpleNamespace(client=FakeRedis())
 
     with (
@@ -199,11 +221,15 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
 
     assert result["status"] == "failed"
 
-    # redirected_at must NOT appear in any DB update payload
+    # BUG-5 / INTR-002: redirected_at must NOT be written to a real timestamp
+    # on failure. It MAY be set to None (release-pending-claim, INTR-002).
+    # Both semantically mean "not marked redirected".
     for upd in db_updates:
         payload = upd.get("payload", {})
-        assert "redirected_at" not in payload, (
-            f"redirected_at must not be written on failure; got payload={payload}"
+        ra = payload.get("redirected_at", "__missing__")
+        assert ra in ("__missing__", None), (
+            f"redirected_at must not be written to a real timestamp on failure; "
+            f"got payload={payload}"
         )
 
     # Redis dedup key must NOT be set
@@ -280,6 +306,10 @@ async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
 
     import app.workers.tasks.flow_tasks as ft
 
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
     fake_redis_srv = types.SimpleNamespace(client=FakeRedis())
 
     with (
@@ -342,6 +372,10 @@ async def test_callback_failure_does_not_mark_redirected(monkeypatch):
     monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
     monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
 
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
     with patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
         return_value=types.SimpleNamespace(data=[{
             "payload": {"callback_query": {"id": "cb-001", "from": {"id": 111}}}
@@ -401,6 +435,10 @@ async def test_callback_branch_returns_early_no_sendmessage(monkeypatch):
     monkeypatch.setattr(HoneypotRedirectStrategies, "send_callback_hijack", staticmethod(fake_send_callback_hijack))
     monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
     monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
+
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
 
     with (
         patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
@@ -467,6 +505,10 @@ async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
     monkeypatch.setattr(HoneypotRedirectStrategies, "send_inline_hijack", staticmethod(fake_send_inline_hijack))
     monkeypatch.setattr(HoneypotRedirectStrategies, "update_redirect_record", staticmethod(fake_update_redirect_record))
     monkeypatch.setattr(HoneypotRedirectStrategies, "mark_redirect_sent", staticmethod(fake_mark_redirect_sent))
+
+    # NEW-002 fix
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
 
     with (
         patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(

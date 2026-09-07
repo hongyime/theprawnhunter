@@ -11,6 +11,17 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 15
 
+        services:
+            redis:
+                image: redis:7-alpine
+                ports:
+                    - 6379:6379
+                options: >-
+                    --health-cmd "redis-cli ping"
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 5
+
         steps:
             - uses: actions/checkout@v4
 
@@ -92,3 +103,45 @@ jobs:
 
             - name: Build production frontend
               run: npm run build
+
+    rls-smoke:
+        # FE-002: verify anon key cannot read the raw discovered_credentials
+        # table nor the newly-authenticated-only discovered_credentials_public
+        # view. Runs on every push/PR against the live Supabase.
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        needs: [test]
+        # Skip if secrets aren't set (fork PRs, first-run).
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        steps:
+            - name: Anon key must be denied on discovered_credentials
+              env:
+                  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+                  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+              run: |
+                  if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+                      echo "::warning::Secrets not configured for RLS smoke; skipping."
+                      exit 0
+                  fi
+                  http=$(curl -s -o /tmp/body.json -w "%{http_code}" \
+                      -H "apikey: $SUPABASE_KEY" \
+                      -H "Authorization: Bearer $SUPABASE_KEY" \
+                      "$SUPABASE_URL/rest/v1/discovered_credentials?select=id&limit=1")
+                  # PostgREST returns 401/403 when RLS denies, or 200 with empty [] when
+                  # the anon role has no matching policy — either is acceptable.
+                  if [ "$http" -ge 400 ] && [ "$http" -lt 500 ]; then
+                      echo "OK: anon denied with HTTP $http"
+                      exit 0
+                  fi
+                  if [ "$http" = "200" ]; then
+                      body=$(cat /tmp/body.json)
+                      if [ "$body" = "[]" ]; then
+                          echo "OK: anon received empty array (RLS-filtered)"
+                          exit 0
+                      fi
+                      echo "::error::anon returned non-empty body — RLS is not filtering discovered_credentials"
+                      head -c 200 /tmp/body.json
+                      exit 1
+                  fi
+                  echo "::error::unexpected HTTP $http"
+                  exit 1

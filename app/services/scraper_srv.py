@@ -104,8 +104,8 @@ def _telethon_media_info(message: Message) -> tuple[str, dict[str, Any]]:
         file_id = telethon_utils.pack_bot_file_id(message.media)
         if file_id:
             file_meta["file_id"] = file_id
-    except Exception:
-        pass
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     if isinstance(message.media, MessageMediaPhoto):
         photo = getattr(message.media, "photo", None)
@@ -370,8 +370,8 @@ class ScraperService:
                     if data.get("ok"):
                         bot_username = data["result"].get("username", "unknown")
                         bot_id = str(data["result"].get("id", "0"))
-            except Exception:
-                pass  # getMe failed — use defaults for topic name
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")  # getMe failed — use defaults for topic name
             target_thread_id = 0
             if settings.bot_tokens:
                 topic_name = f"@{bot_username} / {bot_id}"
@@ -433,8 +433,8 @@ class ScraperService:
                     elif res.status_code == 429:
                         logger.warning("    Rate limit hit, sleeping...")
                         await asyncio.sleep(2)
-                except Exception:
-                    pass
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
 
         return msgs
 
@@ -539,7 +539,7 @@ class ScraperService:
             entity = None
             try:
                 entity = await asyncio.wait_for(client.get_entity(chat_id), timeout=10.0)
-            except (ValueError, asyncio.TimeoutError):
+            except (TimeoutError, ValueError):
                 logger.warning("    ⚠️ [Scraper] Entity not found directly. Refreshing dialogs...")
                 try:
                     await asyncio.wait_for(
@@ -583,7 +583,7 @@ class ScraperService:
 
             msgs = await asyncio.wait_for(_fetch(), timeout=90.0)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "    ⏰ [Scraper] Telethon history fetch timed out (asyncio.TimeoutError)."
             )

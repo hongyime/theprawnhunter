@@ -42,7 +42,16 @@ class SecurityService:
         self.fernet = MultiFernet(keys) if len(keys) > 1 else keys[0]
 
     def encrypt(self, data: str) -> str:
-        """Encrypts a string using the primary key."""
+        """Encrypts a string using the primary key.
+
+        SEC-001 operator override: when ``settings.PLAINTEXT_TOKEN_MODE`` is
+        True, encryption is bypassed and the input is returned unchanged.
+        The decrypt path handles both ciphertext and plaintext transparently
+        (via the self-heal `gAAAA%` prefix check), so the toggle is safe to
+        flip without a coordinated data migration.
+        """
+        if getattr(settings, "PLAINTEXT_TOKEN_MODE", False):
+            return data
         return self.fernet.encrypt(data.encode()).decode()
 
     def decrypt(self, token: str) -> str:

@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str  # Service role key (bypasses RLS)
     REDIS_URL: str
 
+    # SEC-001 (operator override): store bot tokens as plaintext instead of
+    # Fernet ciphertext. When True, SecurityService.encrypt is a no-op that
+    # returns the input unchanged; SecurityService.decrypt still handles both
+    # `gAAAA%` ciphertext (via the self-heal path) and plaintext, so the mixed
+    # historical state doesn't break. Default False for security; set True
+    # explicitly to opt into uniform plaintext storage. See bugfix.md SEC-001.
+    PLAINTEXT_TOKEN_MODE: bool = False
+
     # Security
     ENCRYPTION_KEY: str  # Fernet Key
     # Optional comma-separated list of PREVIOUS Fernet keys, used only to
@@ -52,6 +60,10 @@ class Settings(BaseSettings):
     # Legacy per-event webhook alerts can contain low-level identifiers and are
     # disabled by default. Finding-policy webhook delivery bypasses this gate.
     ENABLE_LEGACY_EVENT_ALERTS: bool = False
+
+    # Finding alert outbound delivery — disabled by default for safety.
+    # Must be explicitly enabled before alert workers will send anything.
+    FINDING_ALERTS_ENABLED: bool = False
 
     # Telegram Monitoring (The Bot(s) WE control - supports multi-bot rotation)
     # Comma-separated bot tokens, e.g. "token1,token2,token3"
@@ -140,9 +152,11 @@ class Settings(BaseSettings):
     EXA_API_KEY: str | None = None
     EXA_API_KEY_2: str | None = None
     EXA_API_KEY_3: str | None = None
-    CENSYS_ID: str | None = None
-    CENSYS_SECRET: str | None = None
-    HYBRID_ANALYSIS_KEY: str | None = None
+    # DEAD-001 / DEAD-002 / DRIFT-005: SERPER_API_KEY, CENSYS_ID,
+    # CENSYS_SECRET, HYBRID_ANALYSIS_KEY were removed 2026-09-06 — the
+    # corresponding scanner classes are gone (SerperService) or never existed.
+    # Kept `extra="ignore"` in model_config so operators with these vars still
+    # in .env don't hit validation errors.
     GOOGLE_SEARCH_KEY: str | None = None
     GOOGLE_CSE_ID: str | None = None
     PUBLICWWW_KEY: str | None = None
@@ -155,6 +169,13 @@ class Settings(BaseSettings):
     # Proxy Configuration — optional SOCKS5/HTTP proxies for external connections
     TELETHON_PROXY_URL: str | None = None
     HTTP_PROXY_URL: str | None = None
+
+    # SEC-004: verify TLS on webhook probes. Default False preserves existing
+    # scanner OSINT behaviour (probes hit random IPs with self-signed certs
+    # where verify=True would be pure noise). Setting True enforces TLS
+    # validation on webhook-host probes only, so a MITM'd captured C2 host
+    # is observable as a probe failure instead of a silent success.
+    TLS_VERIFY_WEBHOOK_PROBES: bool = False
 
     # Target Countries (Tiered by Telegram usage volume)
     # Primary:   Top Telegram DAU per capita (CIS, South/Southeast Asia, MENA, LatAm)

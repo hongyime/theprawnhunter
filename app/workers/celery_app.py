@@ -92,6 +92,20 @@ def on_worker_ready(**kwargs):
     if not wait_for_internet_sync(max_wait=300, check_interval=10):
         logger.warning("[Worker] Started without internet — tasks needing external APIs will wait.")
 
+    # REL-006: log beat schedule digest so operators can verify the persisted
+    # celerybeat-schedule file matches what the running code expects.
+    try:
+        import hashlib as _hashlib
+
+        schedule = app.conf.get("beat_schedule") or {}
+        task_names = sorted(schedule.keys())
+        digest = _hashlib.sha256("|".join(task_names).encode()).hexdigest()[:12]
+        logger.info(
+            f"[Beat] schedule digest sha256={digest} tasks={len(task_names)}"
+        )
+    except Exception as _e:
+        logger.debug(f"[Beat] schedule digest log failed: {_e}")
+
     _send_signal_log("🟢 **Worker Service** Started (Celery)")
 
 
@@ -275,6 +289,13 @@ app.conf.update(
         "canary-flow-check-30min": {
             "task": "flow.canary_flow_check",
             "schedule": crontab(minute="*/30"),
+        },
+        # LOGIC-001: findings-pipeline canary. Independent of raw broadcast so
+        # the ENABLE_RAW_MESSAGE_BROADCAST toggle doesn't blind operators to
+        # findings-workflow health.
+        "canary-findings-check-hourly": {
+            "task": "flow.canary_findings_check",
+            "schedule": crontab(minute=7, hour="*"),
         },
         # Passive fingerprint of captured third-party webhook URLs — every 6h,
         # 15 min after the hour to avoid colliding with other beats.

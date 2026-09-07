@@ -80,7 +80,7 @@ class TelegramClientLifecycle:
             return
         try:
             await asyncio.wait_for(self.disconnect(), timeout=self.disconnect_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.warning("%s disconnect timed out", self.label)
         except Exception as exc:
             self.logger.warning("%s disconnect failed: %s", self.label, exc)

@@ -195,6 +195,19 @@ class TestCalculateFindingPriority:
         # confidence input must be clamped to [0, 1] for determinism on bad input.
         assert "GREATEST(LEAST(COALESCE(p_confidence, 0.0), 1.0), 0.0)" in migration_sql
 
+    def test_explanation_uses_postgres_supported_format_specifiers(
+        self, migration_sql: str
+    ):
+        function = re.search(
+            r"CREATE OR REPLACE FUNCTION public\.calculate_finding_priority.+?\$\$;",
+            migration_sql,
+            re.DOTALL,
+        )
+        assert function, "finding priority function not found"
+        assert "%.2f" not in function.group(0), (
+            "PostgreSQL format() supports %s/%I/%L, not printf precision specifiers"
+        )
+
     def test_severity_bands_are_deterministic(self, migration_sql: str):
         # All four severity buckets must be reachable through CASE-style logic.
         for level in ("critical", "high", "medium", "low"):

@@ -39,8 +39,24 @@ async def _import_csv_logic() -> str:
     IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Recover any .pending files left by a previous crashed run — rename back to .csv
+    # INTR-003: recover any `.pending` files left by a previous crashed run —
+    # rename back to `.csv` UNLESS a paired `.done` breadcrumb exists in the
+    # processed dir. The breadcrumb proves the previous run finished parsing
+    # + enqueueing so we don't double-import when the kill happened AFTER
+    # _save_credentials_async but BEFORE the final move-to-processed step.
     for stuck in IMPORTS_DIR.glob("*.pending"):
+        original_name = stuck.stem + ".csv"
+        done_marker = PROCESSED_DIR / f"{original_name}.done"
+        if done_marker.exists():
+            try:
+                stuck.rename(PROCESSED_DIR / stuck.name)
+                logger.info(
+                    f"[CSV Import] Skipped recovery of {stuck.name} — .done breadcrumb "
+                    f"exists; moved to processed/ instead of re-queuing."
+                )
+            except OSError as e:
+                logger.warning(f"[CSV Import] Could not move already-done {stuck.name}: {e}")
+            continue
         try:
             stuck.rename(stuck.with_suffix(".csv"))
             logger.info(f"[CSV Import] Recovered stuck pending file: {stuck.name} → {stuck.stem}.csv")
@@ -100,6 +116,13 @@ async def _import_csv_logic() -> str:
         try:
             pending_path.rename(PROCESSED_DIR / pending_path.name)
             total_files += 1
+            # INTR-003: write breadcrumb so a crash before the next run
+            # doesn't recover the .pending back to .csv and re-import.
+            done_marker = PROCESSED_DIR / f"{csv_path.name}.done"
+            try:
+                done_marker.touch(exist_ok=True)
+            except OSError as touch_exc:
+                logger.debug(f"[CSV Import] .done breadcrumb write failed: {touch_exc}")
             logger.info(f"[CSV Import] {pending_path.name}: {saved} credentials imported → processed/")
         except OSError as e:
             logger.warning(f"[CSV Import] Could not move {pending_path.name} to processed/: {e}")

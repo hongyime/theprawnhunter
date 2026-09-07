@@ -1,5 +1,5 @@
 fastapi==0.136.0           # SECURITY: starlette>=1.0.0 (fixes CVE-2024-47874, CVE-2025-54121)
-slowapi==0.1.9             # rate limiting middleware for FastAPI
+slowapi==0.1.10             # rate limiting middleware for FastAPI (0.1.10 fixes ConnectionError.detail compat with httpx 0.28.x)
 uvicorn==0.44.0
 gunicorn==23.0.0
 pydantic>=2.10.0,<3.0.0

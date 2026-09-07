@@ -130,6 +130,40 @@ describe("FindingsQueue", () => {
     );
   });
 
+  it("resolves message evidence through the redacted view", async () => {
+    const crossBotFinding = {
+      ...finding,
+      type: "cross_bot_pattern",
+      canonical_key: "cross-bot:shared-indicator",
+      title: "Shared indicator across bots",
+    };
+    const messageEvidence = {
+      ...evidence,
+      source_table: "exfiltrated_messages",
+      source_id: "50000000-0000-0000-0000-000000000001",
+    };
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "findings") return builderFor([crossBotFinding]);
+      if (table === "finding_evidence") return builderFor([messageEvidence]);
+      if (table === "evidence_redacted") {
+        return builderFor([{ credential_id: "30000000-0000-0000-0000-000000000001" }]);
+      }
+      throw new Error(`Forbidden raw table query: ${table}`);
+    });
+    const onDrilldown = vi.fn();
+    render(<FindingsQueue onDrilldown={onDrilldown} />);
+
+    const title = await screen.findByText("Shared indicator across bots");
+    await userEvent.click(title.closest("button")!);
+    await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
+
+    expect(onDrilldown).toHaveBeenCalledWith(
+      "30000000-0000-0000-0000-000000000001",
+      "chat",
+    );
+    expect(mockFrom).not.toHaveBeenCalledWith("exfiltrated_messages");
+  });
+
   it("opens digest deep links with evidence already loaded", async () => {
     window.history.replaceState({}, "", `/?finding=${finding.id}`);
     render(<FindingsQueue onDrilldown={vi.fn()} />);

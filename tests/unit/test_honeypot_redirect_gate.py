@@ -87,14 +87,71 @@ def test_sweep_skipped_when_not_authorized():
 
 def test_sweep_skipped_when_mode_off_regardless_of_authorized():
     """HONEYPOT_REDIRECT_MODE=False continues to short-circuit as before —
-    the two switches are independent gates."""
+    the two switches are independent gates. Reason field distinguishes which
+    gate blocked (LOGIC-005)."""
     from app.workers.tasks import flow_tasks
 
     with patch.object(flow_tasks.settings, "HONEYPOT_REDIRECT_MODE", False), \
          patch.object(flow_tasks.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True):
         result = _run(flow_tasks._honeypot_redirect_sweep_logic())
 
-    assert result == {"status": "disabled"}
+    assert result["status"] == "disabled"
+    assert result.get("reason") == "mode_disabled"
+
+
+def test_queued_redirect_rechecks_both_safety_gates():
+    """A job queued before authorization is revoked must not send later.
+    LOGIC-005: reason string distinguishes mode-off from authorized-off.
+    INTR-002: the recheck path releases the sweep's 'pending' claim so the
+    row can be retried once the gate flips back on — this is a single DB
+    write, which the test permits by not asserting fake_db.table.assert_not_called()."""
+    from app.workers.tasks import flow_tasks
+
+    cases = (
+        # (HONEYPOT_REDIRECT_MODE, HONEYPOT_REDIRECT_AUTHORIZED, expected_reason)
+        (False, True, "mode_disabled"),
+        (True, False, "not_authorized"),
+    )
+    for mode_enabled, authorized, expected_reason in cases:
+        fake_db = MagicMock()
+        # Chained builder for the release-claim UPDATE
+        fake_db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        with patch.object(flow_tasks.settings, "HONEYPOT_REDIRECT_MODE", mode_enabled), \
+             patch.object(flow_tasks.settings, "HONEYPOT_REDIRECT_AUTHORIZED", authorized), \
+             patch.object(flow_tasks, "db", fake_db):
+            result = _run(
+                flow_tasks._honeypot_redirect_one_logic(
+                    "update-id",
+                    "credential-id",
+                    123,
+                    456,
+                )
+            )
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == expected_reason, (
+            f"expected reason={expected_reason!r} for mode={mode_enabled} "
+            f"authorized={authorized}, got {result!r}"
+        )
+
+
+def test_followup_redirects_require_mode_and_authorization():
+    from app.workers.tasks import honeypot_redirect_tasks as hrt
+
+    operations = (
+        hrt._redirect_touch2_logic,
+        hrt._redirect_touch3_logic,
+        hrt._proactive_outreach_logic,
+    )
+    for operation in operations:
+        fake_db = MagicMock()
+        with patch.object(hrt.settings, "HONEYPOT_REDIRECT_MODE", False), \
+             patch.object(hrt.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True), \
+             patch.object(hrt, "db", fake_db):
+            result = _run(operation())
+
+        assert result == {"status": "skipped", "reason": "not_authorized"}
+        fake_db.table.assert_not_called()
 
 
 def test_touch2_skipped_when_not_authorized():
