@@ -102,27 +102,29 @@ app = FastAPI(
 # ── Rate limiting ─────────────────────────────────────────────────────
 # Uses Redis for cross-worker limits (all uvicorn workers share the same
 # counters). Keyed on X-Monitor-Key when present, else remote IP.
-import hmac
+import hmac  # noqa: E402 — intentional deferred import
 
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
+from slowapi import (  # noqa: E402 — intentional deferred import
+    Limiter,
+    _rate_limit_exceeded_handler,
+)
+from slowapi.errors import RateLimitExceeded  # noqa: E402 — intentional deferred import
+from slowapi.middleware import SlowAPIMiddleware  # noqa: E402 — intentional deferred import
+from slowapi.util import get_remote_address  # noqa: E402 — intentional deferred import
 
 
 def _rate_key(request):
     """Prefer X-Monitor-Key so a leaked key can't outrun the per-IP budget,
     fall back to remote IP for unauth endpoints (honeypot receiver).
-    
+
     SECURITY: Only valid monitor keys get the key bucket to prevent bucket manipulation.
     """
     hdr = request.headers.get("X-Monitor-Key")
-    if hdr and settings.MONITOR_API_KEY:
-        # Constant-time comparison to prevent timing attacks
-        if hmac.compare_digest(hdr, settings.MONITOR_API_KEY):
-            # Bucket by first 12 chars — enough entropy to distinguish keys
-            # without dumping the whole key into Redis
-            return f"key:{hdr[:12]}"
+    # Constant-time comparison to prevent timing attacks
+    if hdr and settings.MONITOR_API_KEY and hmac.compare_digest(hdr, settings.MONITOR_API_KEY):
+        # Bucket by first 12 chars — enough entropy to distinguish keys
+        # without dumping the whole key into Redis
+        return f"key:{hdr[:12]}"
     return f"ip:{get_remote_address(request)}"
 
 
@@ -150,7 +152,7 @@ app.add_middleware(SlowAPIMiddleware)
 # CORS: always use an explicit allowlist — never wildcard, even in dev.
 # Dev origins are included by default; add extra domains via EXTRA_CORS_ORIGINS
 # in .env (comma-separated, e.g. "https://my-tunnel.ngrok.io").
-import os as _os
+import os as _os  # noqa: E402 — intentional deferred import
 
 _extra_origins = [o.strip() for o in _os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()]
 _cors_origins = [
@@ -176,17 +178,17 @@ app.include_router(scan.router)
 app.include_router(ingest.router)
 
 # Health check endpoints
-from app.api.routers import health
+from app.api.routers import health  # noqa: E402 — intentional deferred import
 
 app.include_router(health.router)
 
 # Media proxy endpoint
-from app.api.routers import media
+from app.api.routers import media  # noqa: E402 — intentional deferred import
 
 app.include_router(media.router, prefix="/media", tags=["media"])
 
 # Honeypot webhook receiver — only active when HONEYPOT_MODE=True
-from app.api.routers import honeypot
+from app.api.routers import honeypot  # noqa: E402 — intentional deferred import
 
 app.include_router(honeypot.router)
 

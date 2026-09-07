@@ -199,7 +199,7 @@ async def ingest_extension_credentials(payload: ExtensionIngestRequest):
 #     --data-binary @tokens.txt
 # ---------------------------------------------------------------------------
 
-from fastapi import Request
+from fastapi import Request  # noqa: E402 — intentional deferred import
 
 
 class TokenPasteResponse(BaseModel):
@@ -233,7 +233,7 @@ async def ingest_tokens(request: Request):
             else:
                 raise HTTPException(status_code=422, detail="JSON body must be an array of token strings or {tokens: [...]}")
         except _json.JSONDecodeError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+            raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}") from e
     else:
         # Plain text: split on newlines and commas
         text = raw_body.decode("utf-8", errors="ignore")

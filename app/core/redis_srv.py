@@ -37,7 +37,8 @@ class RedisService:
 
     def get_next_rotation_index(self, key: str, max_val: int) -> int:
         """Atomically increments and returns the next index modulo max_val."""
-        if max_val <= 0: return 0
+        if max_val <= 0:
+            return 0
         idx = self.client.incr(f"rotation_index:{key}")
         return idx % max_val
 
@@ -79,15 +80,16 @@ redis_srv = RedisService()
 # The underlying redis client is sync but calls are local + fast; the async
 # signature keeps the call sites clean and lets us swap to `redis.asyncio`
 # later without touching consumers.
-import contextlib
-import json as _json
+import contextlib  # noqa: E402 — intentional deferred import
+import json as _json  # noqa: E402 — intentional deferred import
 
 
 async def get_cached_getme(bot_id: str) -> dict | None:
     """Return cached Bot API getMe response for `bot_id`, or None on miss."""
     try:
         raw = redis_srv.client.get(f"cache:getme:{bot_id}")
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return None
     if not raw:
         return None
@@ -113,7 +115,8 @@ async def get_cached_getchat(bot_id: str, chat_id: int | str) -> dict | None:
     """Return cached Bot API getChat response for (bot_id, chat_id), or None."""
     try:
         raw = redis_srv.client.get(f"cache:getchat:{bot_id}:{chat_id}")
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return None
     if not raw:
         return None
@@ -149,7 +152,8 @@ async def probe_host_is_cooling(hostname: str) -> bool:
         return False
     try:
         return redis_srv.client.exists(f"probe:cooldown:{hostname}") > 0
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return False
 
 

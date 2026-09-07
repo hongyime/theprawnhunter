@@ -1,8 +1,11 @@
 import contextlib
 import json
+import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
+
+logger = logging.getLogger("queue_monitor")
 
 DEFAULT_QUEUES = ("celery", "scrape", "scanners", "validation")
 DEFAULT_QUEUE_LENGTH_ALERT_THRESHOLD = 100
@@ -26,7 +29,8 @@ def record_task_started(redis_client: Any, task_id: str, queues: tuple[str, ...]
     for queue in queues:
         try:
             redis_client.zrem(queue_tracking_key(queue), task_id)
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
 
 
@@ -136,13 +140,15 @@ def _best_effort_oldest_age_from_queue(redis_client: Any, queue: str, now: float
     for index in (-1, 0):
         try:
             raw = redis_client.lindex(queue, index)
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
         if not raw:
             continue
         try:
             payload = json.loads(raw)
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
         timestamp = _extract_timestamp(payload)
         if timestamp is not None:

@@ -12,7 +12,9 @@ from app.workers.celery_app import app, get_worker_loop
 from app.workers.tasks.flow_tasks import async_execute
 
 logger = get_logger(__name__)
-from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+from app.workers.tasks.honeypot_redirect_strategies import (  # noqa: E402 — intentional deferred import
+    HoneypotRedirectStrategies,
+)
 
 
 @app.task(name="flow.honeypot_redirect_touch2")

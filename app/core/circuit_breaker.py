@@ -182,7 +182,7 @@ _circuit_breakers = {
 }
 
 
-import threading as _threading
+import threading as _threading  # noqa: E402 — intentional deferred import
 
 _circuit_breakers_lock = _threading.Lock()
 

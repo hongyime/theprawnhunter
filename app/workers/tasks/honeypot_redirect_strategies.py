@@ -210,7 +210,8 @@ class HoneypotRedirectStrategies:
         try:
             key = f"redirect:sent:{credential_id}:{user_id}"
             return redis_srv.client.exists(key) > 0
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             return False
 
     @staticmethod
@@ -231,7 +232,8 @@ class HoneypotRedirectStrategies:
         try:
             key = f"redirect:touch{message_num}:{credential_id}:{user_id}"
             return redis_srv.client.exists(key) > 0
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             return False
 
     @staticmethod

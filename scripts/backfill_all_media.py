@@ -1,9 +1,9 @@
 import sys
 
 sys.path.insert(0, '/app')
-import asyncio
+import asyncio  # noqa: E402 — intentional deferred import
 
-from app.core.database import db
+from app.core.database import db  # noqa: E402 — intentional deferred import
 
 
 async def backfill_all():

@@ -25,10 +25,10 @@ import sys
 # Add project root to path for `python scripts/rotate_credentials.py` from any cwd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cryptography.fernet import MultiFernet
+from cryptography.fernet import MultiFernet  # noqa: E402 — intentional deferred import
 
-from app.core.database import db
-from app.core.security import security
+from app.core.database import db  # noqa: E402 — intentional deferred import
+from app.core.security import security  # noqa: E402 — intentional deferred import
 
 
 def _is_multifernet() -> bool:

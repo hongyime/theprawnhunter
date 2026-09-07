@@ -337,7 +337,8 @@ class UserAgentService:
         try:
             from app.core.redis_srv import redis_srv
             ttl = redis_srv.get_cooldown_remaining(cooldown_key)
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             return
         if not ttl or ttl <= 0:
             return
@@ -379,9 +380,11 @@ class UserAgentService:
             return  # At least one session still available in local view
 
         # Rate-limit warning to once per 60s to avoid log spam on tight retry loops
-        if self._all_on_cooldown_warned_at is not None:
-            if (now - self._all_on_cooldown_warned_at).total_seconds() < 60:
-                return
+        if (
+            self._all_on_cooldown_warned_at is not None
+            and (now - self._all_on_cooldown_warned_at).total_seconds() < 60
+        ):
+            return
         self._all_on_cooldown_warned_at = now
 
         earliest_path = min(active, key=active.get)
@@ -524,7 +527,7 @@ class UserAgentService:
             # 4. Initialize & Connect
             import shutil
             import sqlite3
-            TEMP_SESSION_PATH = f"/tmp/{session_name}" # Unique tmp path per session
+            TEMP_SESSION_PATH = f"/tmp/{session_name}"  # noqa: N806 — function-scoped constant # Unique tmp path per session
 
             try:
                 if os.path.exists(session_path):
@@ -721,11 +724,15 @@ class UserAgentService:
 
     def _cleanup_temp_session(self, filename: str):
         """Removes the temporary session files from /tmp/"""
-        if not filename or not filename.startswith("/tmp/"): return
+        if not filename or not filename.startswith("/tmp/"):
+            return
         try:
-            if os.path.exists(filename): os.remove(filename)
-            if os.path.exists(filename + "-wal"): os.remove(filename + "-wal")
-            if os.path.exists(filename + "-shm"): os.remove(filename + "-shm")
+            if os.path.exists(filename):
+                os.remove(filename)
+            if os.path.exists(filename + "-wal"):
+                os.remove(filename + "-wal")
+            if os.path.exists(filename + "-shm"):
+                os.remove(filename + "-shm")
         except OSError as e:
             logger.warning(f"    ⚠️ [UserAgent] Failed to cleanup {filename}: {e}")
 
@@ -842,7 +849,8 @@ class UserAgentService:
 
     async def find_topic_id(self, group_id: int | str, topic_name: str) -> int | None:
         async with self.lock:
-            if not await self.start(): return None
+            if not await self.start():
+                return None
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
@@ -857,18 +865,25 @@ class UserAgentService:
             except Exception as e:
                 logger.warning(f"    ⚠️ [UserAgent] Find topic failed: {e}")
                 return None
-            finally: await self._disconnect()
+            finally:
+                await self._disconnect()
 
     async def check_membership(self, group_id: int | str, user_identifier: str | int) -> dict | None:
         async with self.lock:
-            if not await self.start(): return None
+            if not await self.start():
+                return None
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 group_entity = await self.client.get_entity(target)
-                if str(user_identifier).lstrip('-').isdigit(): user_target = int(user_identifier)
-                else: user_target = user_identifier
-                try: user_entity = await self.client.get_entity(user_target)
-                except Exception: return None
+                if str(user_identifier).lstrip('-').isdigit():
+                    user_target = int(user_identifier)
+                else:
+                    user_target = user_identifier
+                try:
+                    user_entity = await self.client.get_entity(user_target)
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
+                    return None
                 from telethon.tl.functions.channels import GetParticipantRequest
                 try:
                     result = await self.client(GetParticipantRequest(channel=group_entity, participant=user_entity))
@@ -878,19 +893,26 @@ class UserAgentService:
                         "is_admin": hasattr(result.participant, 'admin_rights') and result.participant.admin_rights is not None
                     }
                 except Exception as e:
-                    if "USER_NOT_PARTICIPANT" in str(e) or "400" in str(e): return None
+                    if "USER_NOT_PARTICIPANT" in str(e) or "400" in str(e):
+                        return None
                     return None
-            except Exception: return None
-            finally: await self._disconnect()
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
+                return None
+            finally:
+                await self._disconnect()
 
     async def promote_to_admin(self, group_id: int | str, user_identifier: str | int, title: str = "Admin", anonymous: bool = True) -> bool:
         async with self.lock:
-            if not await self.start(): return False
+            if not await self.start():
+                return False
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 group_entity = await self.client.get_entity(target)
-                if str(user_identifier).lstrip('-').isdigit(): user_target = int(user_identifier)
-                else: user_target = user_identifier
+                if str(user_identifier).lstrip('-').isdigit():
+                    user_target = int(user_identifier)
+                else:
+                    user_target = user_identifier
                 user_entity = await self.client.get_entity(user_target)
                 from telethon.tl.functions.channels import EditAdminRequest
                 from telethon.tl.types import ChatAdminRights
@@ -914,14 +936,15 @@ class UserAgentService:
                     type(e).__name__,
                 )
                 return False
-            finally: await self._disconnect()
+            finally:
+                await self._disconnect()
 
     async def _connect_to_session(self, session_path: str) -> bool:
         """Internal helper to connect to a specific session file."""
         session_name = os.path.splitext(os.path.basename(session_path))[0]
         import shutil
         import sqlite3
-        TEMP_SESSION_PATH = f"/tmp/setup_{session_name}"
+        TEMP_SESSION_PATH = f"/tmp/setup_{session_name}"  # noqa: N806 — function-scoped constant
         try:
             if os.path.exists(session_path):
                 shutil.copy2(session_path, f"{TEMP_SESSION_PATH}.session")
@@ -931,14 +954,17 @@ class UserAgentService:
             self.client = TelegramClient(TEMP_SESSION_PATH, self.api_id, self.api_hash)
             await self.client.connect()
             return await self.client.is_user_authorized()
-        except Exception: return False
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
+            return False
 
     async def _ensure_monitor_bots_membership(self):
         """Checks and ensures all broadcaster bots and user accounts are in the monitor group."""
         try:
             tokens = settings.bot_tokens
             group_id = settings.MONITOR_GROUP_ID
-            if not tokens or not group_id: return
+            if not tokens or not group_id:
+                return
             logger.info("    🐶 [UserAgent] Syncing Hub memberships and permissions...")
             for token in tokens:
                 try:
@@ -954,9 +980,11 @@ class UserAgentService:
                         await self.promote_to_admin(group_id, bot_id, anonymous=False)
                 except Exception as _swallowed:
                     logger.debug(f"[suppressed] {_swallowed}")
-            if not self.sessions: self._discover_sessions()
+            if not self.sessions:
+                self._discover_sessions()
             for session_path in self.sessions:
-                if not await self._connect_to_session(session_path): continue
+                if not await self._connect_to_session(session_path):
+                    continue
                 try:
                     me = await self.client.get_me()
                     await self._disconnect()
@@ -968,12 +996,14 @@ class UserAgentService:
                         logger.warning(f"    ⚠️ User @{me.username} is NOT in Hub. Please add manually.")
                 except Exception as _swallowed:
                     logger.debug(f"[suppressed] {_swallowed}")
-        except Exception as e: logger.error(f"    ❌ [UserAgent] Membership sync fatal error: {e}")
+        except Exception as e:
+            logger.error(f"    ❌ [UserAgent] Membership sync fatal error: {e}")
 
     async def send_message(self, target: int | str, message: str, thread_id: int | None = None) -> bool:
         """Sends a text message to a target (group/user) as the User Agent."""
         async with self.lock:
-            if not await self.start(): return False
+            if not await self.start():
+                return False
             try:
                 entity = int(target) if str(target).lstrip("-").isdigit() else target
                 await self.client.send_message(entity, message, reply_to=thread_id)
@@ -982,7 +1012,8 @@ class UserAgentService:
             except Exception as e:
                 logger.error(f"    ❌ [UserAgent] Send failed: {e}")
                 return False
-            finally: await self._disconnect()
+            finally:
+                await self._disconnect()
 
     @staticmethod
     def _coerce_chat_ref(value: int | str) -> int | str:
@@ -1202,7 +1233,8 @@ class UserAgentService:
 
     async def clear_removed_users(self, group_id: int | str) -> int:
         async with self.lock:
-            if not await self.start(): return 0
+            if not await self.start():
+                return 0
             cleared_count = 0
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
@@ -1216,12 +1248,16 @@ class UserAgentService:
                     except Exception as _swallowed:
                         logger.debug(f"[suppressed] {_swallowed}")
                 return cleared_count
-            except Exception: return 0
-            finally: await self._disconnect()
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
+                return 0
+            finally:
+                await self._disconnect()
 
     async def delete_old_messages(self, group_id: int | str, age_hours: int, topic_id: int | None = None) -> int:
         async with self.lock:
-            if not await self.start(): return 0
+            if not await self.start():
+                return 0
             import datetime
 
             from telethon.tl.types import Message
@@ -1232,7 +1268,8 @@ class UserAgentService:
                 now = datetime.datetime.now(datetime.UTC)
                 cutoff = now - datetime.timedelta(hours=age_hours)
                 async for message in self.client.iter_messages(entity, reply_to=topic_id):
-                    if not isinstance(message, Message): continue
+                    if not isinstance(message, Message):
+                        continue
                     if message.date < cutoff:
                         try:
                             await self.client.delete_messages(entity, [message.id])
@@ -1240,20 +1277,28 @@ class UserAgentService:
                         except Exception as _swallowed:
                             logger.debug(f"[suppressed] {_swallowed}")
                 return deleted_count
-            except Exception: return 0
-            finally: await self._disconnect()
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
+                return 0
+            finally:
+                await self._disconnect()
 
     async def get_last_message_id(self, group_id: int | str, topic_id: int) -> int | None:
         async with self.lock:
-            if not await self.start(): return None
+            if not await self.start():
+                return None
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
                 messages = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
-                if messages: return messages[0].id
+                if messages:
+                    return messages[0].id
                 return None
-            except Exception: return None
-            finally: await self._disconnect()
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
+                return None
+            finally:
+                await self._disconnect()
 
     async def get_history(self, group_id: int | str, limit: int) -> list[dict]:
         import os as _os
@@ -1263,21 +1308,25 @@ class UserAgentService:
         # Minimum sleep between successive get_history calls on the same session.
         # Prevents back-to-back MTProto requests across concurrent Celery tasks from
         # triggering Telegram FloodWait. Tune via MTPROTO_INTER_REQUEST_SLEEP (default 3s).
-        INTER_SLEEP = float(_os.getenv("MTPROTO_INTER_REQUEST_SLEEP", 3.0))
+        INTER_SLEEP = float(_os.getenv("MTPROTO_INTER_REQUEST_SLEEP", 3.0))  # noqa: N806 — function-scoped constant
         async with self.lock:
-            if not await self.start(): return []
+            if not await self.start():
+                return []
             msgs = []
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
                 async for message in self.client.iter_messages(entity, limit=limit):
-                    if not isinstance(message, Message): continue
+                    if not isinstance(message, Message):
+                        continue
                     content = message.text or ""
                     media_type, file_meta = _telethon_media_info(message)
                     sender_name = "Unknown"
                     if message.sender:
-                        if hasattr(message.sender, 'username') and message.sender.username: sender_name = message.sender.username
-                        elif hasattr(message.sender, 'first_name'): sender_name = message.sender.first_name
+                        if hasattr(message.sender, 'username') and message.sender.username:
+                            sender_name = message.sender.username
+                        elif hasattr(message.sender, 'first_name'):
+                            sender_name = message.sender.first_name
                     msgs.append({
                         "telegram_msg_id": message.id, "sender_name": sender_name, "content": content,
                         "media_type": media_type, "file_meta": file_meta, "chat_id": entity.id if hasattr(entity, 'id') else group_id
@@ -1318,7 +1367,7 @@ class UserAgentService:
         from telethon.tl.functions.messages import SearchGlobalRequest
         from telethon.tl.types import InputMessagesFilterEmpty, InputPeerEmpty
 
-        INTER_SLEEP = float(_os.getenv("MTPROTO_INTER_REQUEST_SLEEP", 3.0))
+        INTER_SLEEP = float(_os.getenv("MTPROTO_INTER_REQUEST_SLEEP", 3.0))  # noqa: N806 — function-scoped constant
         results: list[dict] = []
 
         async with self.lock:

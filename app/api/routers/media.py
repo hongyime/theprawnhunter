@@ -28,8 +28,8 @@ async def get_media(message_id: str):
             .eq("id", message_id) \
             .single() \
             .execute()
-    except Exception:
-        raise HTTPException(status_code=404, detail="Message not found")
+    except Exception as err:
+        raise HTTPException(status_code=404, detail="Message not found") from err
 
     row = msg_res.data
     if not row:
@@ -51,8 +51,8 @@ async def get_media(message_id: str):
             .eq("id", credential_id) \
             .single() \
             .execute()
-    except Exception:
-        raise HTTPException(status_code=404, detail="Credential not found")
+    except Exception as err:
+        raise HTTPException(status_code=404, detail="Credential not found") from err
 
     cred_row = cred_res.data
     if not cred_row or not cred_row.get("bot_token"):
@@ -60,11 +60,11 @@ async def get_media(message_id: str):
 
     try:
         decrypted_token = security.decrypt(cred_row["bot_token"])
-    except Exception:
+    except Exception as err:
         # Do NOT surface the decryption error — even the traceback string
         # can hint at the encryption backend / key format.
         logger.exception("media proxy: token decryption failed")
-        raise HTTPException(status_code=500, detail="Token decryption failed")
+        raise HTTPException(status_code=500, detail="Token decryption failed") from err
 
     # 3. Download from Telegram
     try:
@@ -76,7 +76,7 @@ async def get_media(message_id: str):
         # Log full error server-side, respond with generic 502.
         # `e` could include the bot token in a URL, so keep it out of the response.
         logger.warning(f"Failed to download media {message_id}: {e}")
-        raise HTTPException(status_code=502, detail="Failed to fetch from Telegram")
+        raise HTTPException(status_code=502, detail="Failed to fetch from Telegram") from e
 
     # 4. Determine content type
     mime = file_meta.get("mime") or file_meta.get("mime_type")

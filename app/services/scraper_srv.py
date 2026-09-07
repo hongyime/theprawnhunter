@@ -37,9 +37,9 @@ logger = logging.getLogger("scraper")
 # Monitor guard globals and helpers extracted to _scraper/monitor_guard.py.
 # Re-exported here so all existing importers (flow_tasks, bot_listener,
 # audit_tasks) continue to work without modification.
-import contextlib
+import contextlib  # noqa: E402 — intentional deferred import
 
-from app.services._scraper.monitor_guard import (  # noqa: F401
+from app.services._scraper.monitor_guard import (  # noqa: F401, E402
     _MONITOR_GROUP_IDS,
     _MONITOR_GROUP_IDS_RESOLVED,
     _get_monitor_group_ids,
@@ -491,8 +491,8 @@ class ScraperService:
                                 "chat_id": chat_id,
                             }
                         )
-                except Exception:
-                    # print(f"Batch fail: {e}")
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed batch] {_swallowed}")
                     pass
         except Exception as e:
             logger.error(f"❌ [Scraper] Bruteforce Telethon error: {e}")
@@ -639,9 +639,8 @@ class ScraperService:
             clean_monitor = monitor_token.strip()
             if clean_token == clean_monitor:
                 return True
-            if token_id and ":" in clean_monitor:
-                if token_id == clean_monitor.split(":")[0]:
-                    return True
+            if token_id and ":" in clean_monitor and token_id == clean_monitor.split(":")[0]:
+                return True
 
         # Check against PROTECTED_BOT_IDS (numeric IDs only)
         if token_id and settings.PROTECTED_BOT_IDS:

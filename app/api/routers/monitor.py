@@ -894,7 +894,8 @@ def get_c2_operators(limit: int = 20):
             parsed = urlparse(url)
             hostname = parsed.hostname or ""
             path = parsed.path or ""
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
 
         # By TLS SAN root pattern (wildcard cluster)

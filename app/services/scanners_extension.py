@@ -66,7 +66,8 @@ class GithubGistService:
                                     content = raw_res.text
                                     found = TOKEN_PATTERN.findall(content)
                                     for t in found:
-                                        if not _is_valid_token(t): continue
+                                        if not _is_valid_token(t):
+                                            continue
                                         local_res.append({
                                             "token": t,
                                             "meta": {"source": "gist", "gist_id": gist.get("id"), "file": filename}
@@ -176,14 +177,17 @@ class PublicWwwService:
                         try:
                             items = await _perform_active_deep_scan(target, client=scan_client)
                             return target, items
-                        except Exception: return None
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
+                            return None
 
                 for d in domains:
                     tasks.append(scan_domain(d))
 
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
                 for res_item in scan_results:
-                    if not res_item or isinstance(res_item, Exception): continue
+                    if not res_item or isinstance(res_item, Exception):
+                        continue
                     target_url, items = res_item
                     for t_item in items:
                         results.append({
@@ -233,14 +237,17 @@ class GoogleSearchService:
                         try:
                             found = await _perform_active_deep_scan(link, client=scan_client)
                             return link, found
-                        except Exception: return None
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
+                            return None
 
                 for item in items:
                     tasks.append(scan_url(item.get("link")))
 
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
                 for res_item in scan_results:
-                    if not res_item or isinstance(res_item, Exception): continue
+                    if not res_item or isinstance(res_item, Exception):
+                        continue
                     target_url, f_items = res_item
                     for t_item in f_items:
                         results.append({
@@ -397,13 +404,16 @@ class PastebinService:
                             found = TOKEN_PATTERN.findall(content)
                             local_res = []
                             for t in found:
-                                if not _is_valid_token(t): continue
+                                if not _is_valid_token(t):
+                                    continue
                                 local_res.append({
                                     "token": t,
                                     "meta": {"source": "pastebin", "paste_key": p.get("key")}
                                 })
                             return local_res
-                        except Exception: return []
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
+                            return []
 
                 for p in pastes:
                     tasks.append(fetch_paste(p))
@@ -454,21 +464,25 @@ class RentryService:
                         # Convert https://rentry.co/xyz to https://rentry.co/api/raw/xyz
                         try:
                             paste_id = url.split("rentry.co/")[-1].strip("/")
-                            if not paste_id: continue
+                            if not paste_id:
+                                continue
                             raw_url = f"https://rentry.co/api/raw/{paste_id}"
-                        except Exception:
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                             continue
 
                         # Dedup check
                         seen_key = f"rentry:seen:{paste_id}"
                         try:
-                            if redis_client.exists(seen_key): continue
+                            if redis_client.exists(seen_key):
+                                continue
                         except Exception as _swallowed:
                             logger.debug(f"[suppressed] {_swallowed}")
 
                         try:
                             raw_res = await client.get(raw_url)
-                            if raw_res.status_code != 200: continue
+                            if raw_res.status_code != 200:
+                                continue
 
                             found = TOKEN_PATTERN.findall(raw_res.text)
                             for t in found:
@@ -527,21 +541,25 @@ class HastebinService:
                         try:
                             # Avoid matching hastebin.com/raw/xyz directly if already formatted
                             paste_id = url.split("/")[-1].strip()
-                            if not paste_id: continue
+                            if not paste_id:
+                                continue
                             raw_url = f"https://hastebin.com/raw/{paste_id}"
-                        except Exception:
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                             continue
 
                         # Dedup check
                         seen_key = f"hastebin:seen:{paste_id}"
                         try:
-                            if redis_client.exists(seen_key): continue
+                            if redis_client.exists(seen_key):
+                                continue
                         except Exception as _swallowed:
                             logger.debug(f"[suppressed] {_swallowed}")
 
                         try:
                             raw_res = await client.get(raw_url)
-                            if raw_res.status_code != 200: continue
+                            if raw_res.status_code != 200:
+                                continue
 
                             found = TOKEN_PATTERN.findall(raw_res.text)
                             for t in found:
@@ -867,7 +885,8 @@ class PostmanService:
         try:
             val = redis_client.get(self._today_key())
             return int(val or 0) < self.DAILY_BUDGET
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             return True
 
     def _increment(self, redis_client):
@@ -963,7 +982,8 @@ class PostmanService:
                         if cr.status_code != 200:
                             continue
                         col_data = cr.json()
-                    except Exception:
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
                         continue
 
                     col_text = str(col_data)

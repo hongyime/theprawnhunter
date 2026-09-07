@@ -78,7 +78,8 @@ def _is_own_bot_token(token: str) -> bool:
     try:
         from app.services.scraper_srv import scraper_service
         return scraper_service.is_monitor_bot(token)
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return False
 
 
@@ -156,9 +157,9 @@ async def _save_credentials_async(results, source_name: str):
 # Re-exported here for backward compat — the 14 internal scan_* callers below
 # use this name.  External importers (pivot_tasks, validation_tasks, firehose_tasks)
 # have all been migrated to import directly from celery_app.
-from datetime import UTC
+from datetime import UTC  # noqa: E402 — intentional deferred import
 
-from app.workers.celery_app import _run_sync  # noqa: F401  (re-export)
+from app.workers.celery_app import _run_sync  # noqa: F401, E402  (re-export, intentional deferred)
 
 
 def _cb(service_name: str):
@@ -244,7 +245,7 @@ def scan_urlscan(query: str = None, country_code: str = None):
 
 async def _scan_urlscan_async(query: str = None, country_code: str = None):
 
-    COMMON_QUERIES = [
+    COMMON_QUERIES = [  # noqa: N806 — function-scoped constant
         "api.telegram.org/bot",
         "bot_token",
         "TELEGRAM_BOT_TOKEN",
@@ -333,8 +334,8 @@ async def _scan_github_async(query: str = None):
         '"api.telegram.org/bot" extension:php',
     ]
 
-    DORK_CAP = int(os.getenv("GITHUB_DORK_CAP", 10))
-    QUERY_SLEEP = float(os.getenv("GITHUB_QUERY_SLEEP", 8))
+    DORK_CAP = int(os.getenv("GITHUB_DORK_CAP", 10))  # noqa: N806 — function-scoped constant
+    QUERY_SLEEP = float(os.getenv("GITHUB_QUERY_SLEEP", 8))  # noqa: N806 — function-scoped constant
 
     queries = [query] if query else default_dorks[:DORK_CAP]
 
@@ -594,8 +595,8 @@ async def _scan_exa_async(query: str = None):
         return "System Paused"
 
     # Guard: skip if Exa key is broken (401/403)
-    EXA_COOLDOWN_KEY = "cooldown:scanner:exa_api_broken"
-    EXA_COOLDOWN_TTL = int(os.getenv("EXA_BROKEN_COOLDOWN_SECS", 82800))  # 23h default
+    EXA_COOLDOWN_KEY = "cooldown:scanner:exa_api_broken"  # noqa: N806 — function-scoped constant
+    EXA_COOLDOWN_TTL = int(os.getenv("EXA_BROKEN_COOLDOWN_SECS", 82800))  # noqa: N806 — function-scoped constant  # 23h default
     if redis_client.get(EXA_COOLDOWN_KEY):
         ttl = redis_client.ttl(EXA_COOLDOWN_KEY)
         logger.info(f"⏭️ [Exa] API key on cooldown ({ttl}s remaining) — skipping scan.")
@@ -702,8 +703,8 @@ async def _scan_google_async(query: str = None):
     # Guard: skip entire run if Google CSE key is known-broken (403 = quota exhausted or key invalid).
     # A 403 on the first dork means all subsequent dorks will also fail — no point running them.
     # The cooldown (default 23h) prevents hammering a dead key every scan cycle.
-    GOOGLE_COOLDOWN_KEY = "cooldown:scanner:google_api_broken"
-    GOOGLE_COOLDOWN_TTL = int(os.getenv("GOOGLE_BROKEN_COOLDOWN_SECS", 82800))  # 23h default
+    GOOGLE_COOLDOWN_KEY = "cooldown:scanner:google_api_broken"  # noqa: N806 — function-scoped constant
+    GOOGLE_COOLDOWN_TTL = int(os.getenv("GOOGLE_BROKEN_COOLDOWN_SECS", 82800))  # noqa: N806 — function-scoped constant  # 23h default
     if redis_client.get(GOOGLE_COOLDOWN_KEY):
         ttl = redis_client.ttl(GOOGLE_COOLDOWN_KEY)
         logger.info(f"⏭️ [Google] API key on cooldown ({ttl}s remaining) — skipping scan.")
@@ -773,7 +774,7 @@ async def _scan_shodan_c2_async():
     # Each query is a focused slice of the compound C2 query.
     # Shodan doesn't support deeply nested OR/AND in a single query reliably,
     # so we split into targeted sub-queries and deduplicate results.
-    C2_QUERIES = [
+    C2_QUERIES = [  # noqa: N806 — function-scoped constant
         # Header-based detection — most precise, server is actively serving bot API
         'http.headers:"X-Telegram-Bot-Api"',
         # Malware category keywords paired with Telegram bot pattern
@@ -839,10 +840,10 @@ async def _scan_shodan_c2_async():
 # Query constants extracted to _scanner/queries.py — re-exported here so
 # all existing references in this file continue to work unchanged.
 # Generic scanner base — used by the 5 structurally identical simple scanners.
-import contextlib
+import contextlib  # noqa: E402 — intentional deferred import
 
-from app.workers.tasks._scanner.base import _run_scanner
-from app.workers.tasks._scanner.queries import (  # noqa: F401
+from app.workers.tasks._scanner.base import _run_scanner  # noqa: E402 — intentional deferred import
+from app.workers.tasks._scanner.queries import (  # noqa: F401, E402
     FOFA_DEFAULT_QUERIES,
     NETLAS_QUERIES,
     SHODAN_DEFAULT_QUERIES,
@@ -1154,16 +1155,17 @@ async def _scan_dockerhub_async():
     seen_images = set()
 
     # Free, unauthenticated Docker registry API endpoints
-    SEARCH_URL = "https://hub.docker.com/v2/search/repositories"
-    AUTH_URL = "https://auth.docker.io/token"
-    REGISTRY_URL = "https://registry-1.docker.io/v2"
+    SEARCH_URL = "https://hub.docker.com/v2/search/repositories"  # noqa: N806 — function-scoped constant
+    AUTH_URL = "https://auth.docker.io/token"  # noqa: N806 — function-scoped constant
+    REGISTRY_URL = "https://registry-1.docker.io/v2"  # noqa: N806 — function-scoped constant
 
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         # Step 1: Find images via Search API
         for q in queries:
             try:
                 res = await client.get(SEARCH_URL, params={"query": q, "page_size": 20})
-                if res.status_code != 200: continue
+                if res.status_code != 200:
+                    continue
                 data = res.json()
                 for repo in data.get("results", []):
                     img_name = repo.get("repo_name")
@@ -1182,16 +1184,19 @@ async def _scan_dockerhub_async():
             # Dedup check
             seen_key = f"dockerhub:seen:{img_name}"
             try:
-                if redis_client.exists(seen_key): continue
+                if redis_client.exists(seen_key):
+                    continue
             except Exception as _swallowed:
                 logger.debug(f"[suppressed] {_swallowed}")
 
             try:
                 # 2a. Get anonymous bearer token for the specific repo
                 auth_res = await client.get(AUTH_URL, params={"service": "registry.docker.io", "scope": f"repository:{img_name}:pull"})
-                if auth_res.status_code != 200: continue
+                if auth_res.status_code != 200:
+                    continue
                 token = auth_res.json().get("token")
-                if not token: continue
+                if not token:
+                    continue
 
                 headers = {
                     "Authorization": f"Bearer {token}",
@@ -1200,16 +1205,19 @@ async def _scan_dockerhub_async():
 
                 # 2b. Get manifest for the 'latest' tag
                 manifest_res = await client.get(f"{REGISTRY_URL}/{img_name}/manifests/latest", headers=headers)
-                if manifest_res.status_code != 200: continue
+                if manifest_res.status_code != 200:
+                    continue
                 manifest_data = manifest_res.json()
 
                 # 2c. Extract config digest
                 config_digest = manifest_data.get("config", {}).get("digest")
-                if not config_digest: continue
+                if not config_digest:
+                    continue
 
                 # 2d. Fetch the config blob
                 blob_res = await client.get(f"{REGISTRY_URL}/{img_name}/blobs/{config_digest}", headers=headers)
-                if blob_res.status_code != 200: continue
+                if blob_res.status_code != 200:
+                    continue
                 config_data = blob_res.json()
 
                 # 2e. Search the 'Env' and 'Cmd' arrays in the container config

@@ -1101,8 +1101,8 @@ def broadcast_pending():
     # TTL = 120s initial; renewed every 90s while the batch runs so it never expires
     # mid-batch regardless of batch size. Replaces the old fixed-240s TTL that expired
     # on large backlogs (500 msgs × 1.5s = 750s >> 240s).
-    LOCK_TTL = 120
-    RENEW_EVERY = 90  # renew when < 30s remain
+    LOCK_TTL = 120  # noqa: N806 — function-scoped constant
+    RENEW_EVERY = 90  # noqa: N806 — function-scoped constant  # renew when < 30s remain
     lock = redis_client.lock(lock_key, timeout=LOCK_TTL, blocking=False)
 
     acquired = lock.acquire()
@@ -1137,10 +1137,8 @@ def broadcast_pending():
     finally:
         _stop_renew.set()
         renew_thread.join(timeout=2)
-        try:
-            lock.release()
-        except redis.exceptions.LockError:
-            pass  # Lock expired or already released
+        with contextlib.suppress(redis.exceptions.LockError):
+            lock.release()  # Lock expired or already released
 
 async def _broadcast_logic():
     """
@@ -1164,7 +1162,7 @@ async def _broadcast_logic():
     # fits inside CLAIM_TIMEOUT_MINUTES=15 with headroom).
     # Raise via BROADCAST_BATCH_SIZE=500 if you have enough bot credentials
     # in the rotation pool to sustain the higher send rate without flood-wait.
-    BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 200))
+    BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 200))  # noqa: N806 — function-scoped constant
     messages = await _fetch_pending_broadcast_messages(BROADCAST_BATCH_SIZE, now_iso)
     if not messages:
         # Only log periodically or if verbose debug needed?
@@ -1197,9 +1195,9 @@ async def _broadcast_logic():
     #   * On any flood_wait during a send: reset to BASE * 1.5 (hard bump).
     #   * After 10 consecutive non-flood sends: multiply by 0.9 (gradual).
     # Bounded to [1.0s, 10.0s]. Base = BROADCAST_INTER_MESSAGE_DELAY_SECONDS.
-    _ADAPTIVE_DELAY_KEY = "broadcast:adaptive_delay"
-    _ADAPTIVE_MIN = 1.0
-    _ADAPTIVE_MAX = 10.0
+    _ADAPTIVE_DELAY_KEY = "broadcast:adaptive_delay"  # noqa: N806 — function-scoped constant
+    _ADAPTIVE_MIN = 1.0  # noqa: N806 — function-scoped constant
+    _ADAPTIVE_MAX = 10.0  # noqa: N806 — function-scoped constant
 
     def _clamp_delay(v: float) -> float:
         return max(_ADAPTIVE_MIN, min(_ADAPTIVE_MAX, v))
@@ -1860,8 +1858,8 @@ async def _canary_flow_check_logic():
         # contention doesn't false-fail. If another worker won the claim lock,
         # the row will flip to is_broadcasted=True moments later once that
         # worker's send completes. Stop early on success or persisted error.
-        CANARY_BROADCAST_POLL_SECONDS = 15.0
-        CANARY_BROADCAST_POLL_INTERVAL = 3.0
+        CANARY_BROADCAST_POLL_SECONDS = 15.0  # noqa: N806 — function-scoped constant
+        CANARY_BROADCAST_POLL_INTERVAL = 3.0  # noqa: N806 — function-scoped constant
         elapsed = 0.0
         polls = 0
         rows: list[dict[str, Any]] = []
@@ -2081,9 +2079,8 @@ async def _probe_webhook_url(url: str) -> dict:
                 ctx.verify_mode = ssl.CERT_NONE
 
                 def _fetch_cert_der():
-                    with socket.create_connection((hostname, port), timeout=5) as sock:
-                        with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
-                            return ssock.getpeercert(binary_form=True)
+                    with socket.create_connection((hostname, port), timeout=5) as sock, ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                        return ssock.getpeercert(binary_form=True)
 
                 der = await asyncio.to_thread(_fetch_cert_der)
                 if der:
@@ -2725,7 +2722,8 @@ async def _report_pin_metrics_logic() -> dict:
             host = urlparse(url).hostname
             if host:
                 host_counter[host] += 1
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
 
     top_hosts = host_counter.most_common(10)
@@ -3013,7 +3011,8 @@ async def _reclassify_dark_matter_logic(max_credentials: int) -> dict:
                 continue
             try:
                 token = security.decrypt(enc).strip()
-            except Exception:
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
                 continue
             inspected += 1
             try:
@@ -3022,8 +3021,9 @@ async def _reclassify_dark_matter_logic(max_credentials: int) -> dict:
                     to_active.append(row["id"])
                 elif r.status_code in (401, 404):
                     to_revoke.append(row["id"])
-            except Exception:
+            except Exception as _swallowed:
                 # Ambiguous — leave alone this pass
+                logger.debug(f"[suppressed] {_swallowed}")
                 continue
 
     # Apply updates in batches
@@ -3681,7 +3681,8 @@ async def _webhook_port_sitemap_diag_logic() -> dict:
         # Extract port from URL (defaults 443/80 by scheme)
         try:
             parsed = urlparse(url)
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         port_counter[port] += 1
@@ -4043,8 +4044,9 @@ async def _pin_general_readme_logic() -> dict:
             prev_id = int(prev.data[0]["value"])
             with contextlib.suppress(Exception):
                 await broadcaster.unpin_message(settings.MONITOR_GROUP_ID, prev_id)
-    except Exception:
+    except Exception as _swallowed:
         # system_state table might not exist yet — that's fine
+        logger.debug(f"[suppressed] {_swallowed}")
         pass
 
     # Send new readme to General topic (no thread_id → chat-level = General)
@@ -4074,8 +4076,9 @@ async def _pin_general_readme_logic() -> dict:
                 on_conflict="key",
             )
         )
-    except Exception:
+    except Exception as _swallowed:
         # system_state may not exist — pin still works, just no dedup
+        logger.debug(f"[suppressed] {_swallowed}")
         pass
 
     return {"status": "ok", "message_id": sent_id, "pinned": pinned}
@@ -4832,19 +4835,19 @@ async def _rescrape_active_logic():
     from app.core.redis_srv import redis_srv
     metrics.inc("rescrape.started")
 
-    BATCH_SIZE = int(os.getenv("RESCRAPE_BATCH_SIZE", 50))
+    BATCH_SIZE = int(os.getenv("RESCRAPE_BATCH_SIZE", 50))  # noqa: N806 — function-scoped constant
     # Stagger task dispatch: spread BATCH_SIZE tasks across RESCRAPE_SPREAD_SECONDS
     # so they don't all hit the UserAgent simultaneously and trigger FloodWait.
     # Default: 50 tasks over 300s = one task every 6s.
-    SPREAD_SECONDS = int(os.getenv("RESCRAPE_SPREAD_SECONDS", 300))
+    SPREAD_SECONDS = int(os.getenv("RESCRAPE_SPREAD_SECONDS", 300))  # noqa: N806 — function-scoped constant
     # Backpressure threshold: skip queueing if the scrape queue already has this
     # many pending tasks.  exfiltrate_chat routes to the 'scrape' queue and each
     # task can hold a session lock for 30-300s.  Piling on more tasks while the
     # previous batch is still draining causes the session-acquisition retry loop
     # to spin at 0% CPU useful work and inflates scrape queue depth unboundedly.
     # Default: 2 × BATCH_SIZE (allow one overlap batch in flight, then gate).
-    BACKPRESSURE_THRESHOLD = int(os.getenv("RESCRAPE_BACKPRESSURE_THRESHOLD", BATCH_SIZE * 2))
-    CURSOR_KEY = "rescrape:cursor:last_id"
+    BACKPRESSURE_THRESHOLD = int(os.getenv("RESCRAPE_BACKPRESSURE_THRESHOLD", BATCH_SIZE * 2))  # noqa: N806 — function-scoped constant
+    CURSOR_KEY = "rescrape:cursor:last_id"  # noqa: N806 — function-scoped constant
 
     broadcaster = get_broadcaster()
 

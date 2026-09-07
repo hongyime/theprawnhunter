@@ -60,7 +60,8 @@ def is_valid_telegram_token(token_str: str) -> bool:
             return False
 
         return True
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return False
 
 

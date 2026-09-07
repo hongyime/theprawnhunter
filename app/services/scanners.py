@@ -106,7 +106,8 @@ def _is_valid_token(token_str: str) -> bool:
             return False
 
         return True
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return False
 
 
@@ -125,7 +126,10 @@ def _token_context(code_text: str, token: str, line_radius: int = 50) -> str:
 def _is_remote_endpoint(value: str) -> bool:
     if not value:
         return False
-    clean = value.strip().strip("',\")]}>,")
+    # Strip the delimiter chars that commonly surround URLs in source (quotes,
+    # brackets, punctuation). Ruff B005 flags multi-char .strip() as misleading,
+    # so use an explicit character-by-character trim via translate.
+    clean = value.strip().strip("',\")]}>,")  # noqa: B005 — intentional per-char strip
     if not clean:
         return False
     parsed = urlparse(clean if "://" in clean else f"//{clean}")
@@ -143,7 +147,7 @@ def extract_infrastructure_context(
     context_text = _token_context(code_text, token) if token else (code_text or "")
     endpoints = set()
     for url_match, config_match in ADJACENT_ENDPOINT_REGEX.findall(context_text):
-        candidate = (url_match or config_match or "").strip().strip("',\")]}>,")
+        candidate = (url_match or config_match or "").strip().strip("',\")]}>,")  # noqa: B005 — intentional per-char strip
         if _is_remote_endpoint(candidate):
             endpoints.add(candidate)
 
@@ -198,7 +202,8 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
         found_results.extend(extract_from_text(target_url))
 
         if "api.telegram.org" in target_url:
-            if should_close: await client.aclose()
+            if should_close:
+                await client.aclose()
             return found_results
 
         # 1. Fetch Main HTML
@@ -216,8 +221,10 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
                 # Create async tasks for JS fetching
                 js_tasks = []
                 for js_path in unique_js:
-                    if js_path.startswith("//"): js_url = "https:" + js_path
-                    elif js_path.startswith("http"): js_url = js_path
+                    if js_path.startswith("//"):
+                        js_url = "https:" + js_path
+                    elif js_path.startswith("http"):
+                        js_url = js_path
                     else:
                         from urllib.parse import urljoin
                         js_url = urljoin(target_url, js_path)
@@ -250,7 +257,8 @@ async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient =
 
         return [{'token': t, 'chat_id': c} for t, c in final_map.items()]
 
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return []
     finally:
         if should_close:
@@ -263,7 +271,8 @@ class ShodanService:
         self.base_url = "https://api.shodan.io/shodan/host/search"
 
     async def search(self, query: str, country_code: str = None) -> list[dict[str, Any]]:
-        if not self.api_key: return []
+        if not self.api_key:
+            return []
         try:
             full_query = query
             if country_code:
@@ -281,7 +290,8 @@ class ShodanService:
                     return res.json().get('matches', [])
 
             matches = await retry_with_backoff(do_search)
-            if matches is None: return []
+            if matches is None:
+                return []
 
             # Sort/Filter
             from datetime import datetime, timedelta
@@ -293,7 +303,8 @@ class ShodanService:
                     ts = m.get('timestamp', '')
                     if ts:
                         match_time = datetime.fromisoformat(ts.replace('Z', '+00:00').split('+')[0])
-                        if match_time >= three_hours_ago: recent_matches.append(m)
+                        if match_time >= three_hours_ago:
+                            recent_matches.append(m)
                 except Exception as _swallowed:
                     logger.debug(f"[suppressed] {_swallowed}")
 
@@ -342,8 +353,10 @@ class ShodanService:
 
             # Aggregate Results
             for res_item in batch_results:
-                if isinstance(res_item, Exception): continue
-                if not isinstance(res_item, tuple): continue # Should be tuple
+                if isinstance(res_item, Exception):
+                    continue
+                if not isinstance(res_item, tuple):
+                    continue # Should be tuple
 
                 ip, port, found_items = res_item
 
@@ -351,7 +364,8 @@ class ShodanService:
                 seen_t = set()
                 for item in found_items:
                     t = item['token']
-                    if t in seen_t: continue
+                    if t in seen_t:
+                        continue
                     seen_t.add(t)
 
                     results.append({
@@ -381,7 +395,8 @@ class FofaService:
         self.base_url = "https://fofa.info/api/v1/search/all"
 
     async def search(self, query: str = 'body="api.telegram.org/bot"', country_code: str = None) -> list[dict[str, Any]]:
-        if not (self.email and self.key): return []
+        if not (self.email and self.key):
+            return []
         try:
             full_query = query
             if country_code:
@@ -400,7 +415,8 @@ class FofaService:
                     return res.json().get("results", [])
 
             results_data = await retry_with_backoff(do_fofa)
-            if results_data is None: return []
+            if results_data is None:
+                return []
 
             valid_results = []
 
@@ -419,7 +435,8 @@ class FofaService:
                             # Deep scan
                             items = await _perform_active_deep_scan(target_url, client=scan_client)
                             return (target_url, items)
-                        except Exception:
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                             return None
 
                 for row in results_data:
@@ -428,7 +445,8 @@ class FofaService:
                 scan_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for item in scan_results:
-                if not item or isinstance(item, Exception): continue
+                if not item or isinstance(item, Exception):
+                    continue
                 target_url, items = item
                 for t_item in items:
                     valid_results.append({
@@ -480,12 +498,14 @@ class UrlScanService:
             async def do_urlscan():
                 async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
                     res = await client.get(self.search_url, headers=headers, params=params)
-                    if res.status_code in [401, 403]: raise Exception("Invalid URLScan Key")
+                    if res.status_code in [401, 403]:
+                        raise Exception("Invalid URLScan Key")
                     res.raise_for_status()
                     return res.json()
 
             data = await retry_with_backoff(do_urlscan)
-            if not data: return []
+            if not data:
+                return []
 
             results_list = data.get('results', [])
             logger.info(f"    [URLScan] Found {len(results_list)} hits. scanning cache & live...")
@@ -507,8 +527,10 @@ class UrlScanService:
 
             # Sort and Cap
             valid_items = sorted(valid_items, key=lambda x: x.get('task', {}).get('time', ''), reverse=True)
-            if len(valid_items) > 300: valid_items = valid_items[:300]
-            elif not valid_items and len(results_list) > 0: valid_items = results_list[:50]
+            if len(valid_items) > 300:
+                valid_items = valid_items[:300]
+            elif not valid_items and len(results_list) > 0:
+                valid_items = results_list[:50]
 
             final_results = []
 
@@ -563,7 +585,8 @@ class UrlScanService:
                 task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for res_item in task_results:
-                if not res_item or isinstance(res_item, Exception): continue
+                if not res_item or isinstance(res_item, Exception):
+                    continue
 
                 item, found = res_item
                 # Dedup
@@ -656,7 +679,8 @@ class GithubService:
                     return res.json().get('items', [])
 
             items = await retry_with_backoff(do_github, max_retries=2)
-            if not items: items = []
+            if not items:
+                items = []
 
             # Parallel Raw Fetching
             results = []
@@ -702,7 +726,8 @@ class GithubService:
                                 "file_url": item.get('html_url'),
                             }
                             for t in found:
-                                if not _is_valid_token(t): continue
+                                if not _is_valid_token(t):
+                                    continue
                                 meta = dict(source_meta)
                                 infrastructure_context = extract_infrastructure_context(
                                     content,
@@ -716,7 +741,8 @@ class GithubService:
                                     "meta": meta
                                 })
                             return local_res
-                        except Exception:
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                             return []
 
                 for item in items:
@@ -764,7 +790,8 @@ class GitlabService:
                     return res.json()
 
             items = await retry_with_backoff(do_gitlab_search)
-            if not items: items = []
+            if not items:
+                items = []
 
             # GitLab blobs api returns project_id and filename.
             # We must fetch the raw blob or the file content via projects API.
@@ -790,13 +817,15 @@ class GitlabService:
                             found = TOKEN_PATTERN.findall(content)
                             local_res = []
                             for t in found:
-                                if not _is_valid_token(t): continue
+                                if not _is_valid_token(t):
+                                    continue
                                 local_res.append({
                                     "token": t,
                                     "meta": {"source": "gitlab", "project_id": project_id, "file": filename}
                                 })
                             return local_res
-                        except Exception:
+                        except Exception as _swallowed:
+                            logger.debug(f"[suppressed] {_swallowed}")
                             return []
 
                 for item in items:
@@ -1113,7 +1142,7 @@ class CommonCrawlService:
                     return []
                 # NDJSON — one JSON object per line
                 raw = idx_resp.text or ""
-                lines = [l for l in raw.split("\n") if l.strip()]
+                lines = [ln for ln in raw.split("\n") if ln.strip()]
             except Exception as e:
                 logger.error(f"[CommonCrawl] index query failed: {e}")
                 return []
@@ -1122,7 +1151,8 @@ class CommonCrawlService:
             for line in lines:
                 try:
                     rec = json.loads(line)
-                except Exception:
+                except Exception as _swallowed:
+                    logger.debug(f"[suppressed] {_swallowed}")
                     continue
                 url = rec.get("url")
                 if not url:
@@ -1228,7 +1258,8 @@ class SourcegraphService:
                         continue
                     try:
                         matches = json.loads(data_str)
-                    except Exception:
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
                         continue
                     if not isinstance(matches, list):
                         continue

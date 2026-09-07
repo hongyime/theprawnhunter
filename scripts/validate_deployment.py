@@ -11,15 +11,15 @@ def test_core_imports():
     """Test all core module imports"""
     print("1. Testing core imports...")
     try:
-        from app.core.config import settings
-        from app.core.database import db
-        from app.core.security import encrypt_token, decrypt_token
-        from app.core.redis_srv import RedisService
-        from app.core.logger import get_logger
-        from app.core.retry import retry
-        from app.core.circuit_breaker import get_circuit_breaker
-        from app.core.metrics import MetricsCollector
-        from app.core.audit import AuditLogger
+        from app.core.audit import AuditLogger  # noqa: F401 — validating import
+        from app.core.circuit_breaker import get_circuit_breaker  # noqa: F401 — validating import
+        from app.core.config import settings  # noqa: F401 — validating import
+        from app.core.database import db  # noqa: F401 — validating import
+        from app.core.logger import get_logger  # noqa: F401 — validating import
+        from app.core.metrics import MetricsCollector  # noqa: F401 — validating import
+        from app.core.redis_srv import RedisService  # noqa: F401 — validating import
+        from app.core.retry import retry  # noqa: F401 — validating import
+        from app.core.security import decrypt_token, encrypt_token  # noqa: F401 — validating import
         print("   ✅ All core imports successful")
         return True
     except Exception as e:
@@ -30,10 +30,12 @@ def test_service_imports():
     """Test service imports"""
     print("\n2. Testing service imports...")
     try:
-        from app.services.scanners import ShodanService
-        from app.services.bot_manager_srv import BotClientManager
-        from app.services.scraper_srv import ScraperService
-        from app.services.broadcaster_srv import BroadcasterService
+        from app.services.bot_manager_srv import BotClientManager  # noqa: F401 — validating import
+        from app.services.broadcaster_srv import (
+            BroadcasterService,  # noqa: F401 — validating import
+        )
+        from app.services.scanners import ShodanService  # noqa: F401 — validating import
+        from app.services.scraper_srv import ScraperService  # noqa: F401 — validating import
         print("   ✅ All service imports successful")
         return True
     except Exception as e:
@@ -44,13 +46,17 @@ def test_task_imports():
     """Test Celery task imports"""
     print("\n3. Testing task imports...")
     try:
-        from app.workers.tasks.flow_tasks import (
+        from app.workers.tasks.audit_tasks import (
+            audit_active_topics,  # noqa: F401 — validating import
+        )
+        from app.workers.tasks.flow_tasks import (  # noqa: F401 — validating import
+            broadcast_finding,
             enrich_credential,
             exfiltrate_history,
-            broadcast_finding,
         )
-        from app.workers.tasks.scanner_tasks import run_shodan_scan
-        from app.workers.tasks.audit_tasks import audit_active_topics
+        from app.workers.tasks.scanner_tasks import (
+            run_shodan_scan,  # noqa: F401 — validating import
+        )
         print("   ✅ All task imports successful")
         return True
     except Exception as e:
@@ -61,10 +67,12 @@ def test_api_imports():
     """Test API imports"""
     print("\n4. Testing API imports...")
     try:
-        from app.api.main import app
-        from app.api.routers.health import router as health_router
-        from app.api.routers.monitor import router as monitor_router
-        from app.api.routers.ingest import router as ingest_router
+        from app.api.main import app  # noqa: F401 — validating import
+        from app.api.routers.health import router as health_router  # noqa: F401 — validating import
+        from app.api.routers.ingest import router as ingest_router  # noqa: F401 — validating import
+        from app.api.routers.monitor import (
+            router as monitor_router,  # noqa: F401 — validating import
+        )
         print("   ✅ All API imports successful")
         return True
     except Exception as e:
@@ -75,8 +83,11 @@ def test_helper_imports():
     """Test helper utilities"""
     print("\n5. Testing helper utilities...")
     try:
-        from app.utils.helpers import validate_token, extract_chat_id
-        from app.utils.http_client import AsyncHttpClient
+        from app.utils.helpers import (  # noqa: F401 — validating import
+            extract_chat_id,
+            validate_token,
+        )
+        from app.utils.http_client import AsyncHttpClient  # noqa: F401 — validating import
         print("   ✅ Helper utilities imported")
         return True
     except Exception as e:
@@ -130,7 +141,7 @@ def test_new_features():
         from app.core.metrics import MetricsCollector
         metrics = MetricsCollector()
         metrics.increment("test")
-        
+
         print("   ✅ New features validated")
         return True
     except Exception as e:
@@ -141,17 +152,17 @@ def test_security():
     """Test security components"""
     print("\n8. Testing security...")
     try:
-        from app.core.security import encrypt_token, decrypt_token
-        
+        from app.core.security import decrypt_token, encrypt_token
+
         # Test encryption/decryption roundtrip
         test_token = "123456789:AAHXXXXXXXXXXXXXXXXXXXXXXXXXXX"
         encrypted = encrypt_token(test_token)
         decrypted = decrypt_token(encrypted)
         assert decrypted == test_token, "Encryption roundtrip failed"
-        
+
         # Ensure encrypted is different from plaintext
         assert encrypted != test_token, "Token not encrypted!"
-        
+
         print("   ✅ Security validation passed")
         return True
     except Exception as e:
@@ -163,9 +174,9 @@ def main():
     print("=" * 60)
     print(" Deployment Validation Script")
     print("=" * 60)
-    
+
     all_passed = True
-    
+
     # Run all tests
     all_passed &= test_core_imports()
     all_passed &= test_service_imports()
@@ -175,7 +186,7 @@ def main():
     all_passed &= test_config_validation()
     all_passed &= test_new_features()
     all_passed &= test_security()
-    
+
     print("\n" + "=" * 60)
     if all_passed:
         print(" ✅ All validation checks passed")

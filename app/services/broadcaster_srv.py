@@ -326,7 +326,8 @@ class BroadcasterService:
 
             if identity["type"] == "bot":
                 token = identity["id"]
-                if token in self._failed_tokens: continue
+                if token in self._failed_tokens:
+                    continue
 
                 bot = self._get_bot_instance(token)
                 try:
@@ -587,11 +588,13 @@ class BroadcasterService:
         """Ensures a forum topic exists. Retries once before raising."""
         try:
             existing_id = await user_agent.find_topic_id(group_id, topic_name)
-            if existing_id: return existing_id
+            if existing_id:
+                return existing_id
         except Exception as _swallowed:
             logger.debug(f"[suppressed] {_swallowed}")
 
-        if topic_name in ["General", "general", "main"]: return 1
+        if topic_name in ["General", "general", "main"]:
+            return 1
 
         bot = self._get_bot_instance(self.bot_tokens[0])
         last_err = None

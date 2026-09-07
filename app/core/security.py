@@ -18,9 +18,13 @@ Never delete a legacy key while rows encrypted with it still exist —
 you'd lose access to those tokens permanently.
 """
 
+import logging
+
 from cryptography.fernet import Fernet, MultiFernet
 
 from app.core.config import settings
+
+logger = logging.getLogger("security")
 
 
 class SecurityService:
@@ -33,10 +37,10 @@ class SecurityService:
             if lk and lk.strip():
                 try:
                     keys.append(Fernet(lk.strip().encode()))
-                except Exception:
+                except Exception as _swallowed:
                     # Malformed key in legacy list — skip; we don't want to fail
                     # the whole startup for one bad legacy value.
-                    pass
+                    logger.debug(f"[suppressed legacy key] {_swallowed}")
 
         # MultiFernet encrypts with the FIRST key and decrypts with any of them.
         self.fernet = MultiFernet(keys) if len(keys) > 1 else keys[0]

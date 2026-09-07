@@ -34,10 +34,10 @@ async def _audit_active_topics_async():
     # Cap to AUDIT_BATCH_SIZE (default 100) — 100 × 0.2s Telegram ping = ~20s minimum.
     # Full sweep advances via a Redis cursor so successive hourly runs cover ALL credentials,
     # not just the first 100 that Postgres happens to return.
-    AUDIT_BATCH_SIZE = int(os.getenv("AUDIT_BATCH_SIZE", 100))
+    AUDIT_BATCH_SIZE = int(os.getenv("AUDIT_BATCH_SIZE", 100))  # noqa: N806 — function-scoped constant
 
     # Cursor: created_at of last-seen credential (ISO string stored in Redis)
-    CURSOR_KEY = "audit:topics:cursor"
+    CURSOR_KEY = "audit:topics:cursor"  # noqa: N806 — function-scoped constant
     try:
         import redis as _redis
 
@@ -258,11 +258,11 @@ async def _system_self_heal_async():
 
     try:
         import os
-        SELF_HEAL_BATCH = int(os.getenv("SELF_HEAL_BATCH_SIZE", 200))
+        SELF_HEAL_BATCH = int(os.getenv("SELF_HEAL_BATCH_SIZE", 200))  # noqa: N806 — function-scoped constant
 
         # Cursor-based pagination — advances through all active credentials across 6h runs
         # instead of always fetching the same first-N rows (which may never cycle through).
-        HEAL_CURSOR_KEY = "self_heal:cursor"
+        HEAL_CURSOR_KEY = "self_heal:cursor"  # noqa: N806 — function-scoped constant
         try:
             import redis as _redis
 
@@ -649,7 +649,7 @@ async def _backfill_general_messages_async():
     broadcaster = get_broadcaster()
     await broadcaster.send_log("🔄 **Backfill**: Scanning for messages stuck in General topic...")
 
-    BATCH_SIZE = int(os.getenv("BACKFILL_BATCH_SIZE", 200))
+    BATCH_SIZE = int(os.getenv("BACKFILL_BATCH_SIZE", 200))  # noqa: N806 — function-scoped constant
 
     try:
         # Find active credentials that have a valid topic_id (i.e., they have

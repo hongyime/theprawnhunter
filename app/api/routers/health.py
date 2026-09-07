@@ -424,7 +424,8 @@ async def get_bot_pool():
         try:
             if client.is_connected():
                 local_cached_clients += 1
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
 
     # Cross-process signal — Redis lock keys are the source of truth

@@ -67,9 +67,10 @@ def _consume_pivot_budget(seed_type: str) -> bool:
             )
             return False
         return True
-    except Exception:
+    except Exception as _swallowed:
         # Redis down: fail OPEN to keep pivots flowing, since failure mode is
         # transient and pivots are recoverable on next scan anyway.
+        logger.debug(f"[suppressed] {_swallowed}")
         return True
 
 

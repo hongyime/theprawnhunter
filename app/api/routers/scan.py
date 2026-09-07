@@ -49,9 +49,9 @@ async def trigger_scan(request: ScanRequest):
             "source": request.source,
             "query": request.query,
         }
-    except Exception:
+    except Exception as err:
         # Do NOT echo raw exception text — it can contain broker URLs
         # (Redis DSN with password) or other secrets.
         import logging
         logging.getLogger(__name__).exception("scan trigger failed")
-        raise HTTPException(status_code=500, detail="Failed to queue task")
+        raise HTTPException(status_code=500, detail="Failed to queue task") from err

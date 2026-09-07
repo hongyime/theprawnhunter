@@ -43,7 +43,8 @@ class WebhookDecision:
 def _response_json(response: httpx.Response) -> dict[str, Any]:
     try:
         data = response.json()
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return {}
     return data if isinstance(data, dict) else {}
 

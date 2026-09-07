@@ -29,15 +29,15 @@ from telethon.errors import SessionPasswordNeededError
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-import contextlib
+import contextlib  # noqa: E402 — intentional deferred import
 
-from app.core.config import settings
-from app.core.constants import (
+from app.core.config import settings  # noqa: E402 — intentional deferred import
+from app.core.constants import (  # noqa: E402 — intentional deferred import
     LOCK_TTL_SECONDS,
     SESSION_FILE_PERMISSIONS,
     TELEGRAM_SERVICE_NOTIFICATIONS_ID,
 )
-from app.core.database import db
+from app.core.database import db  # noqa: E402 — intentional deferred import
 
 # Unique ID for this process instance — used in distributed Redis locks
 INSTANCE_ID = str(uuid.uuid4())
@@ -1512,7 +1512,7 @@ async def _run_bot(token: str, is_primary: bool = False):
         logger.info(f"🚀 Bot @{bot_username} Started and Polling...")
 
         heartbeat_count = 0
-        _ALIVE_FILE = "/tmp/bot_alive"
+        _ALIVE_FILE = "/tmp/bot_alive"  # noqa: N806 — function-scoped constant
         while not stop_event.is_set():
             await asyncio.sleep(10)
             heartbeat_count += 1
@@ -1571,9 +1571,11 @@ async def main():
     tokens = []
     for token in raw_tokens:
         token = token.strip()
-        if not token: continue
+        if not token:
+            continue
         bot_id = _bot_id_from_token(token)
-        if bot_id in seen_ids: continue
+        if bot_id in seen_ids:
+            continue
         seen_ids.add(bot_id)
         tokens.append(token)
 

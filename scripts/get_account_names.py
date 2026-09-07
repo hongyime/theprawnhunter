@@ -4,9 +4,9 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from telethon import TelegramClient
+from telethon import TelegramClient  # noqa: E402 — intentional deferred import
 
-from app.core.config import settings
+from app.core.config import settings  # noqa: E402 — intentional deferred import
 
 
 async def get_names():

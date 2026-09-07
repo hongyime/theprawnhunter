@@ -1,15 +1,17 @@
 import sys
 
 sys.path.insert(0, '/app')
-import asyncio
-import logging
+import asyncio  # noqa: E402 — intentional deferred import
+import logging  # noqa: E402 — intentional deferred import
 
-from telethon import TelegramClient
+from telethon import TelegramClient  # noqa: E402 — intentional deferred import
 
-from app.core.config import settings
-from app.core.database import db
-from app.core.security import security
-from app.services.broadcaster_srv import BroadcasterService
+from app.core.config import settings  # noqa: E402 — intentional deferred import
+from app.core.database import db  # noqa: E402 — intentional deferred import
+from app.core.security import security  # noqa: E402 — intentional deferred import
+from app.services.broadcaster_srv import (  # noqa: E402 — intentional deferred import
+    BroadcasterService,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("backfill")

@@ -411,8 +411,8 @@ async def _refresh_pending_tokens_async():
     # Cursor-based pagination — advances through ALL pending tokens across successive
     # runs instead of re-processing the same oldest-500 every time.
     # Key stores the last-seen `updated_at` ISO string; reset when batch is empty.
-    REFRESH_CURSOR_KEY = "refresh_pending:cursor"
-    REFRESH_BATCH_SIZE = int(os.getenv("REFRESH_PENDING_BATCH_SIZE", 500))
+    REFRESH_CURSOR_KEY = "refresh_pending:cursor"  # noqa: N806 — function-scoped constant
+    REFRESH_BATCH_SIZE = int(os.getenv("REFRESH_PENDING_BATCH_SIZE", 500))  # noqa: N806 — function-scoped constant
     cursor_val = redis_client.get(REFRESH_CURSOR_KEY)
 
     q = (
@@ -444,7 +444,8 @@ async def _refresh_pending_tokens_async():
             continue
         try:
             token = security.decrypt(encrypted_token)
-        except Exception:
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
             continue
         if not token:
             continue
@@ -621,7 +622,8 @@ def _scraper_srv_is_monitor(token: str) -> bool:
     try:
         from app.services.scraper_srv import scraper_service as _s
         return _s.is_monitor_bot(token)
-    except Exception:
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
         return False
 
 
