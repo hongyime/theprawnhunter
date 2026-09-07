@@ -133,6 +133,15 @@ limiter = Limiter(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# slowapi 0.1.9/0.1.10 bug: when Redis is unreachable, _check_limits catches the
+# ConnectionError and looks up `app.exception_handlers.get(ConnectionError, _rate_limit_exceeded_handler)`.
+# Without a ConnectionError handler, it falls back to _rate_limit_exceeded_handler which
+# calls `exc.detail` — a RateLimitExceeded-only attribute. Register a safe fallback so
+# Redis connection failures degrade gracefully instead of crashing the middleware.
+def _redis_error_handler(request, exc):  # noqa: ARG001
+    from starlette.responses import Response
+    return Response(status_code=200)  # allow request through on Redis miss
+app.add_exception_handler(ConnectionError, _redis_error_handler)
 app.add_middleware(SlowAPIMiddleware)
 # ─────────────────────────────────────────────────────────────────────
 
