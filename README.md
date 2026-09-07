@@ -1,154 +1,80 @@
-# OSINT Credential Discovery Pipeline
+# theprawnhunter
 
-A self-hosted, continuously-running OSINT pipeline that discovers exposed bot tokens across 13 public data sources, validates them against the live API, harvests accessible chat history, and broadcasts findings to a private Telegram supergroup. Delivered as a Docker Compose stack.
-
-- **Runtime:** Python 3.11, FastAPI, Celery, Redis, Telethon
-- **Database:** Supabase (managed PostgreSQL) with Row Level Security
-- **Frontend (optional):** Next.js 16 + React 19  read-only dashboard
-- **Browser Extension (optional):** Manifest V3 Chrome extension  FOFA scraper
-- **Deployment:** Docker Compose (10 services)
+A self-hosted OSINT pipeline that discovers exposed Telegram Bot API tokens across 21 public data sources, validates each token against the live Telegram API, harvests accessible chat history via Telethon and the Bot API, and delivers findings to a private Telegram supergroup organised as per-bot forum topics. Delivered as a Docker Compose stack of 10 services backed by Supabase managed PostgreSQL and Redis.
 
 ---
 
 ## Prerequisites
 
-| Tool | Minimum Version | Notes |
+| Requirement | Minimum version | Notes |
 |---|---|---|
 | Docker Engine | 24.x | Tested on 29.x |
-| Docker Compose | v2 (bundled) | Use `docker compose`, not `docker-compose` |
-| Python | 3.11+ | Local dev and tests only |
-| Node.js | 18+ | Frontend only |
-| Supabase project |  | Free tier sufficient |
-| Telegram account |  | Required for `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` |
+| Docker Compose | v2 (bundled with Docker) | Use `docker compose`, not `docker-compose` |
+| Python | 3.11+ | Local dev and tests only — workers run Python 3.11 inside containers |
+| Node.js | 18+ | Frontend local dev only |
+| Supabase project | Free tier | 500 MB DB limit; Pro recommended for sustained use |
+| Telegram account | Any | Required for `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` |
+| Telegram bot(s) | One or more | Created via `@BotFather`; must be admin in the monitor supergroup |
+| `git` | Any recent | Required for cloning and running the repo |
 
 ---
 
-## Environment Configuration
+## Installation
 
-Copy `.env.template` to `.env` and fill in every value before starting the stack.
+### 1. Clone
+
+```bash
+git clone https://github.com/<owner>/theprawnhunter.git
+cd theprawnhunter
+```
+
+### 2. Create environment file
 
 ```bash
 cp .env.template .env
+# Open .env and fill in every variable marked as required
 ```
 
-### Required Variables
+Minimum required variables before first start:
 
-| Variable | Type | Description |
-|---|---|---|
-| `SUPABASE_URL` | URL | Supabase project URL (`https://<ref>.supabase.co`) |
-| `SUPABASE_KEY` | string | Supabase anon key  used by the frontend and extension |
-| `SUPABASE_SERVICE_ROLE_KEY` | string | Supabase service-role key  backend only, never expose to clients |
-| `REDIS_URL` | URL | Redis connection string (`redis://redis:6379/0` for Docker) |
-| `ENCRYPTION_KEY` | 44 chars | Fernet key  generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `MONITOR_BOT_TOKEN` | string | Comma-separated bot tokens used to post findings (e.g. `123:AAA,456:BBB`) |
-| `MONITOR_GROUP_ID` | integer | Supergroup chat ID where findings are posted; bot(s) must be admin |
-| `TELEGRAM_API_ID` | integer | From https://my.telegram.org |
-| `TELEGRAM_API_HASH` | string | 32-character hex from https://my.telegram.org |
-
-### Optional  Operations
-
-| Variable | Default | Description |
-|---|---|---|
-| `PROJECT_NAME` | `Telegram Hunter` | FastAPI application title |
-| `ENV` | `development` | Set to `production` to disable `/docs` and `/scan/trigger` |
-| `DEBUG` | `True` | Log verbosity |
-| `MONITOR_API_KEY` | *(unset)* | If set, all `/monitor/*` and `/health/detailed` endpoints require `X-Monitor-Key` header |
-| `ALERT_WEBHOOK_URL` | *(unset)* | When set, a JSON payload is POSTed here on `credential_activated` and `honeypot_update` events. Supports Slack, Splunk HEC, MISP, or any HTTP endpoint. |
-| `ALERT_WEBHOOK_SECRET` | *(unset)* | Sent as `X-Webhook-Secret` header with every webhook POST. Optional auth for your receiver. |
-| `WHITELISTED_BOT_IDS` | `""` | Comma-separated bot usernames or IDs kept in the monitor group |
-| `ANONYMOUS_ADMIN_ID` | `1087968824` | Telegram anonymous group admin bot ID |
-| `USER_SESSION_STRING` | *(unset)* | Telethon session string for user-agent invite flow |
-| `BROADCAST_INTERVAL_MINUTES` | `60` | How often pending messages are broadcast |
-| `RESCRAPE_INTERVAL_HOURS` | `1` | How often active chats are re-scraped |
-| `SCAN_INTERVAL_HOURS` | `4` | Primary scanner cadence |
-| `AUDIT_INTERVAL_HOURS` | `2` | Topic-integrity audit cadence |
-| `API_PORT` | `8011` | Host-side port for the API service |
-| `REDIS_PORT` | `6379` | Host-side port for Redis |
-| `FLOWER_PORT` | `8555` | Host-side port for the Flower Celery monitor |
-| `COMPOSE_PROJECT_NAME` | `TheprawnHunter` | Docker Compose namespace |
-| `EXTENSION_WRITE_SECRET` | *(unset)* | Secret for Chrome extension RLS policy. Must also be set in Supabase: `ALTER DATABASE postgres SET app.extension_write_secret = '<value>';` |
-| `TARGET_COUNTRIES` | *(built-in 50-country list)* | Optional JSON array of ISO-3166 codes for country-rotation scanning |
-| `TELEGRAM_DELETE_WEBHOOK_FOR_SCRAPE` | `False` | If `True`, `deleteWebhook` is called on 409 conflicts before polling. Destructive to any third party operating the bot. |
-| `TELEGRAM_HISTORY_TIMEOUT_SECONDS` | `90` | Per-scrape cap on Telethon history reads |
-| `TELEGRAM_CLIENT_DISCONNECT_TIMEOUT_SECONDS` | `10` | Grace period for lifecycle-safe Telethon cleanup |
-| `CANARY_CREDENTIAL_ID` | *(unset)* | UUID of a `discovered_credentials` row used as the synthetic parent for `flow.canary_flow_check`. Canary stays `disabled` until this is set. |
-| `CANARY_EXPECTED_TEXT` | `TheprawnHunter-canary` | Prefix for synthetic canary message content |
-| `CANARY_MAX_AGE_SECONDS` | `1800` | Age budget for a canary run before it's considered stale |
-| `PUBLIC_FRONTEND_URL` | *(unset)* | Optional public URL of the dashboard — canary hits it to verify frontend reachability |
-
-### Optional  Scanner API Keys
-
-All scanner keys degrade gracefully when absent  the corresponding scanner is silently skipped.
-
-| Variable | Scanner |
-|---|---|
-| `SHODAN_KEY` | Shodan |
-| `FOFA_EMAIL` + `FOFA_KEY` | FOFA API (paid plan only) |
-| `URLSCAN_KEY` | URLScan.io |
-| `EXA_API_KEY`, `EXA_API_KEY_2`, `EXA_API_KEY_3` | Exa paste/code search; extra keys are rotated per request |
-| `GITHUB_TOKEN` or `GITHUB_TOKENS` | GitHub Code Search + Gists |
-| `GITLAB_TOKEN` | GitLab |
-| `BITBUCKET_USER` + `BITBUCKET_API_TOKEN` | Bitbucket (Bearer auth) |
-| `PUBLICWWW_KEY` | PublicWWW |
-| `SERPER_API_KEY` | Serper (Google SERPs) |
-| `GOOGLE_SEARCH_KEY` + `GOOGLE_CSE_ID` | Google Custom Search |
-| `NETLAS_API_KEY_1` | Netlas account 1 (50 req/day) |
-| `NETLAS_API_KEY_2` | Netlas account 2 (100 req/day) |
-
-If you are not paying for FOFA API access, leave `FOFA_EMAIL` and `FOFA_KEY` empty. The FOFA web / extension collection path still works without API credentials.
-
----
-
-## Database Setup
-
-Apply the schema to your Supabase project before starting the stack.
-
-1. Open the Supabase SQL editor for your project.
-2. Run `database/init.sql`  creates all tables, indexes, views, and the `audit_logs` table.
-3. Run `database/rls_policies.sql`  applies Row Level Security policies.
-4. If using the Chrome extension with direct Supabase writes, set the write secret:
-   ```sql
-   ALTER DATABASE postgres SET app.extension_write_secret = 'your-secret-value';
-   SELECT pg_reload_conf();
-   ```
-
-Both SQL files are idempotent and safe to re-run.
-
----
-
-## Installation & Setup
-
-### 1. Clone the repository
-
-```bash
-git clone <repository-url>
-cd <repository-directory>
+```
+SUPABASE_URL
+SUPABASE_KEY
+SUPABASE_SERVICE_ROLE_KEY
+REDIS_URL=redis://redis:6379/0
+ENCRYPTION_KEY          # generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+MONITOR_BOT_TOKEN       # from @BotFather, comma-separated for multiple bots
+MONITOR_GROUP_ID        # numeric supergroup ID (negative integer)
+TELEGRAM_API_ID         # from https://my.telegram.org
+TELEGRAM_API_HASH       # from https://my.telegram.org
+MONITOR_API_KEY         # any strong random string; protects all /monitor/* and /health/* endpoints
+FLOWER_BASIC_AUTH       # user:password — must not be admin:changeme
 ```
 
-### 2. Configure environment
+### 3. Apply the database schema
 
-```bash
-cp .env.template .env
-# Edit .env  fill in all required variables
+In the **Supabase SQL editor** for your project, run each file in `supabase/migrations/` in filename order (all are idempotent — safe to re-run). The fastest path is to use the Supabase Management API:
+
+```powershell
+# PowerShell — requires your Supabase Personal Access Token
+$token = '<your-access-token>'  # Dashboard → Account → Access Tokens
+$ref   = '<your-project-ref>'   # e.g. xyzabc123
+$url   = "https://api.supabase.com/v1/projects/$ref/database/query"
+$h     = @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' }
+
+Get-ChildItem supabase/migrations/*.sql | Sort-Object Name | ForEach-Object {
+    $sql  = Get-Content $_.FullName -Raw
+    $body = @{ query = $sql } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Method Post -Uri $url -Headers $h -Body $body
+    Write-Host "applied: $($_.Name)"
+}
 ```
 
-### 3. Generate an encryption key
+Or use `supabase db push` if you have `DATABASE_URL` set in `.env`.
 
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# Paste the output as ENCRYPTION_KEY in .env
-```
+### 4. Create external Docker volumes
 
-### 4. Apply database schema
-
-See [Database Setup](#database-setup) above.
-
-### 5. Start the stack
-
-**First-time deploy — create legacy-named external volumes first.** The Compose project is
-`theprawnhunter` but its volumes retain the legacy `telegramhunter_*` prefix from before the
-rename. If you skip this step, `docker compose up` fails with `volume "telegramhunter_redis_data"
-not found`.
+The stack uses externally-named volumes. Create them once before the first `up`:
 
 ```bash
 docker volume create telegramhunter_redis_data
@@ -157,155 +83,264 @@ docker volume create telegramhunter_imports
 docker volume create telegramhunter_beat_schedule
 ```
 
-Then:
+### 5. Build and start
 
 ```bash
 docker compose up -d --build
 ```
 
-This starts 10 services: `redis`, `api`, `worker-core`, `worker-scanners`, `worker-scrape`, `worker-validators`, `beat`, `bot`, `flower`, `frontend`.
+This builds 9 images and starts all 10 services. Initial build takes 3–8 minutes depending on network.
 
 ### 6. Verify startup
 
 ```bash
+# Liveness
 curl http://localhost:8011/
-curl http://localhost:8011/health/
+
+# Health (requires MONITOR_API_KEY)
+curl -H "X-Monitor-Key: <your-key>" http://localhost:8011/health/detailed
 ```
 
-Both should return HTTP 200. You can also view the Celery queue monitor at `http://localhost:8555`.
+Expected output for liveness: `{"status":"active"}`.  
+Expected for health: `{"status":"ok", ...}` with `db`, `redis`, `bot_api` all healthy.
 
 ---
 
-## Interactive Launcher (Alternative)
+## Environment Configuration
 
-**Linux / macOS:**
+Copy `.env.template` → `.env` and fill in all required values. Values are never shown here — names only.
+
+### Required
+
+| Variable | Purpose |
+|---|---|
+| `SUPABASE_URL` | Supabase project URL (`https://<ref>.supabase.co`) |
+| `SUPABASE_KEY` | Supabase anon key — used by frontend and extension |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key — bypasses RLS; backend workers only, never expose to clients |
+| `REDIS_URL` | Redis connection string (`redis://redis:6379/0` for Docker) |
+| `ENCRYPTION_KEY` | 44-character Fernet key — generates from `cryptography.fernet.Fernet.generate_key()` |
+| `MONITOR_BOT_TOKEN` | Comma-separated bot tokens (`id1:secret1,id2:secret2`); these bots post to the supergroup |
+| `MONITOR_GROUP_ID` | Numeric supergroup ID (negative integer or `@username`) |
+| `TELEGRAM_API_ID` | From https://my.telegram.org |
+| `TELEGRAM_API_HASH` | 32-character hex from https://my.telegram.org |
+| `MONITOR_API_KEY` | Protects all `/monitor/*`, `/health/detailed`, `/health/queues` endpoints |
+| `FLOWER_BASIC_AUTH` | `user:password` for the Flower dashboard; stack refuses to start if set to `admin:changeme` |
+
+### Optional — Operations
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PROJECT_NAME` | `Telegram Hunter` | FastAPI application title |
+| `ENV` | `development` | Set to `production` to disable `/docs` and `/scan/trigger` |
+| `DEBUG` | `True` | Log verbosity |
+| `PLAINTEXT_TOKEN_MODE` | `False` | When `True`, `bot_token` is stored as plaintext (encryption bypassed). Operator override — ensure you understand the security trade-off before enabling. |
+| `ENCRYPTION_KEY_LEGACY` | (unset) | Comma-separated previous Fernet keys for decrypting pre-rotation ciphertext |
+| `PSEUDONYMIZATION_KEY` | (unset) | Stable HMAC key for pseudonymous analyst identifiers; do not rotate casually |
+| `BROADCAST_INTERVAL_MINUTES` | `1` | Broadcast task cadence |
+| `BROADCAST_BATCH_SIZE` | `200` | Messages per broadcast run; lower to `50` on single-bot deployments |
+| `BROADCAST_MAX_PARALLEL_TOPICS` | `5` | Concurrent topic groups; set equal to number of bots in `MONITOR_BOT_TOKEN` |
+| `BROADCAST_INTER_MESSAGE_DELAY_SECONDS` | `0.5` | Inter-message delay; raise to `5.0` on single-bot deployments to avoid flood_wait |
+| `RESCRAPE_INTERVAL_HOURS` | `1` | Re-scrape cadence for active credentials |
+| `SCAN_INTERVAL_HOURS` | `4` | Primary scanner cadence |
+| `AUDIT_INTERVAL_HOURS` | `2` | Topic-integrity audit cadence |
+| `ALERT_WEBHOOK_URL` | (unset) | POST policy-routed finding alerts here (Slack/Splunk/MISP) |
+| `ALERT_WEBHOOK_SECRET` | (unset) | Sent as `X-Webhook-Secret` header with webhook POSTs |
+| `FINDING_ALERTS_ENABLED` | `False` | Enables outbound alert delivery; safe default is off |
+| `HONEYPOT_MODE` | `False` | Enables webhook push receiver; requires public HTTPS endpoint |
+| `HONEYPOT_WEBHOOK_URL` | (unset) | Public URL for honeypot receiver (must terminate TLS) |
+| `HONEYPOT_SECRET` | (unset) | Validated against `X-Telegram-Bot-Api-Secret-Token` header |
+| `HONEYPOT_ALLOWLIST` | `""` | `AUTO` (all taken-over bots) or comma-separated credential UUIDs |
+| `HONEYPOT_REDIRECT_MODE` | `True` | Wires up redirect infrastructure |
+| `HONEYPOT_REDIRECT_AUTHORIZED` | `False` | Runtime gate — both must be `True` before any redirect is sent |
+| `HONEYPOT_REDIRECT_BOT` | `<bot-username>` | Target bot for redirect messages |
+| `HONEYPOT_REDIRECT_DEEPLINK` | `migrate` | `?start=` parameter on the redirect link |
+| `TELEGRAM_DELETE_WEBHOOK_FOR_SCRAPE` | `False` | Deletes third-party webhooks before polling; destructive |
+| `TELEGRAM_HISTORY_TIMEOUT_SECONDS` | `90` | Per-scrape cap on Telethon history reads |
+| `AUTO_ARCHIVE_MEDIA` | `False` | Downloads + re-uploads media attachments via Telethon |
+| `CANARY_CREDENTIAL_ID` | (unset) | UUID of a synthetic credential used for the broadcast canary |
+| `CANARY_EXPECTED_TEXT` | `telegramhunter-canary` | Prefix for synthetic canary message content |
+| `CANARY_MAX_AGE_SECONDS` | `1800` | Age budget for canary run |
+| `PUBLIC_FRONTEND_URL` | (unset) | Canary checks this URL is reachable |
+| `TLS_VERIFY_WEBHOOK_PROBES` | `False` | Enforce TLS on webhook C2 host probes |
+| `WHITELISTED_BOT_IDS` | `""` | Comma-separated numeric bot IDs to keep in monitor group |
+| `PROTECTED_BOT_IDS` | `""` | Comma-separated bot IDs never to scan/validate/broadcast |
+| `ALLOW_PUBLIC_STARTHUNTER` | `False` | If `True`, any user can DM the bot to add a session (dangerous) |
+| `ENABLE_RAW_MESSAGE_BROADCAST` | `False` | Enables message broadcasting to monitor supergroup; opt-in |
+| `USER_SESSION_STRING` | (unset) | Telethon session string for user-agent invite flow |
+| `DATABASE_URL` | (unset) | Postgres DSN for `psql`-based migrations and `schema_drift_check.py` |
+| `EXTENSION_WRITE_SECRET` | (stored in Supabase DB only) | Set via `ALTER DATABASE postgres SET app.extension_write_secret = '...'` |
+
+### Optional — Scanner API Keys
+
+All degrade gracefully when absent — the scanner is silently skipped.
+
+| Variable | Scanner |
+|---|---|
+| `SHODAN_KEY` | Shodan Internet DB |
+| `FOFA_EMAIL` + `FOFA_KEY` | FOFA (paid plan only) |
+| `URLSCAN_KEY` | URLScan.io |
+| `GITHUB_TOKEN` or `GITHUB_TOKENS` | GitHub Code Search + Gists (comma-separated pool) |
+| `GITLAB_TOKEN` | GitLab Blobs Search |
+| `BITBUCKET_USER` + `BITBUCKET_API_TOKEN` | Bitbucket workspace search |
+| `EXA_API_KEY`, `EXA_API_KEY_2`, `EXA_API_KEY_3` | Exa paste/code search; keys rotated per request |
+| `PUBLICWWW_KEY` | PublicWWW |
+| `GOOGLE_SEARCH_KEY` + `GOOGLE_CSE_ID` | Google Custom Search |
+| `NETLAS_API_KEY_1` | Netlas account 1 (50 req/day) |
+| `NETLAS_API_KEY_2` | Netlas account 2 (100 req/day) |
+| `POSTMAN_API_KEY` | Postman public workspace search |
+
+---
+
+## Running
+
+### Production (Docker Compose)
+
 ```bash
-./start.sh
+# Start all 10 services
+docker compose up -d --build
+
+# View all logs
+docker compose logs -f
+
+# View a specific service
+docker compose logs -f worker-scrape
+
+# Stop (preserves volumes)
+docker compose down
+
+# Full reset (destroys all data — volumes included)
+docker compose down -v
 ```
 
-**Windows:**
-```bat
-start.bat
+**Services and ports (host-side, all bound to 127.0.0.1):**
+
+| Service | Port | URL |
+|---|---|---|
+| API | 8011 | `http://localhost:8011/` |
+| Flower | 8555 | `http://localhost:8555/` (requires `FLOWER_BASIC_AUTH`) |
+| Frontend | 3000 | `http://localhost:3000/` |
+| Redis | 6379 | `redis://localhost:6379/0` |
+
+### Production overlay (overrides ENV and concurrency)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+### Local API development (no Docker)
+
+```bash
+# Install dependencies
+pip install -r requirements.txt -r requirements-dev.txt
+
+# Export env
+export $(grep -v '^#' .env | xargs)   # Linux/macOS
+# On Windows: set each variable manually or use a .env loader
+
+# Run
+uvicorn app.api.main:app --reload --port 8001
+```
+
+### Local frontend development
+
+```bash
+cd frontend
+npm install
+npm run dev    # http://localhost:3000
+```
+
+Requires `frontend/.env.local`:
+```
+NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_KEY=<anon-key>
 ```
 
 ---
 
 ## Usage
 
-### Monitor API
+### Check system health
 
-All endpoints return JSON.
-
-**Liveness:**
 ```bash
-curl http://localhost:8011/health/
+# Basic liveness
+curl http://localhost:8011/
+
+# Full health (all subsystems)
+curl -H "X-Monitor-Key: <key>" http://localhost:8011/health/detailed
+
+# Queue depths
+curl -H "X-Monitor-Key: <key>" http://localhost:8011/health/queues
 ```
 
-**System statistics** (requires `X-Monitor-Key` if `MONITOR_API_KEY` is set):
+### View discovered credentials
+
 ```bash
-curl -H "X-Monitor-Key: <your-key>" http://localhost:8011/monitor/stats
+# Most recently found, sorted by confidence score
+curl -H "X-Monitor-Key: <key>" \
+  "http://localhost:8011/monitor/credentials?sort_by=collection_yield_score&limit=20"
 ```
 
-**Recent credentials:**
+### View findings (analyst queue)
+
 ```bash
-curl -H "X-Monitor-Key: <your-key>" "http://localhost:8011/monitor/credentials?limit=10"
+curl -H "X-Monitor-Key: <key>" \
+  "http://localhost:8011/monitor/findings?min_priority=5&limit=50"
 ```
 
-**Recent exfiltrated messages:**
+### Search exfiltrated messages
+
 ```bash
-curl -H "X-Monitor-Key: <your-key>" "http://localhost:8011/monitor/messages?limit=20"
+curl -H "X-Monitor-Key: <key>" \
+  "http://localhost:8011/monitor/search?q=bitcoin&limit=50"
 ```
 
-**Detailed health check (DB + Redis + Bot API):**
+### Ingest tokens manually (plain text)
+
 ```bash
-curl -H "X-Monitor-Key: <your-key>" http://localhost:8011/health/detailed
+# Newline-separated tokens
+curl -X POST http://localhost:8011/ingest/tokens \
+  -H "X-Monitor-Key: <key>" \
+  -H "Content-Type: text/plain" \
+  --data-binary @tokens.txt
 ```
 
-**Queue depths + oldest job age** (added by reliability rebuild):
-```bash
-curl -H "X-Monitor-Key: <your-key>" http://localhost:8011/health/queues
-```
-Returns per-queue `{length, oldest_job_age_seconds, oldest_enqueued_at}` for `celery`, `scrape`, `scanners`, `validation`.
+### CSV import
 
-**Captured webhook URLs** — bots where a third party has registered a webhook (potential C2 / researcher endpoints):
-```bash
-curl -H "X-Monitor-Key: <your-key>" "http://localhost:8011/monitor/webhooks?limit=100"
-```
+Drop a CSV file into the `imports/` directory:
 
-**Circuit breaker status:**
-```bash
-curl -H "X-Monitor-Key: <your-key>" http://localhost:8011/health/circuit-breakers
-```
-
-**Force-reset a circuit breaker:**
-```bash
-curl -X POST -H "X-Monitor-Key: <your-key>" http://localhost:8011/health/circuit-breakers/shodan/reset
-```
-
-**Manually trigger a scanner** (development only  returns 403 in production):
-```bash
-curl -X POST http://localhost:8011/scan/trigger \
-  -H "Content-Type: application/json" \
-  -d '{"source": "shodan", "query": "telegram bot"}'
-```
-
-Valid `source` values: `shodan`, `fofa`, `github`, `gitlab`, `urlscan`.
-
-**Ingest credentials from external tooling:**
-```bash
-curl -X POST http://localhost:8011/ingest/extension/credentials \
-  -H "Content-Type: application/json" \
-  -d '{"source":"manual","results":[{"token":"123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}]}'
-```
-
-### Telegram Admin Commands
-
-Send these commands in the monitor supergroup from a whitelisted admin account:
-
-| Command | Effect |
-|---|---|
-| `/status` | System health, pending counts, bot pool info |
-| `/pause` | Pause scanners and broadcaster |
-| `/resume` | Resume all operations |
-| `/bots` | Show bot pool status and lock state |
-| `/starthunter` | Start interactive Telegram account login |
-| `/restart` | Restart the bot listener process |
-| `/help` | Full command reference |
-
-### CSV Import
-
-Drop `.csv` files into the `imports/` directory (mounted as a Docker volume). The `system.import_csv` task picks them up every 5 minutes.
-
-Required format:
 ```csv
 token,chat_id
 1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,-1001234567890
 9876543210:AAyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,
 ```
 
-The `chat_id` column is optional  leave blank if unknown.
+The `system.import_csv` task picks it up every 5 minutes. A `.done` breadcrumb is written after successful processing.
 
-### Docker Compose Operations
+### Trigger a manual scanner run (development only)
 
 ```bash
-# Start all services (build if needed)
-docker compose up -d --build
-
-# Tail logs  all services
-docker compose logs -f
-
-# Tail logs  specific service
-docker compose logs -f worker-scrape
-
-# Stop services (preserve volumes)
-docker compose down
-
-# Stop and wipe all volumes (full reset)
-docker compose down -v
-
-# Rebuild after code changes
-docker compose build && docker compose up -d
+# Returns 403 when ENV=production
+curl -X POST http://localhost:8011/scan/trigger \
+  -H "X-Monitor-Key: <key>" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"shodan","query":"telegram bot"}'
 ```
+
+Valid sources: `shodan`, `fofa`, `github`, `gitlab`, `urlscan`, `sourcegraph`, `searchcode`.
+
+### Admin bot commands
+
+Send these in the monitor supergroup or via DM (whitelisted admins only):
+
+| Command | Effect |
+|---|---|
+| `/status` | Health, pending counts, bot pool info |
+| `/pause` | Pause scanners and broadcaster |
+| `/resume` | Resume all operations |
+| `/bots` | Bot pool status |
+| `/starthunter` | Interactive Telethon account login |
+| `/restart` | Restart the bot listener process |
+| `/help` | Full command reference |
 
 ---
 
@@ -317,18 +352,16 @@ docker compose build && docker compose up -d
 pip install -r requirements-dev.txt
 ```
 
-### Run the full test suite
+### Run the full suite
 
 ```bash
 pytest
 ```
 
-**383 tests** (317 unit + 7 integration + 59 top-level) across unit, integration, API, security, and Supabase R/W suites — plus scrape classification, broadcast retry accounting, queue monitor, canary probe, and Telethon lifecycle coverage added by the reliability rebuild.
-
 ### Run specific suites
 
 ```bash
-# Unit tests only (no external dependencies)
+# Unit tests (no external dependencies)
 pytest tests/unit/
 
 # API tests
@@ -337,13 +370,13 @@ pytest tests/test_api.py
 # Security tests
 pytest tests/test_security.py
 
-# Integration tests (requires live Supabase + Redis)
+# Integration (requires live Supabase + Redis)
 pytest tests/integration/
 
-# Supabase read/write test (writes a real record)
+# Write a real Supabase record (opt-in)
 ALLOW_SUPABASE_WRITE=1 pytest tests/test_supabase_rw.py
 
-# With coverage report
+# With coverage
 pytest --cov=app --cov-report=html
 ```
 
@@ -352,330 +385,162 @@ pytest --cov=app --cov-report=html
 ```
 @pytest.mark.unit         Unit tests (no external dependencies)
 @pytest.mark.integration  Integration tests (may require live services)
+@pytest.mark.live         Explicitly opted-in tests calling live external APIs
+@pytest.mark.load         Bounded load and latency tests
 @pytest.mark.slow         Long-running tests
 ```
 
----
-
-## Development
-
-### Code quality
-
-```bash
-# Lint and auto-fix
-ruff check app/ --fix
-
-# Format
-ruff format app/
-
-# Type check
-mypy app/
-```
-
-### Pre-commit hooks
-
-```bash
-pip install pre-commit
-pre-commit install
-pre-commit run --all-files
-```
-
-### Run the API locally (no Docker)
-
-```bash
-export $(grep -v '^#' .env | xargs)
-uvicorn app.api.main:app --reload --port 8001
-```
-
-### Run the frontend locally
+### Frontend tests
 
 ```bash
 cd frontend
-npm install
-npm run dev
+npm test   # runs tsc --noEmit + vitest
 ```
 
-Frontend requires two environment variables in `frontend/.env.local`:
-```
-NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_KEY=<anon-key>
-```
+### Current state
 
-### Chrome Extension
-
-1. Open Chrome  `chrome://extensions/`
-2. Enable **Developer mode**
-3. Click **Load unpacked**  select the `extension/` directory
-4. Open the extension popup and configure:
-   - **Supabase URL** and **Anon Key** (for direct write fallback)
-   - **Write Secret** (must match `app.extension_write_secret` in your Supabase DB)
-   - **API URL** (recommended  e.g. `http://localhost:8011`) for server-side encryption
-
-Recommended unpaid FOFA workflow:
-
-1. Use the FOFA website or your FOFA scraping extension to collect candidate hits.
-2. Let this Chrome extension capture the tokens from those FOFA pages.
-3. Set **API URL** so the extension sends findings to `/ingest/extension/credentials`; that keeps token encryption on the server side.
-4. Leave `FOFA_EMAIL` and `FOFA_KEY` empty unless you later decide to pay for FOFA API access.
-
-Notes:
-- The FOFA API scanner is optional and only applies when `FOFA_EMAIL` and `FOFA_KEY` are configured.
-- The extension path works without FOFA API credentials.
-- Direct Supabase writes are still available as a fallback, but the API route is the safer default.
+- **399 tests collected** (as of 2026-09-07)
+- **394 pass**, 4 skipped, 1 flaky (session-ordering issue in `test_error_hygiene.py`; passes in isolation)
+- **Not covered:** `app/services/bot_manager_srv.py`, `app/workers/tasks/pivot_tasks.py`, `app/workers/tasks/firehose_tasks.py`, `app/workers/tasks/import_tasks.py`, `extension/`
 
 ---
 
 ## Project Structure
 
 ```
-.
- app/
-    api/
-       main.py                  FastAPI app, lifespan hooks, CORS
-       routers/
-           health.py            /health/* endpoints
-           monitor.py           /monitor/* endpoints
-           scan.py              /scan/trigger (dev only)
-           ingest.py            /ingest/extension/credentials
-    core/
-       config.py                Pydantic Settings, env validation
-       database.py              Supabase client singleton
-       security.py              Fernet encrypt/decrypt
-       redis_srv.py             Locks, cooldowns, counters
-       retry.py                 @retry decorator (sync/async)
-       circuit_breaker.py       Per-service circuit breakers
-       metrics.py               In-memory metrics collector
-       audit.py                 Security audit event logger
-       constants.py             Application-wide constants
-       logger.py                Logger factory
-    schemas/
-       models.py                Pydantic request/response models
-    services/
-       scanners.py              ShodanService, FofaService, UrlScanService,
-                                  GithubService, GitlabService, SerperService
-       scanners_extension.py    GithubGistService, GrepAppService,
-                                  PublicWwwService, BitbucketService,
-                                  PastebinService, GoogleSearchService,
-                                  NetlasService
-       scraper_srv.py           Telethon chat history scraper (4 strategies)
-       broadcaster_srv.py       Telegram message sender, topic manager
-       bot_manager_srv.py       Telethon client pool (BotClientManager)
-       bot_listener.py          Admin command handler, watchdog
-       user_agent_srv.py        User session manager (multi-session rotation)
-    utils/
-       helpers.py               Token/chat ID validation & extraction
-    workers/
-        celery_app.py            Celery config, persistent event loop,
-                                   beat schedule (25 tasks)
-        tasks/
-            flow_tasks.py        enrich, exfiltrate, broadcast, rescrape,
-                                   heartbeat, help, broadcaster singleton
-            scanner_tasks.py     Per-scanner task runners, _save_credentials_async
-            audit_tasks.py       audit_active_topics, self_heal,
-                                   enforce_whitelist, cleanup_general_topic
-            import_tasks.py      system.import_csv  CSV file pipeline
- database/
-    init.sql                     Schema DDL (idempotent, IF NOT EXISTS)
-    rls_policies.sql             Row Level Security policies
- extension/                       Manifest V3 Chrome extension
-    manifest.json
-    background.js                Service worker  scan logic, upload
-    content.js                   FOFA page scraper
-    ui/                          Popup HTML/JS/CSS
- frontend/                        Next.js 16 dashboard (optional)
- imports/                         Drop CSV files here for auto-import
- tests/
-    conftest.py                  Fixtures, env injection
-    test_api.py                  API route tests
-    test_security.py             Encryption tests
-    test_scraper_restriction.py  Scraper caching tests
-    test_supabase_rw.py          Live DB read/write test
-    unit/                        Isolated unit tests (55 tests)
-    integration/                 Integration tests (5 tests)
- scripts/
-    validate_deployment.py       Post-deploy health checks
-    validate_startup.py          Pre-start environment checks
- .env.template                    Environment variable template
- docker-compose.yml               10-service stack definition
- Dockerfile                       python:3.11-slim-bookworm, non-root user
- docker-entrypoint.sh             Container entrypoint  CSV pre-processing
+theprawnhunter/
+├── app/
+│   ├── api/                 FastAPI app + 6 routers (32 HTTP endpoints)
+│   ├── core/                Cross-cutting adapters (config, security, audit, Redis, DB, metrics)
+│   ├── schemas/             Pydantic request/response models
+│   ├── services/            21 scanner classes, scraper, broadcaster, bot listener, user-agent pool
+│   │   └── _scraper/        4-strategy scrape lifecycle (strategies, results, monitor guard, lifecycle)
+│   ├── utils/               HTTP client pool, token helpers
+│   └── workers/
+│       ├── celery_app.py    Celery app, persistent event loop, 60-entry beat schedule
+│       ├── flower_app.py    Minimal Celery app for Flower (reads only REDIS_URL)
+│       └── tasks/           79 @app.task handlers across 9 modules
+│           └── _scanner/    Scanner query library (base + queries)
+├── database/
+│   ├── init.sql             Canonical schema DDL (idempotent)
+│   ├── rls_policies.sql     Row Level Security policies
+│   └── operations/          Retention cleanup SQL
+├── docs/
+│   ├── PRD.md               This product requirements document
+│   ├── SUPABASE_KEEPALIVE.md  Keepalive setup guide
+│   ├── HONEYPOT.md          Honeypot architecture and configuration
+│   ├── cloudflare_waf_rules.md  WAF rule reference
+│   ├── production_runbook.md  Operational runbook
+│   ├── deployment/          Deployment runbooks (rebuild.md)
+│   ├── plans/               Historical planning documents (read-only)
+│   └── history/             Archived audit artifacts, legacy migrations, paste blobs
+├── extension/               Manifest V3 Chrome extension (FOFA scraper → ingest)
+├── frontend/                Next.js 16 analyst dashboard (TypeScript, Tailwind CSS 4)
+├── imports/                 Drop CSV files here for auto-import
+├── scripts/                 Operational scripts (rotate credentials, schema drift check, etc.)
+├── supabase/
+│   ├── config.toml
+│   └── migrations/          25 versioned migrations applied to live Supabase
+├── tests/
+│   ├── unit/                46 unit test modules (no external dependencies)
+│   ├── integration/         3 integration test modules
+│   ├── load/                1 load test
+│   └── *.py                 9 top-level test modules
+├── .env.template            All variable names + purposes (never commit values)
+├── docker-compose.yml       10-service production stack
+├── docker-compose.prod.yml  Production overrides (ENV=production, configurable concurrency)
+├── Dockerfile               Two-stage build (builder + final, non-root celery user)
+├── docker-entrypoint.sh     Container entrypoint (CSV pre-processing, stale lease cleanup)
+├── pyproject.toml           Ruff + mypy + pytest configuration
+└── requirements.txt         Pinned Python runtime dependencies
 ```
 
 ---
 
-## Security Notes
+## Troubleshooting
 
-- **`SUPABASE_SERVICE_ROLE_KEY`** bypasses all Row Level Security. Never expose it to browser clients or commit it to version control.
-- **`ENCRYPTION_KEY`** is the sole protection for stored tokens. Losing it makes all stored credentials unrecoverable.
-- **`MONITOR_API_KEY`** should be set in production to protect monitoring endpoints.
-- Set `ENV=production` to disable OpenAPI docs and the manual scan endpoint.
-- The stack does not terminate TLS. Place it behind a reverse proxy (nginx, Caddy) for external exposure.
-- The `EXTENSION_WRITE_SECRET` is stored only inside the Supabase database  never in source code or environment files.
+### `volume "telegramhunter_redis_data" not found` on `docker compose up`
+
+Create the external volumes first (one-time setup):
+
+```bash
+docker volume create telegramhunter_redis_data
+docker volume create telegramhunter_sessions
+docker volume create telegramhunter_imports
+docker volume create telegramhunter_beat_schedule
+```
+
+### Flower refuses to start
+
+`FLOWER_BASIC_AUTH` must be set to a non-default value (anything other than `admin:changeme`). The entrypoint checks this and exits with an error message if not set.
+
+### Worker shows `unhealthy` in `docker compose ps`
+
+The Redis-ping healthcheck can take 30–180 s on startup due to Python import time under CPU pressure. Wait for the `start_period` (120 s) to pass before diagnosing. If it persists:
+
+```bash
+docker inspect theprawnhunter_worker-core --format '{{json .State.Health.Log}}'
+```
+
+Manual check:
+```bash
+docker exec theprawnhunter_worker-core python3 -c "import redis, os; redis.from_url(os.environ['REDIS_URL']).ping()"
+```
+
+### Broadcasts show `flood_wait` and not delivering
+
+Telegram enforces per-chat flood control. With a single monitor bot:
+
+```bash
+# .env — adjust these
+BROADCAST_MAX_PARALLEL_TOPICS=1
+BROADCAST_INTER_MESSAGE_DELAY_SECONDS=5.0
+BROADCAST_BATCH_SIZE=50
+```
+
+Restart `worker-core` after changing `.env`:
+```bash
+docker compose up -d --no-deps worker-core
+```
+
+### `/monitor/findings` returns 500
+
+The `findings` table (and related analyst-workflow tables) may not be applied yet. Apply all migrations in `supabase/migrations/` in filename order.
+
+### Migrations timing out via Supabase SQL editor
+
+Large `UPDATE` statements on `exfiltrated_messages` (351 k rows) will hit the 30 s free-tier statement timeout. Use the Management API with 500-row batches instead — see the script in `scripts/apply_migrations.ps1` (requires a Supabase Personal Access Token).
+
+### Supabase DB over quota (500 MB free tier)
+
+Run targeted cleanup:
+
+```python
+# Inside worker-core: prune audit_logs older than 7 days (100-row batches)
+from app.core.database import db
+from datetime import datetime, timedelta, timezone
+cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+# loop: db.table('audit_logs').delete().in_('id', ids_batch).execute()
+```
+
+Then run `VACUUM FULL ANALYZE public.audit_logs;` via Supabase SQL editor to reclaim physical space. `VACUUM ANALYZE` (without FULL) does not shrink the file.
+
+### Import CSV not picked up
+
+Check that the file has a header row with `token` and `chat_id` columns:
+```csv
+token,chat_id
+1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,-1001234567890
+```
+
+Check the `system.import_csv` task is running in Flower (`http://localhost:8555`).
+
+### Canary `flow.canary_flow_check` always returns `disabled`
+
+Set `CANARY_CREDENTIAL_ID` to the UUID of an existing `discovered_credentials` row and set `ENABLE_RAW_MESSAGE_BROADCAST=True`. The canary also returns disabled if the broadcast flag is off (use `flow.canary_findings_check` instead, which doesn't require raw broadcast).
 
 ---
 
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-## Advanced Features (added 2026-08-03 → 2026-08-06)
-
-### Webhook Recon + Takeover Pipeline
-
-The system passively fingerprints third-party webhooks registered on captured bots:
-
-```bash
-# View captured webhook URLs + probe results (TLS, Shodan, web recon)
-curl -H "X-Monitor-Key: <key>" http://localhost:8011/monitor/webhooks
-
-# View C2 operator clusters (who controls the most bots)
-curl -H "X-Monitor-Key: <key>" http://localhost:8011/monitor/operators
-
-# Force immediate takeover of all webhook-registered bots
-docker exec theprawnhunter_worker-core celery -A app.workers.celery_app call flow.force_webhook_takeover_pass
-```
-
-When `TELEGRAM_DELETE_WEBHOOK_FOR_SCRAPE=True`, the system:
-1. Detects third-party webhooks via `getWebhookInfo`
-2. Deletes them via `deleteWebhook`
-3. Registers our honeypot webhook (if `HONEYPOT_MODE=True`)
-4. Polls via `getUpdates` for any queued messages
-
-### Honeypot Mode (Push Receiver)
-
-After takeover, optionally registers OUR webhook so Telegram pushes messages to us in real-time.
-
-**Requirements:**
-- Public HTTPS endpoint (Cloudflare Tunnel recommended — free, no port forwarding)
-- `HONEYPOT_MODE=True`
-- `HONEYPOT_WEBHOOK_URL=https://your-public-domain/honeypot`
-- `HONEYPOT_SECRET=<random 32+ char string>`
-- `HONEYPOT_ALLOWLIST=AUTO` (all bots) or comma-separated UUIDs
-
-**Setup with Cloudflare Tunnel:**
-```powershell
-# One-time: authenticate with Cloudflare
-cloudflared tunnel login
-
-# Create tunnel + route DNS (use scripts/setup_cloudflare_tunnel.ps1 for full automation)
-cloudflared tunnel create prawnhunter
-cloudflared tunnel route dns prawnhunter your-subdomain.your-domain.com
-
-# Run tunnel (or install as Windows service)
-cloudflared tunnel run prawnhunter
-```
-
-**Endpoints:**
-- `POST /honeypot/receive/{credential_id}` — Telegram webhook receiver (auth via `X-Telegram-Bot-Api-Secret-Token` header)
-- `GET /honeypot/status` — configuration state (requires monitor key)
-
-**Captured data stored in `honeypot_updates` table** — full Telegram update JSON including sender user_id, message text, media file_ids.
-
-**📖 Full documentation:** [`docs/HONEYPOT.md`](docs/HONEYPOT.md) — architecture, configuration, troubleshooting, and database schema.
-
-### Honeypot Redirect Injection
-
-When the honeypot captures a user's message, automatically replies FROM the captured bot directing them to your onboard bot:
-
-```env
-HONEYPOT_REDIRECT_MODE=True
-HONEYPOT_REDIRECT_BOT=bryanseahbot
-HONEYPOT_REDIRECT_DEEPLINK=migrate
-```
-
-The message sent:
-```
-⚠️ This service has been migrated.
-Your request could not be processed here.
-To continue, use the updated channel:
-👉 https://t.me/bryanseahbot?start=migrate
-This is an automated notification.
-```
-
-Per-user dedup (permanent Redis key) ensures each user only receives the redirect once per bot.
-
-### Cloudflare WAF Rules
-
-When exposing the API via Cloudflare Tunnel, 4 WAF rules protect the endpoint:
-
-1. **Block bot scanners** — nmap, masscan, nuclei, gobuster, sqlmap, empty UA
-2. **Challenge suspicious paths** — `../`, `/admin`, `/wp-*`, `/.env`, `/.git`, `/phpmyadmin`
-3. **Honeypot IP restriction** — only Telegram's IP ranges (149.154.160.0/20, 91.108.x.0/22) can POST to `/honeypot/receive`
-4. **Block all non-allowed traffic** — only honeypot POSTs, monitor-key requests, root + health GETs pass
-
-### Attribution Graph
-
-Links Telegram user_ids across multiple captured bots to identify serial victims:
-
-```bash
-# Manual trigger
-docker exec theprawnhunter_worker-core celery -A app.workers.celery_app call flow.attribution_graph_report
-```
-
-Runs weekly (Tuesday 08:00 UTC). Requires `sender_user_id` column (populated from new scrapes).
-
-### Full-Text Search
-
-```bash
-# Search across 283k+ exfiltrated messages (pg_trgm indexed)
-curl -H "X-Monitor-Key: <key>" "http://localhost:8011/monitor/search?q=bitcoin&limit=50"
-```
-
-Supports `media_only=true` and `since_hours=24` filters.
-
-### Media Forensics
-
-Automatically SHA-256 + perceptual-hashes photos from exfiltrated messages to detect the same image being sent across multiple compromised bots (common operator fingerprint).
-
-```bash
-# Manual trigger
-docker exec theprawnhunter_worker-core celery -A app.workers.celery_app call flow.hash_exfil_media
-docker exec theprawnhunter_worker-core celery -A app.workers.celery_app call flow.media_duplicate_report
-```
-
-### FOFA Extension Automation
-
-The Chrome extension scrapes FOFA for exposed Telegram bot tokens. To run autonomously:
-
-1. Open Chrome with the CDP debug profile:
-   ```powershell
-   Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--no-first-run","--user-data-dir=$env:TEMP\chrome_fofa_puppeteer","https://en.fofa.info/"
-   ```
-
-2. Load the extension via `chrome://extensions` → "Load unpacked" → `extension/` folder
-
-3. Log into FOFA in that Chrome window (one-time)
-
-4. Trigger scan via CDP:
-   ```powershell
-   # The content script bridges postMessage to the background service worker
-   # Use any CDP tool to evaluate on the FOFA page:
-   window.postMessage({type:'TH_START_SCAN', query:'body="api.telegram.org/bot"', domain:'en.fofa.info', mode:'both'}, '*')
-   ```
-
-The scan runs through 49 countries × 2 domains, auto-uploads every 10 countries.
-
-### Fernet Key Rotation
-
-```bash
-# 1. Generate new key
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-
-# 2. Move current ENCRYPTION_KEY to ENCRYPTION_KEY_LEGACY in .env
-# 3. Set ENCRYPTION_KEY to the new key
-# 4. Restart workers
-# 5. Run rotation script
-docker exec theprawnhunter_worker-core python scripts/rotate_credentials.py --batch-size 100
-```
-
-### Security Hardening
-
-All ports bound to `127.0.0.1` (Redis, Frontend, Flower, API). External access only via Cloudflare Tunnel.
-
-- **Flower dashboard**: requires `FLOWER_BASIC_AUTH` (refuses to start with default)
-- **Rate limiting**: slowapi 120 req/min per key (Redis-backed, cross-worker)
-- **Bot admin gate**: `/starthunter` requires `ALLOW_PUBLIC_STARTHUNTER=True` or whitelisted admin
-- **Token redaction**: MultiFernet + broadened regex catches tokens in logs/audit
-- **Session management**: re-login auto-cleans old files, membership audit every 30min
-
-<!-- repo renamed to theprawnhunter on 2026-08-04 -->

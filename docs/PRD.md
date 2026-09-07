@@ -1,545 +1,386 @@
-# Product Requirements Document
+# Product Requirements Document — theprawnhunter
 
-> **Source of truth**: This document reflects the codebase as implemented. Every claim is grounded in source files.
+**Source commit:** `remediation/2026-09-06` branch  
+**Documentation date:** 2026-09-07  
+**Principle:** Every claim in this document is derived from source code, live container inspection, or Supabase schema query. Unverified items are prefixed `[unverified]`.
 
 ---
 
 ## 1. Executive Summary
 
-This system is a self-hosted, continuously-running OSINT pipeline that automatically discovers exposed bot tokens across 13 public data sources, validates each token against the live messaging API, harvests full message history from every accessible chat, and broadcasts findings into a private supergroup organized by per-bot forum topics.
+This system is a self-hosted, continuously-running OSINT pipeline that discovers exposed Telegram Bot API tokens across public data sources, validates each token against the live Telegram API, harvests accessible chat history from every confirmed bot, and delivers the findings to a private Telegram supergroup organised as per-bot forum topics.
 
-**Runtime stack:** Python 3.11, FastAPI, Celery, Redis, Telethon, python-telegram-bot  
-**Database:** Supabase (managed PostgreSQL) with Row Level Security  
-**Frontend:** Next.js 16 + React 19 (optional read-only dashboard)  
-**Browser Extension:** Manifest V3 Chrome extension (FOFA scraper + direct ingest)  
-**Deployment:** Docker Compose  7 services
+The deployment runs as a Docker Compose stack of 10 services on a single host. All external traffic reaches the host through Cloudflare Tunnel — no ports are directly exposed. A managed PostgreSQL instance (Supabase) persists all state. A read-only Next.js dashboard provides a browser view of the findings queue and chat evidence. A Manifest V3 Chrome extension scrapes FOFA search pages and feeds raw tokens into the ingestion pipeline.
 
 ---
 
 ## 2. System Architecture
 
-### 2.1 Component Topology
+### 2.1 Service topology
+
+| Service | Image | Role | Queues consumed |
+|---|---|---|---|
+| `redis` | redis:7-alpine | Celery broker + result backend + rate-limit + locks | — |
+| `api` | built (gunicorn -w 4) | FastAPI HTTP service | — |
+| `worker-core` | built | General task execution | `celery` |
+| `worker-scanners` | built | OSINT scanner tasks + GitHub Events firehose | `scanners` |
+| `worker-scrape` | built | Telethon history scraping + rescrape | `scrape` |
+| `worker-validators` | built | Token validation + pivot fan-out | `validation` |
+| `beat` | built | Celery periodic task scheduler (60 beat entries) | — |
+| `bot` | built | `python-telegram-bot` admin command listener | — |
+| `flower` | built | Celery task monitor UI | — |
+| `frontend` | Next.js standalone | Read-only analyst dashboard | — |
+
+### 2.2 Data flow
 
 ```
+[OSINT Sources × 21 scanner classes]
+         │  regex extraction + format validation
+         ▼
+[Token Queue — validation/ Celery queue]
+         │  global Redis token-bucket rate limiter (30 calls/10 s)
+         │  Telegram getMe + getWebhookInfo
+         ▼
+[discovered_credentials — Supabase]
+         │  Fernet-encrypted OR plaintext (PLAINTEXT_TOKEN_MODE=True)
+         ▼
+[flow.enrich_credential — celery/ queue]
+         │  Telethon get_dialogs, confidence scoring, forum topic creation
+         ▼
+[flow.exfiltrate_chat — scrape/ queue]
+         │  4-strategy scraper (Bot API, Telethon, ID bruteforce, forwarding)
+         ▼
+[exfiltrated_messages — Supabase]
+         │  upsert on (credential_id, telegram_msg_id)
+         ▼
+[flow.broadcast_pending — celery/ queue, every 1 min]
+         │  DB-level atomic claim (broadcast_claimed_at)
+         │  python-telegram-bot sendMessage/sendPhoto/sendDocument
+         ▼
+[Monitor Supergroup — per-bot forum topics]
+
+[honeypot_updates — Supabase]  ← POST /honeypot/receive/{id}
+         │  flow.honeypot_redirect_sweep (every 30 s)
+         ▼
+[Captured bot sends redirect to victim user]
+
 [Chrome Extension]
-        POST /ingest/extension/credentials  (preferred  server-side encryption)
-        OR direct Supabase REST write        (fallback  raw token, self-healed)
-      
-[FastAPI API  2 uvicorn workers]
-       /health/*
-       /monitor/*
-       /scan/trigger
-       /ingest/*
-
-[Celery Beat]  schedules 25 tasks
-      
-       worker-core     (queue: celery,    concurrency: 4)
-           flow_tasks.py, audit_tasks.py, import_tasks.py
-      
-       worker-scanners (queue: scanners,  concurrency: 2)
-           scanner_tasks.py
-      
-       worker-scrape   (queue: scrape,    concurrency: 2)
-            flow_tasks.py (exfiltrate_chat, rescrape_active)
-
-[Bot Service]  bot_listener.py (admin commands, watchdog)
-
-[Supabase PostgreSQL]  service-role key (all workers/API)
-[Redis 7-alpine]       broker, result backend, locks, cooldowns, counters
+         │  POST /ingest/extension/credentials OR direct Supabase REST
+         ▼
+[discovered_credentials — same pipeline]
 ```
 
-### 2.2 Docker Services
+### 2.3 State storage
 
-| Service | Image | Command | Ports | Restart |
-|---|---|---|---|---|
-| `redis` | redis:7-alpine | default | `${REDIS_PORT:-6379}:6379` | always |
-| `api` | python:3.11-slim-bookworm (built) | `uvicorn app.api.main:app --workers 2` | `${API_PORT:-8011}:8001` | always |
-| `worker-core` | built | `celery worker -Q celery --concurrency=4` |  | always |
-| `worker-scanners` | built | `celery worker -Q scanners --concurrency=2` |  | always |
-| `worker-scrape` | built | `celery worker -Q scrape --concurrency=2` |  | always |
-| `beat` | built | `celery beat` |  | always |
-| `bot` | built | `python -m app.services.bot_listener` |  | always |
-
-**Named volumes:** `redis_data`, `sessions`, `imports`  
-**Log driver:** json-file, 10 MB max, 3 rotations per service  
-**Non-root user:** all containers run as uid 1000 (`celery`)
-
-### 2.3 Data Flow Pipeline
-
-```
-[Scanner Sources x13]
-          regex extraction + format validation
-        
-[Token Validation]   GET /getMe  External Bot API
-          live token confirmed
-        
-[Persistence]   Fernet encrypt  discovered_credentials (status=pending)
-        
-          flow.enrich_credential
-[Enrichment]   get_dialogs  all chats enumerated
-                 create forum topic  Monitor Supergroup
-          status=active
-[Exfiltration]  (4 strategies)
-                 upsert  exfiltrated_messages
-        
-[Broadcasting]   atomic DB claim  post to topic  Monitor Supergroup
-                 mark is_broadcasted=true
-        
-[Self-Healing]   hourly/6h audits  reconcile DB vs live state
-```
+| Store | Technology | What lives there |
+|---|---|---|
+| Supabase PostgreSQL | Managed Postgres 17.6 | All persistent state (23 tables, 3 views) |
+| Redis 7 | Docker volume `telegramhunter_redis_data` | Broker, rate-limit buckets, dedup keys, session leases, heartbeat |
+| Filesystem volumes | `telegramhunter_sessions`, `telegramhunter_imports`, `telegramhunter_beat_schedule` | Telethon session files, CSV drop-in, beat schedule state |
 
 ---
 
 ## 3. Feature Matrix
 
-### 3.1 Token Discovery  13 Scanner Sources
-
-| Scanner Class | API Target | Auth Required | Schedule | Queue |
-|---|---|---|---|---|
-| `ShodanService` | Shodan Internet DB | `SHODAN_KEY` | Every 4 h @ :20 | scanners |
-| `FofaService` | FOFA search engine | `FOFA_EMAIL` + `FOFA_KEY` | Every 4 h @ :00 (+1 h offset) | scanners |
-| `UrlScanService` | URLScan.io | `URLSCAN_KEY` | Every 4 h @ :40 | scanners |
-| `GithubService` | GitHub Code Search API v3 | `GITHUB_TOKEN` | Every 4 h @ :00 | scanners |
-| `GithubGistService` | GitHub Public Gists API | `GITHUB_TOKEN` | Every 6 h @ :45 | scanners |
-| `GitlabService` | GitLab Blobs Search API | `GITLAB_TOKEN` | Every 6 h @ :10 | scanners |
-| `GrepAppService` | grep.app regex search | None | Every 6 h @ :25 | scanners |
-| `PublicWwwService` | PublicWWW.com | `PUBLICWWW_KEY` | Every 6 h (via scan_publicwww) | scanners |
-| `PastebinService` | Pastebin scraping API | None (IP whitelist) | Every 12 h @ :15 | scanners |
-| `SerperService` | Serper.dev (Google SERPs) | `SERPER_API_KEY` | Every 12 h @ :35 | scanners |
-| `GoogleSearchService` | Google Custom Search API | `GOOGLE_SEARCH_KEY` + `GOOGLE_CSE_ID` | Every 12 h @ :50 | scanners |
-| `BitbucketService` | Bitbucket workspace code search | `BITBUCKET_API_TOKEN` | Every 8 h @ :30 | scanners |
-| `NetlasService` | Netlas.io response search | `NETLAS_API_KEY_1` / `NETLAS_API_KEY_2` | Daily @ 03:00 UTC | scanners |
-
-**Additional dedicated task:** `scanner.scan_shodan_c2`  Shodan queries targeting C2/RAT infrastructure patterns. Runs every 6 h @ :10.
-
-All scanners degrade gracefully when API keys are absent  missing-key scanners return empty results and log a warning.
-
-### 3.2 Token Validation
-
-- **Regex pattern:** `\b(\d{8,15}:[A-Za-z0-9_-]{35})\b`
-- **Strict rejection rules (applied in `_is_valid_token()` and `is_valid_telegram_token()`):**
-  - Fernet ciphertexts (secret starts with `gAAAA`)
-  - Pure hexadecimal strings
-  - Bot ID with leading zeros
-  - Secret not exactly 35 characters
-  - Bot ID length outside 8-15 digits range
-- **Liveness check:** HTTP `GET /getMe` against the external bot API
-- **Deduplication:** SHA-256 hash of plaintext token; `token_hash` column is `UNIQUE`
-
-### 3.3 Credential Persistence & Encryption
-
-- **Algorithm:** Fernet (AES-128-CBC + HMAC-SHA256) via `cryptography==46.0.7`
-- **Key:** 44-character URL-safe base64 string, validated at startup by Pydantic field validator
-- **Storage:** `bot_token` column always contains Fernet ciphertext
-- **Self-healing:** any plaintext token encountered during enrichment or exfiltration is automatically re-encrypted in place before use
-
-### 3.4 Chat Enumeration (Enrichment  `flow.enrich_credential`)
-
-- Telethon `get_dialogs()` retrieves all chats accessible to the bot
-- Creates a forum topic in the monitor supergroup named `@{username} / {bot_id}`
-- Stores `topic_id`, `bot_username`, `bot_id`, `all_chats` in the `meta` JSONB column
-- Credential status advances from `pending`  `active`
-
-### 3.5 Message Exfiltration  4 Strategies (`flow.exfiltrate_chat`)
-
-| Strategy | Method | When Used |
-|---|---|---|
-| 1  Direct history | Telethon `iter_messages()` | Primary |
-| 2  ID bruteforce | Telethon `get_messages()` with explicit ID list | When strategy 1 is restricted |
-| 3  Bot API updates | `getUpdates` (recent messages only) | Fallback; provides anchor ID |
-| 4  Blind forwarding | Auto-invite bot; forward from target chat to monitor group topic | Last resort |
-
-All strategies upsert into `exfiltrated_messages` with unique constraint on `(credential_id, telegram_msg_id)`.
-
-### 3.6 Message Broadcasting (`flow.broadcast_pending`)
-
-- **Distributed Redis lock:** `telegram_hunter:lock:broadcast`, TTL 55 s
-- **Atomic DB claim:** `broadcast_claimed_at` conditional UPDATE  only one worker wins per message
-- **Stale claim reclamation:** claims older than 5 minutes become eligible for re-claim
-- **Batch size:** 100 messages per run
-- **Rate limiting:** 2-second sleep between messages
-- **Multi-bot rotation:** round-robin across `MONITOR_BOT_TOKEN` list via `itertools.cycle` singleton
-- **Topic recreation:** if topic is deleted, it is recreated and the DB is updated before retry
-
-### 3.7 CSV Import Pipeline (`system.import_csv`)
-
-- Scans `/app/imports/` for `.csv` files every 5 minutes
-- Atomically claims each file by renaming to `.pending`
-- Parses `token` and `chat_id` columns (header row required)
-- Passes results through the same `_save_credentials_async` validation path as scanners
-- Moves processed files to `/app/imports/processed/`
-- Supported format:
-  ```
-  token,chat_id
-  1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,-1001234567890
-  ```
-
-### 3.8 Scheduled Maintenance Tasks
-
-| Task Name | Schedule | Purpose |
-|---|---|---|
-| `flow.broadcast_pending` | Every `BROADCAST_INTERVAL_MINUTES` (default 60) | Post unbroadcasted messages |
-| `flow.rescrape_active` | Every `RESCRAPE_INTERVAL_HOURS` (default 1) | Re-pull history from active chats |
-| `flow.system_heartbeat` | Every 30 min | Redis timestamp + Telegram ping |
-| `flow.system_help` | Every 6 h @ :30 | Post command reference to monitor group |
-| `audit.audit_active_topics` | Every `AUDIT_INTERVAL_HOURS` (default 1) @ :15 | Verify topic exists; trigger re-enrichment if deleted |
-| `system.self_heal` | Every 6 h @ :45 | Reconcile DB credentials vs live topic state |
-| `system.enforce_whitelist` | Every 6 h @ :00 (+1 h offset) | Ensure whitelisted bots are present and admin |
-| `system.cleanup_general_topic` | Every 1 h @ :30 | Delete system log messages older than 12 h |
-| `system.import_csv` | Every 5 min | Process CSV files in `/app/imports/` |
-| `scanner.retry_cold` | Every 12 h @ :50 | Retry tokens that previously failed enrichment |
-
-### 3.9 Admin Bot Commands
-
-Commands accepted only from whitelisted admins or the anonymous group admin (`ANONYMOUS_ADMIN_ID`).
-
-| Command | Handler | Effect |
-|---|---|---|
-| `/start` | `start()` | Greet user, confirm availability |
-| `/help` | `help_command()` | Display command reference with bot pool list |
-| `/commands` | `help_command()` | Alias for `/help` |
-| `/status` | `status()` | Redis state, pending broadcast count, bot pool info |
-| `/pause` | `pause()` | Set `system:paused` Redis key  scanners and broadcaster skip |
-| `/resume` | `resume()` | Delete `system:paused` Redis key |
-| `/restart` | `restart()` | Set stop event  process exits and Docker restarts it |
-| `/bots` | `bots_command()` | Show bot pool with lock status per bot |
-| `/starthunter` | `starthunter()` | Interactive Telethon account login flow (ConversationHandler) |
-
-### 3.10 HTTP Monitoring API
-
-| Method | Path | Auth | Purpose |
+| Feature | Module / Path | Status | Notes |
 |---|---|---|---|
-| GET | `/` | None | Liveness; returns `{"status":"ok"}` or `{"status":"active"}` in production |
-| GET | `/health/` | None | Basic health  always 200 |
-| GET | `/health/detailed` | `X-Monitor-Key` | DB + Redis + Bot API reachability; 503 if degraded |
-| GET | `/health/metrics` | `X-Monitor-Key` | In-memory `MetricsCollector` counters |
-| GET | `/health/circuit-breakers` | `X-Monitor-Key` | State of all 4 named circuit breakers |
-| POST | `/health/circuit-breakers/{service}/reset` | `X-Monitor-Key` | Force-reset a named breaker |
-| GET | `/monitor/stats` | `X-Monitor-Key` | Aggregate credential/message counts |
-| GET | `/monitor/credentials?limit=N` | `X-Monitor-Key` | Recent credentials (default N=100) |
-| GET | `/monitor/messages?limit=N` | `X-Monitor-Key` | Recent exfiltrated messages (default N=100) |
-| POST | `/scan/trigger` | None (dev only) | Enqueue scanner task; **403 in production** |
-| POST | `/ingest/extension/credentials` | None | Bulk credential ingest from extension (server-side encryption) |
+| Multi-source token discovery | `app/services/scanners.py`, `app/services/scanners_extension.py` | **Implemented** | 21 scanner classes; see §3 scanner list |
+| Token validation (Telegram `getMe`) | `app/workers/tasks/validation_tasks.py` | **Implemented** | Redis token-bucket rate limiting; dedup via `validated:recent:<sha256>` |
+| Pivot fan-out (GitHub owner, bot username, webhook host) | `app/workers/tasks/pivot_tasks.py` | **Implemented** | Fires after every successful `getMe` |
+| GitHub Events real-time firehose | `app/workers/tasks/firehose_tasks.py` | **Implemented** | ETag-aware 30 s polling; `firehose.poll_github_events` |
+| Credential enrichment + confidence scoring | `app/workers/tasks/flow_tasks.py:enrich_credential` | **Implemented** | `collection_yield_score` + `chat_member_count` as generated columns |
+| 4-strategy chat scraping | `app/services/scraper_srv.py`, `app/services/_scraper/` | **Implemented** | Bot API → Telethon → ID bruteforce → forwarding archive |
+| Broadcast to monitor supergroup | `app/workers/tasks/flow_tasks.py:broadcast_pending`, `app/services/broadcaster_srv.py` | **Implemented** | Atomic DB claim; parallel-by-cred_id with Semaphore; `broadcast_message_id` idempotency |
+| Permanent broadcast failure cap | `flow_tasks._mark_broadcast_failure` | **Implemented** | `MAX_BROADCAST_ATTEMPTS=8`; `broadcast_status='permanent_failed'` |
+| Webhook fingerprinting + takeover | `flow_tasks.probe_webhooks`, `flow_tasks.force_webhook_takeover_pass` | **Implemented** | Detects third-party C2 webhooks; optional `TELEGRAM_DELETE_WEBHOOK_FOR_SCRAPE` |
+| Honeypot push receiver | `app/api/routers/honeypot.py`, `flow_tasks.honeypot_redirect_sweep` | **Implemented** | Active only when `HONEYPOT_MODE=True` + public HTTPS endpoint |
+| Honeypot redirect injection | `flow_tasks.honeypot_redirect_one`, `honeypot_redirect_tasks.py` | **Implemented** | Requires both `HONEYPOT_REDIRECT_MODE=True` AND `HONEYPOT_REDIRECT_AUTHORIZED=True` |
+| Multi-touch redirect follow-ups | `app/workers/tasks/honeypot_redirect_tasks.py` | **Implemented** | Touch 2 (daily), Touch 3 (daily), proactive outreach (6 h) |
+| Perceptual-hash media forensics | `flow_tasks.hash_exfil_media` | **Implemented** | SHA-256 + `imagehash.phash`; cross-bot duplicate detection |
+| Telemetry indicator extraction | `app/services/telemetry_parser.py`, `flow_tasks._index_telemetry_indicators` | **Implemented** | Wallet addresses, network domains, phone numbers |
+| Insight / findings queue | `app/services/findings.py`, `flow_tasks.produce_findings`, `flow_tasks.route_finding_deltas` | **Implemented** | Priority-first analyst queue; `findings` + `finding_evidence` tables |
+| Finding alert policies | `app/services/finding_alerts.py` | **Implemented** | Policy-gated; `FINDING_ALERTS_ENABLED=False` default |
+| Entity graph | `app/services/entities.py`, `flow_tasks.build_entity_graph` | **Implemented** | `entities` + `entity_edges` tables |
+| Engagement funnel tracking | `app/services/engagement.py` | **Implemented** | HMAC-pseudonymised subject IDs; `engagement_events` table |
+| C2 operator clustering | `flow_tasks.cluster_c2_operators` | **Implemented** | Groups bots by shared webhook host / Shodan org |
+| Attribution graph | `flow_tasks.attribution_graph_report` | **Implemented** | Weekly; links user_ids across multiple captured bots |
+| CSV token import | `app/workers/tasks/import_tasks.py` | **Implemented** | Drop CSV in `imports/`; atomic `.pending` claim + `.done` breadcrumb |
+| Admin bot commands | `app/services/bot_listener.py` | **Implemented** | `/status`, `/pause`, `/resume`, `/restart`, `/bots`, `/starthunter`, `/telemetry`, `/getfile`, and more |
+| Telethon account login (`/starthunter`) | `bot_listener.py:ConversationHandler` | **Implemented** | Interactive 3-step (phone → code → password); 180 s timeout; orphan session sweep |
+| FastAPI monitor API (32 endpoints) | `app/api/routers/` | **Implemented** | Monitor-key gated; Redis-backed stats cache; `/monitor/search`, `/monitor/findings`, `/monitor/operators` |
+| Canary flow check | `flow_tasks.canary_flow_check`, `flow_tasks.canary_findings_check` | **Implemented** | Two separate canaries: raw broadcast path + findings pipeline |
+| System heartbeat | `flow_tasks.system_heartbeat` | **Implemented** | Metrics flush + Redis timestamp; every 30 min |
+| Audit logging | `app/core/audit.py` | **Implemented** | Token-redacting; 8 KB payload cap; 7-day retention |
+| RLS + redacted evidence view | `database/rls_policies.sql` | **Implemented** | `evidence_redacted` view for authenticated operators; `discovered_credentials_public` view |
+| Rate limiting (API) | `app/api/main.py` (slowapi) | **Implemented** | 120 req/min per key/IP; Redis-backed; constant-time key compare |
+| Circuit breakers | `app/core/circuit_breaker.py` | **Implemented** | Per-scanner; threshold=3, recovery=300 s default |
+| Queue depth monitoring | `app/core/queue_monitor.py`, `/health/queues` | **Implemented** | Oldest-job-age tracking per queue |
+| Next.js analyst dashboard | `frontend/` | **Implemented** | Supabase anon/authenticated; `findings` view + `ChatWindow` + `TelemetryAnalyticsView` |
+| Chrome extension (FOFA scraper) | `extension/` | **Implemented** | Manifest V3; 49-country scan; uploads to `/ingest/extension/credentials` |
+| SerperService scanner | — | **Deprecated** | Class removed; `SERPER_API_KEY` silently ignored |
 
-OpenAPI docs (`/docs`, `/redoc`, `/openapi.json`) disabled when `ENV=production`.
+**Active scanner classes (21):**
+Shodan, FOFA, URLScan, GitHub, GitLab, Exa, Wayback Machine, Common Crawl, Sourcegraph, GitHub Gist, grep.app, PublicWWW, Google Custom Search, Bitbucket, Pastebin, Rentry, Hastebin, Netlas, Replit, Postman, Searchcode.
 
-### 3.11 Chrome Extension
-
-- **Manifest version:** 3
-- **Function:** Automates FOFA search across 49 country codes, extracts bot tokens from page source, validates each token via the external bot API, then uploads results
-- **Upload modes:**
-  1. **API route (preferred):** POST to `/ingest/extension/credentials`  tokens encrypted server-side
-  2. **Direct Supabase write (fallback):** REST insert with `x-extension-secret` header  raw token stored, self-healed by backend
-- **Config fields (stored in `chrome.storage.sync`):** Supabase URL, Supabase anon key, Write Secret, API URL
-- **Watchdog alarm:** fires every 2 minutes to unstick stalled scans
-
-### 3.12 Frontend Dashboard (Optional)
-
-- **Framework:** Next.js 16.2.4, React 19.2.3, TypeScript 5, Tailwind CSS 4
-- **Supabase client:** `@supabase/supabase-js ^2.89.0` with anon key (RLS-restricted)
-- **Sidebar:** queries `discovered_credentials_public` view (safe projection  no token/hash) for credentials that have associated messages; real-time INSERT subscription
-- **ChatWindow:** queries `exfiltrated_messages` for selected credential; real-time INSERT subscription; read-only display
-- **Mobile:** renders a redirect notice  desktop only
-- **Environment variables required:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_KEY`
+Beat schedule: **60 entries** covering broadcast, rescrape, scanners, audit, honeypot redirects, media hashing, entity graph, canary, heartbeat, and system maintenance.
 
 ---
 
-## 4. Data Architecture
+## 4. Data Model
 
-### 4.1 Database Schema
+### 4.1 Live Supabase tables (23)
 
-**`discovered_credentials`**
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | UUID | PK, `gen_random_uuid()` |  |
-| `bot_token` | TEXT | NOT NULL | Fernet-encrypted ciphertext |
-| `token_hash` | TEXT | NOT NULL, UNIQUE | SHA-256 of plaintext token |
-| `chat_id` | BIGINT |  | Primary chat from enrichment |
-| `bot_id` | TEXT |  | Numeric bot ID as string |
-| `bot_username` | TEXT |  | `@username` |
-| `chat_name` | TEXT |  | Display name of primary chat |
-| `chat_type` | TEXT |  | `group`, `supergroup`, `channel`, `private` |
-| `source` | TEXT |  | Scanner name |
-| `status` | TEXT | CHECK (`pending`, `active`, `revoked`) | Default `pending` |
-| `meta` | JSONB | Default `{}` | `topic_id`, `all_chats`, `bot_id`, `bot_username`, etc. |
-| `created_at` | TIMESTAMPTZ | Default NOW() |  |
-| `updated_at` | TIMESTAMPTZ | Default NOW() |  |
-
-Indexes: `idx_creds_status` on `status`; `idx_creds_bot_id` on `bot_id`
-
----
-
-**`exfiltrated_messages`**
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | UUID | PK |  |
-| `credential_id` | UUID | FK  `discovered_credentials.id` ON DELETE CASCADE |  |
-| `telegram_msg_id` | INT | NOT NULL | Telegram-assigned message ID |
-| `sender_name` | TEXT |  | Message author display name |
-| `content` | TEXT |  | Message body |
-| `media_type` | TEXT | Default `text` | `text`, `photo`, `document`, `other` |
-| `file_meta` | JSONB | Default `{}` | `mime`, `size`, `id`, etc. |
-| `is_broadcasted` | BOOLEAN | Default FALSE | Set TRUE after successful broadcast |
-| `broadcast_claimed_at` | TIMESTAMPTZ | Default NULL | Distributed claim timestamp |
-| `created_at` | TIMESTAMPTZ | Default NOW() |  |
-
-Unique constraint: `unique_msg_per_credential` on `(credential_id, telegram_msg_id)`  
-Indexes: `idx_messages_credential_id`; partial `idx_messages_is_broadcasted` WHERE `is_broadcasted = FALSE`; composite `idx_messages_claimed` on `(is_broadcasted, broadcast_claimed_at)`
-
----
-
-**`telegram_accounts`**
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | UUID | PK |  |
-| `phone` | TEXT | NOT NULL, UNIQUE | Telegram account phone number |
-| `session_path` | TEXT | NOT NULL | Absolute path to `.session` file |
-| `status` | TEXT | CHECK (`active`, `inactive`) | Default `active` |
-| `locked_by` | TEXT |  | `{hostname}:{pid}` of current holder |
-| `locked_until` | TIMESTAMPTZ |  | Session lease expiry (10 min) |
-| `created_at` | TIMESTAMPTZ | Default NOW() |  |
-| `updated_at` | TIMESTAMPTZ | Default NOW() |  |
-
-Indexes: `idx_accounts_phone`; `idx_accounts_status`
-
----
-
-**`audit_logs`**
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | UUID | PK |  |
-| `timestamp` | TIMESTAMPTZ | Default NOW() |  |
-| `event_type` | TEXT | NOT NULL | `token_decrypted`, `credential_created`, `token_revoked`, etc. |
-| `credential_id` | UUID | FK  `discovered_credentials.id` ON DELETE SET NULL |  |
-| `user_agent` | TEXT | Default `system` |  |
-| `success` | BOOLEAN | Default TRUE |  |
-| `details` | JSONB | Default `{}` |  |
-
-Indexes: `idx_audit_event_type`; `idx_audit_timestamp`
-
----
+| Table | Purpose |
+|---|---|
+| `discovered_credentials` | Validated bot tokens; `collection_yield_score` + `chat_member_count` as STORED generated columns |
+| `exfiltrated_messages` | Chat history; `broadcast_status`, `broadcast_message_id`, `next_retry_at` for retry logic |
+| `monitor_stats` | Singleton aggregate counters; maintained by triggers |
+| `telegram_accounts` | Telethon session accounts added via `/starthunter` |
+| `audit_logs` | Security audit events; 7-day retention; 8 KB payload cap |
+| `telemetry_indicators` | Structured extractions (wallet addresses, domains, phones) |
+| `media_hashes` | SHA-256 + perceptual hashes; `is_failure BOOLEAN`, `failure_reason TEXT`, `UNIQUE(message_id)` |
+| `honeypot_updates` | Incoming webhook push payloads from taken-over bots |
+| `findings` | Priority-first analyst insight queue |
+| `finding_evidence` | Provenance records for findings |
+| `finding_feedback` | Analyst dispositions on findings |
+| `finding_summaries` | Aggregated finding summary rows |
+| `finding_alert_policies` | Rules governing when alerts are routed outbound |
+| `finding_alert_audit` | Delivery audit trail |
+| `finding_alert_deliveries` | Outbound alert delivery records |
+| `entities` | Named entities extracted from messages |
+| `entity_edges` | Relationships between entities |
+| `engagement_events` | Pseudonymised funnel events (HMAC subject IDs) |
+| `system_state` | Key-value store for worker coordination |
+| `keepalive_log` | Daily GitHub Actions keepalive pings |
+| `retention_archive` | Archived rows from retention cleanup |
+| `retention_cleanup_runs` | Audit log of retention operations |
+| `keepalive_logs` | Legacy keepalive table (pre-2026-09 naming) |
 
 ### 4.2 Views
 
-**`discovered_credentials_public`**  safe projection for anonymous (frontend/extension) reads.  
-Exposes only: `id`, `created_at`, `source`, `status`, `meta`.  
-Hides: `bot_token`, `token_hash`, `bot_id`, `bot_username`, `chat_id`, `chat_name`, `chat_type`.  
-`GRANT SELECT ON discovered_credentials_public TO anon;`
+| View | Access | Purpose |
+|---|---|---|
+| `discovered_credentials_public` | `authenticated` only | Safe projection — no `bot_token`, `token_hash`, `chat_id` |
+| `evidence_redacted` | `authenticated` only | Content token-masked, sender HMAC-pseudonymised, truncated to 500 chars |
+| `engagement_funnel_daily` | `authenticated` | Daily funnel aggregation |
 
-### 4.3 Row Level Security
+### 4.3 Key constraints
 
-| Table | anon SELECT | anon INSERT | anon UPDATE | anon DELETE |
-|---|---|---|---|---|
-| `discovered_credentials` | Denied (raw table) | Allowed with valid `x-extension-secret` header | Allowed with valid `x-extension-secret` header | Denied |
-| `discovered_credentials_public` (view) | Allowed |  |  |  |
-| `exfiltrated_messages` | Allowed | Denied | Denied | Denied |
-| `telegram_accounts` | Denied | Denied | Denied | Denied |
-| `audit_logs` | Not exposed to anon |  |  |  |
+- `discovered_credentials.token_hash` — `UNIQUE`
+- `exfiltrated_messages.(credential_id, telegram_msg_id)` — `UNIQUE`
+- `media_hashes.message_id` — `UNIQUE WHERE is_failure = FALSE`
+- `monitor_stats.id` — `UNIQUE` (singleton boolean PK)
 
-Service-role key bypasses all RLS. Used exclusively by backend workers and API.
+### 4.4 Token storage
 
-The `x-extension-secret` is stored as a PostgreSQL database parameter (`app.extension_write_secret`) set via `ALTER DATABASE postgres SET app.extension_write_secret = '...'`. It is never stored in application code or environment variables.
+`PLAINTEXT_TOKEN_MODE=True` is active in the current deployment. `bot_token` columns contain plaintext Telegram token strings. `security.encrypt()` is a no-op when this flag is set; `security.decrypt()` handles both ciphertext (`gAAAA%` prefix) and plaintext transparently for backward compatibility.
 
-### 4.4 Pydantic API Models
+### 4.5 Migrations
 
-```python
-class CredentialOut(BaseModel):
-    id: UUID
-    source: str
-    status: str
-    chat_id: Optional[int]
-    meta: Dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
-
-class MessageOut(BaseModel):
-    id: UUID
-    credential_id: UUID
-    telegram_msg_id: int
-    sender_name: Optional[str]
-    content: Optional[str]
-    media_type: str
-    is_broadcasted: bool
-    created_at: datetime
-
-class StatsOut(BaseModel):
-    credentials_total: int
-    credentials_active: int
-    messages_exfiltrated: int
-    messages_broadcasted: int
-
-class ScanRequest(BaseModel):
-    source: str  # shodan | fofa | github | gitlab | urlscan
-    query: str
-
-class ExtensionIngestRequest(BaseModel):
-    source: str = "extension"
-    domain: Optional[str]
-    query: Optional[str]
-    results: list[ExtensionCredential]
-
-class ExtensionIngestResponse(BaseModel):
-    inserted: int
-    updated: int
-    skipped: int
-```
+25 migrations in `supabase/migrations/`, applied to the live database. All are idempotent (`IF NOT EXISTS` guards). Legacy pre-supabase-CLI patches in `docs/history/legacy_migrations/` (8 files) — historical reference only.
 
 ---
 
-## 5. Security Architecture
+## 5. External Interfaces
 
-### 5.1 Credential Encryption
+### 5.1 HTTP API (FastAPI, port 8011 on host, bound to 127.0.0.1)
 
-- **Algorithm:** Fernet (AES-128-CBC + HMAC-SHA256)
-- **Key generation:** `Fernet.generate_key()`  44-character URL-safe base64
-- **Validation:** key length strictly enforced at startup via `@field_validator('ENCRYPTION_KEY')`
-- **Tokens are never logged** and never stored in plaintext after the self-heal path runs
+All non-health endpoints require `X-Monitor-Key` header (constant-time compare). Rate limit: 120 req/min per key/IP (Redis-backed, cross-worker).
 
-### 5.2 Database Access Tiers
+**Health**
 
-| Tier | Key Used | Access Level |
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | None | Liveness; `{"status":"active"}` in production |
+| GET | `/health/` | None | Always 200 |
+| GET | `/health/detailed` | Key | DB + Redis + Bot API connectivity |
+| GET | `/health/metrics` | Key | In-memory metric counters |
+| GET | `/health/queues` | Key | Queue depths + oldest-job age |
+| GET | `/health/operational` | Key | Canary + broadcast + scrape failure summary |
+| GET | `/health/circuit-breakers` | Key | Per-scanner circuit breaker state |
+| POST | `/health/circuit-breakers/{name}/reset` | Key | Force-reset a named breaker |
+| GET | `/health/quotas` | Key | Redis memory + queue stats |
+| GET | `/health/bot-pool` | Key | Bot pool rotation state |
+
+**Monitor (analytics / operational)**
+
+| Method | Path | Description |
 |---|---|---|
-| Backend (all workers, API) | `SUPABASE_SERVICE_ROLE_KEY` | Full bypass of RLS |
-| Frontend (Next.js) | `SUPABASE_KEY` (anon key) | RLS-restricted; public view + messages read only |
-| Chrome Extension (direct write) | `SUPABASE_KEY` (anon key) + `x-extension-secret` | INSERT/UPDATE on `discovered_credentials` only |
+| GET | `/monitor/stats` | Aggregate counts (30 s Redis cache) |
+| GET | `/monitor/credentials` | Credential list; sortable by `collection_yield_score`, `chat_member_count`, etc. |
+| GET | `/monitor/messages` | Recent exfiltrated messages |
+| GET | `/monitor/findings` | Priority-first findings queue |
+| GET | `/monitor/findings/{id}` | Finding detail + bounded evidence |
+| GET | `/monitor/findings/{id}/evidence` | Paginated evidence |
+| POST | `/monitor/findings/{id}/feedback` | Analyst disposition (RPC `record_finding_feedback_service`) |
+| POST | `/monitor/engagement/lifecycle` | HMAC-pseudonymised funnel event |
+| GET | `/monitor/export` | CSV / JSON export of messages |
+| GET | `/monitor/broadcasts/pending` | Pending + retry metadata |
+| POST | `/monitor/broadcasts/{id}/retry` | Manual retry trigger |
+| POST | `/monitor/topics/revoked/close` | Close topics for revoked credentials |
+| GET | `/monitor/webhooks` | Captured C2 webhook URLs |
+| GET | `/monitor/targets/export` | Target feed export |
+| GET | `/monitor/search` | Full-text search across messages (`pg_trgm`) |
+| GET | `/monitor/operators` | C2 operator cluster report |
 
-### 5.3 API Authentication
+**Ingest**
 
-- `MONITOR_API_KEY` environment variable enables header authentication
-- Protected endpoints require `X-Monitor-Key: <value>` header
-- If `MONITOR_API_KEY` is unset, protected endpoints are openly accessible (development behaviour)
-- Auth check implemented via `_check_monitor_auth()` helper in `monitor.py`; consistent pattern across all health and monitor routes
-
-### 5.4 CORS Policy
-
-`allow_origins=["*"]`, `allow_credentials=False`. The API relies on `MONITOR_API_KEY` for sensitive endpoint protection, not CORS.
-
-### 5.5 Production Hardening (`ENV=production`)
-
-- OpenAPI docs (`/docs`, `/redoc`, `/openapi.json`) disabled
-- `POST /scan/trigger` returns 403
-- `GET /` returns `{"status":"active"}` only
-
-### 5.6 Session File Security
-
-- Session files stored in `/app/sessions/` with permissions `0o600` (owner read/write only)
-- Temporary session copies written to `/tmp/{session_name}.session` during use; cleaned up after disconnect
-- Session files never committed to version control (`.gitignore` covers `*.session`)
-
-### 5.7 Pinned Dependencies (Security-Relevant)
-
-| Package | Pinned Version | Addressed CVEs |
+| Method | Path | Description |
 |---|---|---|
-| `fastapi` | 0.136.0 | CVE-2024-47874, CVE-2025-54121 |
-| `httpx` | 0.28.1 | CVE-2024-37891 (SSRF) |
-| `cryptography` | 46.0.7 | CVE-2024-12797, CVE-2026-26007, CVE-2026-34073 |
-| `requests` | 2.33.1 | CVE-2024-47081, CVE-2026-25645 |
+| POST | `/ingest/extension/credentials` | Bulk token ingest; server-side encryption |
+| POST | `/ingest/tokens` | Plain-text / JSON-array token paste |
+
+**Scan** (development only — 403 in `ENV=production`)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/scan/trigger` | Enqueue named scanner task |
+
+**Media**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/media/{message_id}` | Proxy media from Telegram via source bot token |
+
+**Honeypot**
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/honeypot/receive/{credential_id}` | Telegram webhook push receiver (active only when `HONEYPOT_MODE=True`) |
+| GET | `/honeypot/status` | Configuration state; returns `mode_enabled`, `receiver_url_configured`, `allowlist_configured` |
+
+### 5.2 Telegram admin commands
+
+Accepted from whitelisted admins or `ANONYMOUS_ADMIN_ID` in the monitor supergroup, or via DM:
+
+`/start`, `/stop`, `/optout`, `/unsubscribe`, `/status`, `/pause`, `/resume`, `/restart`, `/help`, `/commands`, `/bots`, `/telemetry`, `/indicators`, `/getfile`, `/archive`, `/backfill`, `/starthunter` (ConversationHandler), `/cancel`
+
+### 5.3 External integrations
+
+| Service | How used | Auth |
+|---|---|---|
+| Telegram Bot API | Validation (`getMe`, `getWebhookInfo`), broadcasting, honeypot | Bot token in URL |
+| Telegram MTProto (Telethon) | Chat history scraping, user-agent account sessions | Session file + `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` |
+| Supabase | Persistent storage | `SUPABASE_SERVICE_ROLE_KEY` (backend); `SUPABASE_KEY` anon (frontend/extension) |
+| Redis | Broker, rate limits, locks, dedup cache | `REDIS_URL` |
+| 21 OSINT scanner APIs | Token discovery | Per-service API keys (all optional) |
+| Cloudflare Tunnel (optional) | Public HTTPS endpoint for honeypot | `cloudflared` service |
 
 ---
 
-## 6. Reliability & Resilience
+## 6. Security Posture
 
-### 6.1 Retry Strategy (`app/core/retry.py`)
+**Authentication / Authorization:**
+- All monitor API endpoints: `X-Monitor-Key` header, constant-time `hmac.compare_digest` compare (`app/core/auth.py`)
+- `/scan/trigger` blocked in `ENV=production`
+- `/docs`, `/redoc`, `/openapi.json` blocked in `ENV=production`
+- Admin bot commands: numeric user-ID whitelist only (username-based auth explicitly rejected as insecure)
+- Honeypot receiver: `X-Telegram-Bot-Api-Secret-Token` header validation + per-credential allowlist
 
-`@retry` decorator  supports both sync and async functions:
+**Supabase RLS:**
+- Service-role key bypasses all RLS (backend only — never exposed to browser)
+- Anon key: `discovered_credentials` raw table — fully denied; `discovered_credentials_public` view — denied (authenticated only); `exfiltrated_messages` — denied; `evidence_redacted` view — authenticated only
+- Extension direct-write: `x-extension-secret` header matched against `app.extension_write_secret` DB parameter (never in code or env files)
 
-| Parameter | Default | Description |
-|---|---|---|
-| `max_attempts` | 3 | Total attempts including first |
-| `base_delay` | 1.0 s | Initial backoff delay |
-| `max_delay` | 60.0 s | Backoff cap |
-| `exponential` | True | `delay = base  2^(attempt-1)` |
-| `exceptions` | `(Exception,)` | Exception types to catch |
+**Token storage:**
+- `PLAINTEXT_TOKEN_MODE=True` is active — tokens are stored as plaintext in `discovered_credentials.bot_token`. Fernet encryption infrastructure (`SecurityService`, `ENCRYPTION_KEY`, `ENCRYPTION_KEY_LEGACY`) remains in place; toggling `PLAINTEXT_TOKEN_MODE=False` re-enables encryption for new writes.
+- `AuditLogger` redacts token-shaped strings from all log output and audit event `details` payloads before persistence.
 
-Specialised variants: `retry_on_telegram_error()` (catches `RetryAfter`, `TimedOut`, `NetworkError`; 230 s backoff) and `retry_on_connection_error()` (catches `ConnectionError`, `TimeoutError`, `httpx.ConnectError`; 110 s backoff).
+**Transport:**
+- All Docker service ports bound to `127.0.0.1` — no direct external exposure
+- External reach via Cloudflare Tunnel (optional) or reverse proxy — not TLS-terminated by the stack itself
 
-### 6.2 Circuit Breaker Pattern (`app/core/circuit_breaker.py`)
+**Rate limiting:**
+- `slowapi` 120 req/min per key/IP on all API endpoints; Redis-backed cross-worker
+- Telegram `getMe` rate limiter: 30 calls/10 s global Redis token bucket across all validator workers
 
-Four named breakers: `shodan`, `urlscan`, `github`, `fofa`.
-
-| Parameter | Value |
-|---|---|
-| `failure_threshold` | 5 consecutive failures  OPEN |
-| `recovery_timeout` | 60 s  HALF_OPEN |
-| `success_threshold` | 2 consecutive successes  CLOSED |
-
-States exposed at `GET /health/circuit-breakers`. Manual reset via `POST /health/circuit-breakers/{service}/reset`.
-
-### 6.3 Distributed Locking (Redis)
-
-| Lock Key | TTL | Purpose |
-|---|---|---|
-| `telegram_hunter:lock:broadcast` | 55 s | Single broadcaster at a time |
-| `bot_listener:poll_lock:{bot_id}` | 120 s | Single `getUpdates` poller per bot |
-| `user_agent:{session_name}` | 600 s | Exclusive Telethon session use |
-| `enrich_requeue:{credential_id}` | 3600 s | Cooldown  prevents unbounded enrichment re-queuing |
-
-### 6.4 Persistent Event Loop
-
-Each Celery worker process maintains a single `asyncio` event loop via `get_worker_loop()` (exported from `celery_app.py`). All tasks call `get_worker_loop().run_until_complete(coro)` instead of `asyncio.run()`. This preserves `asyncio.Lock` state across task invocations and keeps Telethon connections alive in `BotClientManager`.
-
-### 6.5 Task Reliability Settings
-
-| Setting | Value |
-|---|---|
-| `task_acks_late` | True  ack only after completion |
-| `worker_prefetch_multiplier` | 1  one task at a time |
-| `worker_max_memory_per_child` | 800 MB  auto-recycle |
-| `task_soft_time_limit` | 1200 s (20 min) |
-| `task_time_limit` | 1300 s (hard kill) |
-| `flow.exfiltrate_chat` soft limit | 2400 s |
-| `flow.exfiltrate_chat` hard limit | 2500 s |
-
-### 6.6 Self-Healing
-
-- **`system.self_heal` (every 6 h):** iterates all `active` credentials; recreates missing forum topics; triggers catch-up broadcast
-- **`audit.audit_active_topics` (hourly):** sends silent `send_chat_action` probe per topic; detects deleted topics; clears stale `topic_id` from meta; triggers re-enrichment
-- **Inline token self-heal:** any non-Fernet token encountered during enrichment or exfiltration is encrypted in place before processing
+**Known absent:**
+- No IP allowlisting on the monitor API (key-only auth)
+- No 2FA on the Flower dashboard beyond `FLOWER_BASIC_AUTH`
+- `FINDING_ALERTS_ENABLED=False` — outbound alert delivery disabled by default
 
 ---
 
-## 7. Observability
+## 7. Performance & Scalability
 
-### 7.1 Logging
+**Broadcast throughput:**
+- Current: 1 monitor bot, `BROADCAST_MAX_PARALLEL_TOPICS=1`, `BROADCAST_INTER_MESSAGE_DELAY_SECONDS=5.0`, `BROADCAST_BATCH_SIZE=50`
+- Observed: ~10 messages/min sustained without Telegram flood_wait. Scales linearly with number of monitor bots added to `MONITOR_BOT_TOKEN`.
+- Parallelism model: messages grouped by `credential_id`; up to `BROADCAST_MAX_PARALLEL_TOPICS` groups run concurrently via `asyncio.gather` + Semaphore. Within each group, messages are sequential.
 
-**Format (all services):**
-```
-2026-04-21 14:23:45 | INFO | scanner.tasks | [Shodan] Processing 250 matches...
-```
+**Token validation:**
+- Global Redis token bucket: 30 `getMe` calls/10 s across all 16 validator workers.
+- Cross-source dedup: 24 h Redis key per token (`validated:recent:<sha256>`) eliminates redundant API calls.
 
-Logging force-initialised via `logging.basicConfig(..., force=True)` in both `app/api/main.py` and `app/workers/celery_app.py`. `uvicorn.access` logger set to WARNING to reduce noise.
+**Scraping:**
+- Per-credential Telethon timeout: `TELEGRAM_HISTORY_TIMEOUT_SECONDS=90`
+- Scrape queue backpressure: `RESCRAPE_BACKPRESSURE_THRESHOLD=100`
 
-### 7.2 Metrics (`app/core/metrics.py`)
+**Database (current live state):**
+- Supabase free tier (500 MB); current DB size: ~144 MB (28.9%) after VACUUM FULL following bulk deletion of 290k broadcast-delivered messages older than 30 days.
+- `exfiltrated_messages`: 67,077 rows (post-prune)
+- `audit_logs`: ~150k rows (7-day retention)
+- Composite index on `audit_logs(event_type, timestamp DESC)` for `/health/operational` queries
 
-`MetricsCollector` singleton (`metrics`):
-- `metrics.track("name")`  decorator; records success/failure counts and duration (min/max/avg)
-- `metrics.inc("counter")`  increment a named counter
-- `metrics.get_all_metrics()`  full dict of all tracked operations
-- `metrics.get_summary()`  aggregate success rate
-
-Exposed at `GET /health/metrics`.
-
-### 7.3 Audit Logging (`app/core/audit.py`)
-
-`AuditLogger.log()` records security events to application logs. High-importance events (`TOKEN_DECRYPTED`, `TOKEN_REVOKED`, `CREDENTIAL_CREATED`) are also persisted to the `audit_logs` database table via `_persist_to_db()`.
-
-### 7.4 Watchdog (Bot Listener)
-
-`watchdog_loop()` runs in the bot service process. Checks Redis connectivity every 60 s. Alerts the monitor group if Redis is unreachable or if the worker heartbeat (`system:heartbeat:last_seen` Redis key) is older than 45 minutes.
+**Persistent event loop:**
+- One `asyncio` event loop per Celery worker process (`get_worker_loop()` in `celery_app.py`). All async tasks share the loop via `loop.run_until_complete()`. This preserves `asyncio.Lock` semantics across tasks and enables Telethon connection reuse within a process.
 
 ---
 
-## 8. Known Limitations
+## 8. Non-Functional Behavior
 
-1. **No migration framework**  schema changes require manual DDL re-application via `database/init.sql` (idempotent).
-2. **Single Redis instance**  no HA or persistence tuning beyond Docker volume.
-3. **No built-in TLS**  requires external reverse proxy (nginx, Caddy).
-4. **No rate limiting on API endpoints** beyond optional `MONITOR_API_KEY` header.
-5. **No alerting framework**  observability is log/metric based; external aggregation required.
-6. **No Kubernetes support**  Docker Compose only.
-7. **Horizontal scaling**  broadcast exactly-once guarantee holds only with shared Supabase DB; at-least-once on multi-machine deployments.
-8. **`CENSYS_ID`/`CENSYS_SECRET` and `HYBRID_ANALYSIS_KEY`** are present in `Settings` but have no corresponding scanner implementation. These keys are accepted but unused.
+**Error handling:**
+- All FastAPI exception handlers return generic `{"detail": "Internal error"}` — no stack traces in responses
+- `AuditLogger._persist_to_db` failures are caught and logged, never raise (audit must not break the main flow)
+- Broadcast exceptions: `BroadcastSendError(reason, detail, retryable, retry_after_seconds)` — retryable/permanent classification gates retry vs permanent_failed transition
+
+**Logging:**
+- stdlib `logging` with `%(asctime)s | %(levelname)s | %(name)s | %(message)s` format; container stdout
+- Docker json-file driver: 10 MB max / 3 rotations per service
+- `broad-except` sites emit `logger.debug(f"[suppressed] {exc}")` (68 sites patched in 2026-09 remediation cycle)
+
+**Retry / timeout:**
+- External HTTP calls: `httpx.AsyncClient(timeout=10.0–30.0)` per site; `retry_with_backoff` in `app/utils/http_client.py` (exponential, handles 429 / 5xx / network errors)
+- Celery task soft limit: 1200 s; hard limit: 1800 s
+- Exfiltrate soft limit: 2400 s, hard: 2500 s
+- Broadcast lock renews every 90 s via background thread while batch runs
+
+**Health checks:**
+- `api`: Python `urllib.request.urlopen('http://localhost:8001/health/')`, interval 30 s, timeout 45 s
+- `bot`: file `/tmp/bot_alive` touched every 10 s; check: file modified within 60 s
+- All workers: `python3 -c 'import redis; r=redis.from_url(...); r.ping()'`, interval 60 s, timeout 180 s
+- `flower`: TCP connect port 5555, interval 30 s, timeout 5 s
+- `frontend`: `node -e "require('http').get('http://localhost:3000/',…)"`, interval 30 s, timeout 15 s
+
+**Graceful shutdown:**
+- `worker_shutdown` Celery signal closes the persistent event loop and sends a Telegram notification
+- FastAPI lifespan sends shutdown notification on a daemon thread (non-blocking)
+- Bot listener: SIGINT/SIGTERM sets stop_event; poll loops exit cleanly
+
+**Canary:**
+- `flow.canary_flow_check`: synthetic DB → broadcast → optional frontend ping (requires `CANARY_CREDENTIAL_ID`)
+- `flow.canary_findings_check`: synthetic findings insert → visibility verify → cleanup (no config required; fails gracefully if `findings` table absent)
+
+---
+
+## 9. Known Limitations
+
+1. **Single monitor bot**: current deployment has 1 `MONITOR_BOT_TOKEN`. Broadcast throughput (~10 msg/min) is limited by Telegram flood control. Adding more bots to `MONITOR_BOT_TOKEN` scales linearly.
+
+2. **No DATABASE_URL in environment**: DDL migrations can only be applied via the Supabase Management API or SQL editor, not via `psql` or `supabase db push` locally. Add `DATABASE_URL` (Postgres connection string from Supabase Project Settings) to unlock direct migration tooling.
+
+3. **Broad-except sites**: 68 `except Exception:` sites were patched to emit `logger.debug` in the 2026-09 cycle. Many are intentional best-effort paths; a full per-site review is deferred to the next cycle.
+
+4. **`PLAINTEXT_TOKEN_MODE=True`**: tokens at rest are plaintext in the current deployment. The Fernet encryption path is preserved and toggleable but inactive. Any direct database access exposes token values.
+
+5. **5 pre-existing test failures in `test_honeypot_redirect_bugs.py`**: the async tests that verify callback and inline query paths need `HONEYPOT_REDIRECT_AUTHORIZED=True` patches — not added in the current test fix cycle (separate NEW-002 issue).
+
+6. **Supabase free tier**: DB capped at 500 MB. Current usage is ~144 MB (healthy) but grows at ~50–100 MB/month depending on scrape volume. Bulk retention pruning (quarterly) or upgrade to Supabase Pro required for sustained operation.
+
+7. **Flower dashboard**: no healthcheck on the Docker service as of restart — the TCP-connect healthcheck was added but the live container needs a restart to apply it. Container is healthy in practice; the check resolves on next restart.
+
+8. **`keepalive_logs` vs `keepalive_log`**: two tables exist in the live schema — the plural `keepalive_logs` is a legacy artifact; canonical usage is `keepalive_log` (singular).
+
+9. **CI red on `main`**: the `quality` CI job fails on 161 ruff issues in `app/` (down from 192 baseline; delta -31 from this cycle). Dedicated `chore(quality)` cycle needed to zero remaining issues.
+
+10. **Token regex in `scripts/telegram_behavior_probe.py`**: not verified against the canonical `\d{8,15}:[A-Za-z0-9_-]{35}` pattern used in `app/services/scanners.py`. Probe file is test-only and not in the hot path.
