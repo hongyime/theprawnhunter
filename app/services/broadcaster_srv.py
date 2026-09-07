@@ -110,6 +110,12 @@ class BroadcasterService:
         self._bots = {} # token -> Bot instance
         self._failed_tokens: set = set()
         self._archive_tasks: set[asyncio.Task] = set()
+        # PERF-002: monotonic counter incremented every time RetryAfter
+        # (a.k.a. flood_wait) is caught during a send. Read by
+        # flow_tasks._broadcast_logic to adapt inter-message delay without
+        # inspecting exceptions itself. Counter is monotonic; callers detect
+        # events via delta.
+        self._flood_wait_hits: int = 0
 
         # Rotation pool: bots ONLY for broadcast messages.
         # MTProto user sessions are reserved exclusively for admin operations
@@ -256,6 +262,10 @@ class BroadcasterService:
                 from telethon.tl.types import InputDocument, InputPhoto
 
                 from app.services.bot_manager_srv import bot_manager
+                # PERF-003: bot_manager pools TelegramClient instances keyed
+                # by token — this get_client() call hits the cache after the
+                # first login for a given token (see BotClientManager
+                # docstring). No fresh MTProto handshake per download.
                 client = await bot_manager.get_client(decrypted_token)
                 file_ref = bytes.fromhex(file_meta.get("file_reference", "")) if file_meta.get("file_reference") else b""
 
@@ -380,6 +390,8 @@ class BroadcasterService:
                                 )
                             except TelegramError as media_err:
                                 media_delivery_failure = _classify_broadcast_exception(media_err)
+                                if media_delivery_failure.reason == "flood_wait":
+                                    self._flood_wait_hits += 1
                                 last_failure = media_delivery_failure
                                 logger.warning(f"⚠️ Failed to send media bytes: {media_err}.")
 
@@ -424,6 +436,7 @@ class BroadcasterService:
                     last_failure = _classify_broadcast_exception(e)
                     logger.warning(f"⚠️ Bot {token[:10]}... kicked. Rotating...")
                 except RetryAfter as e:
+                    self._flood_wait_hits += 1
                     last_failure = _classify_broadcast_exception(e)
                     logger.warning(f"⚠️ Bot {token[:10]}... flood-waited. Rotating...")
                 except (TimedOut, NetworkError, TimeoutError) as e:

@@ -1152,6 +1152,8 @@ async def _broadcast_logic():
 
     from datetime import datetime, timedelta
 
+    from app.core.metrics import metrics
+
     broadcaster = get_broadcaster()
 
     from app.core.constants import CLAIM_TIMEOUT_MINUTES
@@ -1182,9 +1184,56 @@ async def _broadcast_logic():
     # to BROADCAST_MAX_PARALLEL_TOPICS distinct topics run concurrently. The
     # bot pool has itertools.cycle rotation, so effective concurrency is bounded
     # by min(MAX_PARALLEL_TOPICS, len(bot_pool)).
+    #
+    # On single-bot deployments (MONITOR_BOT_TOKEN=<one>) set
+    # BROADCAST_MAX_PARALLEL_TOPICS=1 so we stay serial and avoid tripping
+    # per-bot flood_wait. The adaptive delay below handles the pacing.
     _max_parallel = int(os.getenv("BROADCAST_MAX_PARALLEL_TOPICS", 5))
-    _inter_message_delay = float(os.getenv("BROADCAST_INTER_MESSAGE_DELAY_SECONDS", 0.5))
+    _base_delay = float(os.getenv("BROADCAST_INTER_MESSAGE_DELAY_SECONDS", 0.5))
     _topic_semaphore = asyncio.Semaphore(_max_parallel)
+
+    # PERF-002: adaptive inter-message delay. Persisted in Redis so the
+    # backoff state carries across broadcast runs (a run only lasts ~5 min).
+    #   * On any flood_wait during a send: reset to BASE * 1.5 (hard bump).
+    #   * After 10 consecutive non-flood sends: multiply by 0.9 (gradual).
+    # Bounded to [1.0s, 10.0s]. Base = BROADCAST_INTER_MESSAGE_DELAY_SECONDS.
+    _ADAPTIVE_DELAY_KEY = "broadcast:adaptive_delay"
+    _ADAPTIVE_MIN = 1.0
+    _ADAPTIVE_MAX = 10.0
+
+    def _clamp_delay(v: float) -> float:
+        return max(_ADAPTIVE_MIN, min(_ADAPTIVE_MAX, v))
+
+    def _load_adaptive_delay() -> float:
+        try:
+            raw = redis_client.get(_ADAPTIVE_DELAY_KEY)
+            if raw is not None:
+                return _clamp_delay(float(raw))
+        except Exception as _swallowed:
+            logger.debug(f"[Broadcast] adaptive delay load failed: {_swallowed}")
+        return _clamp_delay(_base_delay)
+
+    def _persist_adaptive_delay(v: float) -> None:
+        try:
+            # 24 h TTL — refreshed on every write, avoids stale values sticking
+            # around indefinitely if broadcasting is disabled long-term.
+            redis_client.setex(_ADAPTIVE_DELAY_KEY, 86400, f"{v:.3f}")
+        except Exception as _swallowed:
+            logger.debug(f"[Broadcast] adaptive delay persist failed: {_swallowed}")
+
+    _adaptive_state: dict[str, float | int] = {
+        "delay": _load_adaptive_delay(),
+        "consecutive_ok": 0,
+        # Snapshot the broadcaster's flood counter so deltas within this run
+        # are attributable to sends we made. Defensive getattr — some test
+        # doubles won't have the attribute.
+        "last_flood_hits": getattr(broadcaster, "_flood_wait_hits", 0),
+    }
+    _run_started = time.time()
+    logger.info(
+        f"[Broadcast] starting run: batch={len(messages)}, groups={len({m['credential_id'] for m in messages})}, "
+        f"delay={_adaptive_state['delay']:.2f}s (base={_base_delay:.2f}s), max_parallel={_max_parallel}"
+    )
 
     from collections import defaultdict
     _grouped: dict[str, list[dict]] = defaultdict(list)
@@ -1345,6 +1394,12 @@ async def _broadcast_logic():
                     # worker was killed between successful send and DB write.
                     prior_broadcast_msg_id = msg.get("broadcast_message_id")
 
+                    # Snapshot flood counter before the send attempt so we can
+                    # detect a mid-flight flood_wait even when send rotation
+                    # eventually succeeds (multi-bot case).
+                    _pre_hits = getattr(broadcaster, "_flood_wait_hits", 0)
+                    performed_real_send = False
+
                     # Send Message (with retry for deleted topics)
                     send_success = False
                     sent_message_id: int | None = None
@@ -1359,7 +1414,9 @@ async def _broadcast_logic():
                         try:
                             sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
                             send_success = True
+                            performed_real_send = True
                         except Exception as e:
+                            performed_real_send = True
                             # Check for topic deletion/not found
                             err_str = str(e)
                             failure_reason = getattr(e, "reason", "")
@@ -1394,14 +1451,51 @@ async def _broadcast_logic():
                         # ==============================================
                         await _update_message_broadcast_success(msg_id, broadcast_message_id=sent_message_id)
                         local_sent += 1
+                        if performed_real_send:
+                            # PERF-002: only count metric for real over-the-wire sends,
+                            # not idempotent skip-paths (INTR-001).
+                            try:
+                                metrics.inc("broadcast.sent")
+                            except Exception as _swallowed:
+                                logger.debug(f"[Broadcast] metrics.inc failed: {_swallowed}")
                         logger.info(f"    ✅ Broadcasted msg {msg_id}")
                     else:
                         logger.warning(f"    🔄 Broadcast failure recorded for retry: {msg_id}")
 
-                    # PERF-002: reduced from 2.0s to configurable delay.
-                    # Per-topic serial send with modest delay + cross-topic
-                    # parallelism yields the throughput gain.
-                    await asyncio.sleep(_inter_message_delay)
+                    # PERF-002: adaptive delay bookkeeping.
+                    # Only real send attempts (whether they succeeded or failed) can
+                    # signal a flood_wait event or a "clean" streak — idempotent
+                    # skip paths leave the adaptive state untouched.
+                    if performed_real_send:
+                        _post_hits = getattr(broadcaster, "_flood_wait_hits", 0)
+                        _flood_this_send = _post_hits > _pre_hits
+                        if _flood_this_send:
+                            _adaptive_state["consecutive_ok"] = 0
+                            _adaptive_state["last_flood_hits"] = _post_hits
+                            _new_delay = _clamp_delay(_base_delay * 1.5)
+                            if _new_delay != _adaptive_state["delay"]:
+                                logger.info(
+                                    f"[Broadcast] flood_wait observed — bumping delay "
+                                    f"{_adaptive_state['delay']:.2f}s -> {_new_delay:.2f}s"
+                                )
+                                _adaptive_state["delay"] = _new_delay
+                                _persist_adaptive_delay(_new_delay)
+                        elif send_success:
+                            _adaptive_state["consecutive_ok"] = int(_adaptive_state["consecutive_ok"]) + 1
+                            if _adaptive_state["consecutive_ok"] >= 10:
+                                _new_delay = _clamp_delay(float(_adaptive_state["delay"]) * 0.9)
+                                if _new_delay != _adaptive_state["delay"]:
+                                    logger.info(
+                                        f"[Broadcast] 10 consecutive clean sends — reducing delay "
+                                        f"{_adaptive_state['delay']:.2f}s -> {_new_delay:.2f}s"
+                                    )
+                                    _adaptive_state["delay"] = _new_delay
+                                    _persist_adaptive_delay(_new_delay)
+                                _adaptive_state["consecutive_ok"] = 0
+
+                    # Per-topic serial send with adaptive delay + cross-topic
+                    # parallelism yields the throughput gain (PERF-002).
+                    await asyncio.sleep(float(_adaptive_state["delay"]))
 
                 except Exception as e:
                     logger.error(f"Error broadcasting msg {msg_id}: {e}")
@@ -1425,6 +1519,26 @@ async def _broadcast_logic():
         _s, _sk = _r
         sent_count += _s
         skipped_count += _sk
+
+    # PERF-002: compute and persist actual msg/min throughput for this run.
+    # Stored in Redis so the health endpoint / dashboard can surface a live
+    # rate without keeping process-local state. Guarded so a Redis outage
+    # doesn't fail the broadcast run.
+    _elapsed_s = max(time.time() - _run_started, 1e-6)
+    _throughput_per_min = (sent_count * 60.0) / _elapsed_s if sent_count > 0 else 0.0
+    try:
+        redis_client.setex(
+            "metrics:broadcast:throughput_per_min",
+            3600,
+            f"{_throughput_per_min:.2f}",
+        )
+    except Exception as _swallowed:
+        logger.debug(f"[Broadcast] throughput persist failed: {_swallowed}")
+    logger.info(
+        f"[Broadcast] run complete: sent={sent_count} skipped={skipped_count} "
+        f"elapsed={_elapsed_s:.1f}s throughput={_throughput_per_min:.1f} msg/min "
+        f"final_delay={_adaptive_state['delay']:.2f}s"
+    )
 
     result = f"Broadcasted {sent_count}/{len(messages)} messages"
     if skipped_count > 0:

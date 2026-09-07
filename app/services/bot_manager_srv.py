@@ -35,8 +35,18 @@ _CLIENT_START_TIMEOUT_SECONDS = 30.0
 
 class BotClientManager:
     """
-    Manages a pool of active Telethon clients for bots to prevent frequent logins.
-    Bounded to _MAX_CACHED_CLIENTS entries — oldest disconnected and evicted when full.
+    Manages a pool of active Telethon (MTProto) clients keyed by bot_token.
+
+    PERF-003 (Telethon connection pooling):
+        Each bot_token maps to exactly one long-lived TelegramClient. Repeat
+        calls to ``get_client(token)`` return the cached instance instead of
+        re-authenticating, cutting per-download setup cost from ~1–3 s (login
+        + DC handshake) down to a dict lookup.
+
+        The cache is bounded to ``_MAX_CACHED_CLIENTS`` entries — oldest
+        disconnected and evicted on overflow (FIFO by insertion order).
+        Callers (broadcaster media download, scraper) never disconnect
+        clients directly; ``disconnect_all()`` runs at worker shutdown.
     """
     def __init__(self):
         self.api_id = settings.TELEGRAM_API_ID
