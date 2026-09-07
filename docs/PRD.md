@@ -270,6 +270,6 @@ Telegram Bot API, Telegram MTProto (Telethon), Supabase (PostgreSQL + Auth), Red
 5. **Supabase free tier** — 500 MB DB cap; current 35.8%. Egress resets monthly; prune broadcast-delivered messages older than 30 days if DB grows.
 6. **`keepalive_logs` legacy table** — exists alongside canonical `keepalive_log` (singular). No code writes to the plural one; artifact from early migrations.
 7. **Pre-existing CI ruff delta** — ruff check now returns 0 locally. CI uses `ruff==0.1.9`; 5 issues in `app/` with that version are noqa-annotated.
-8. **5 pre-existing test flakes** — `test_error_hygiene.py` session-ordering flake + `test_honeypot_redirect_bugs.py` async gate-fixture issues. All pass in isolation. Documented in bugfix.md.
+8. **Opt-in live test coverage** — the standard suite passes 398 tests and skips 4 live/load probes. The former stats error-hygiene ordering failure is fixed by isolating Redis cache state per test; the honeypot gate tests also pass in the full suite.
 9. **Duplicate Vercel project** — a `frontend` project was accidentally created alongside the canonical `theprawnhunter` project. Delete it from the Vercel dashboard.
 10. **GitHub OAuth secrets in session history** — the OAuth client ID and secret were posted in a chat session. Regenerate the client secret at github.com/settings/applications.

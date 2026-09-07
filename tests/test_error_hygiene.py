@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 AUTH = {"X-Monitor-Key": "test-monitor-key-for-pytest"}
+pytestmark = pytest.mark.usefixtures("isolated_stats_cache")
 
 
 # ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ AUTH = {"X-Monitor-Key": "test-monitor-key-for-pytest"}
 def test_stats_error_does_not_leak_exception(mock_db, client):
     """A DB failure should not echo 'Password: hunter2\\n...' back to the caller."""
     secret_marker = "DB Connection Error: postgres://user:PASSW0RD@host/db"
+    mock_db.rpc.side_effect = Exception(secret_marker)
     mock_db.table.side_effect = Exception(secret_marker)
 
     response = client.get("/monitor/stats", headers=AUTH)

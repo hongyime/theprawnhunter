@@ -2,8 +2,12 @@
 Health check router for monitoring system status.
 Provides endpoints to check database, Redis, and service health.
 """
+import asyncio
 from collections import Counter
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +19,67 @@ from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/health", tags=["Health"])
+
+# Keep dependency imports, SDK initialization, network I/O and retry sleeps off
+# the event loop. A timed-out request must not start another copy of a probe
+# that is still running: at most one job per dependency can be outstanding.
+_HEALTH_PROBE_TIMEOUT_SECONDS = 5.0
+_health_probe_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="health")
+_health_probe_futures: dict[str, Future[Any]] = {}
+_health_probe_lock = Lock()
+
+
+async def _run_health_probe(name: str, probe: Callable[[], Any]) -> dict[str, str]:
+    with _health_probe_lock:
+        future = _health_probe_futures.get(name)
+        if future is None or future.done():
+            future = _health_probe_executor.submit(probe)
+            _health_probe_futures[name] = future
+
+    try:
+        # Shield the underlying job so one client's timeout/cancellation does
+        # not cancel the probe shared with other requests.
+        await asyncio.wait_for(
+            asyncio.shield(asyncio.wrap_future(future)),
+            timeout=_HEALTH_PROBE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(f"Health probe {name} timed out")
+        return {"status": "unhealthy", "error": "timeout"}
+    except Exception as exc:
+        # Exceptions may contain credentials or a Telegram token in a URL.
+        logger.warning(f"Health probe {name} failed ({type(exc).__name__})")
+        return {"status": "unhealthy", "error": "connection_failed"}
+    return {"status": "healthy"}
+
+
+def _probe_database() -> None:
+    from app.core.db_retry import DatabaseHealth
+
+    DatabaseHealth.check_connection()
+
+
+def _probe_redis() -> None:
+    import redis
+
+    with redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=3.0,
+        socket_timeout=3.0,
+        retry_on_timeout=False,
+    ) as client:
+        client.ping()
+
+
+def _probe_telegram_bot() -> None:
+    import httpx
+
+    token = settings.bot_tokens[0]
+    with httpx.Client(timeout=5.0) as client:
+        response = client.get(f"https://api.telegram.org/bot{token}/getMe")
+    if response.status_code != 200:
+        raise RuntimeError("telegram_bot_unhealthy")
 
 
 def _parse_db_timestamp(value: Any) -> datetime | None:
@@ -176,47 +241,19 @@ async def detailed_health():
     """
     Detailed health check with dependency status (protected by X-Monitor-Key).
     """
-    health_status = {
-        "status": "healthy",
-        "checks": {}
+    probes = {
+        "database": _probe_database,
+        "redis": _probe_redis,
+        "telegram_bot": _probe_telegram_bot,
     }
-
-    # Check Database
-    try:
-        from app.core.db_retry import DatabaseHealth
-        DatabaseHealth.check_connection()
-        health_status["checks"]["database"] = {"status": "healthy"}
-    except Exception as e:
-        health_status["checks"]["database"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "degraded"
-
-    # Check Redis
-    try:
-        import redis
-        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        client.ping()
-        health_status["checks"]["redis"] = {"status": "healthy"}
-    except Exception as e:
-        health_status["checks"]["redis"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "degraded"
-
-    # Check Telegram Bot API
-    try:
-        import httpx
-        token = settings.bot_tokens[0]
-        # Mask token in URL — only pass the bot_id prefix for logging safety
-        url = f"https://api.telegram.org/bot{token}/getMe"
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(url)
-        if response.status_code == 200:
-            health_status["checks"]["telegram_bot"] = {"status": "healthy"}
-        else:
-            health_status["checks"]["telegram_bot"] = {"status": "unhealthy", "error": "API unreachable"}
-            health_status["status"] = "degraded"
-    except Exception:
-        # Do NOT include the exception string — it may contain the bot token in a URL
-        health_status["checks"]["telegram_bot"] = {"status": "unhealthy", "error": "connection_failed"}
-        health_status["status"] = "degraded"
+    results = await asyncio.gather(
+        *(_run_health_probe(name, probe) for name, probe in probes.items())
+    )
+    checks = dict(zip(probes, results, strict=True))
+    health_status = {
+        "status": "healthy" if all(c["status"] == "healthy" for c in results) else "degraded",
+        "checks": checks,
+    }
 
     # Return 503 if any critical service is down
     if health_status["status"] == "degraded":

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 # All monitor and scan routes require X-Monitor-Key header.
 # Use the test key set in conftest.py.
 AUTH = {"X-Monitor-Key": "test-monitor-key-for-pytest"}
+pytestmark = pytest.mark.usefixtures("isolated_stats_cache")
 
 
 def test_rate_limit_bucket_ignores_invalid_monitor_keys(monkeypatch):
@@ -33,7 +34,6 @@ def test_read_root(client):
 def test_get_stats(mock_db):
     from app.api.routers import monitor
 
-    monitor._STATS_CACHE = None
     # Trigger a DB error so we can test error handling without a real DB.
     mock_db.rpc.side_effect = Exception("DB Down")
     with pytest.raises(HTTPException) as exc_info:
@@ -46,7 +46,6 @@ def test_get_stats(mock_db):
 def test_get_stats_uses_monitor_stats_rpc(mock_db):
     from app.api.routers import monitor
 
-    monitor._STATS_CACHE = None
     mock_result = MagicMock()
     mock_result.data = [
         {
@@ -66,7 +65,6 @@ def test_get_stats_uses_monitor_stats_rpc(mock_db):
     assert stats.messages_broadcasted == 150
     mock_db.rpc.assert_called_once_with("get_monitor_stats")
     mock_db.table.assert_not_called()
-    monitor._STATS_CACHE = None
 
 
 @patch("app.api.routers.monitor.db")

@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.fernet import Fernet
@@ -32,3 +33,19 @@ from app.api.main import app  # noqa: E402, I001
 def client():
     # Use TestClient for API tests
     return TestClient(app)
+
+
+@pytest.fixture
+def isolated_stats_cache(monkeypatch):
+    """Give each stats test its own Redis cache without contacting localhost."""
+    from app.core.redis_srv import redis_srv
+
+    values = {}
+
+    def set_value(key, value, **_options):
+        values[key] = value
+        return True
+
+    monkeypatch.setattr(
+        redis_srv, "_client", SimpleNamespace(get=values.get, set=set_value)
+    )

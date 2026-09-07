@@ -328,7 +328,7 @@ npm test   # tsc --noEmit + vitest
 
 ### Current state
 
-- **399 tests collected** — 394 pass, 4 skipped, 1 session-ordering flake (`test_error_hygiene.py`; passes in isolation)
+- **402 tests collected** — 398 pass, 4 skipped, 0 failures (pytest 8.3.5). Stats-cache fixtures are isolated per test; readiness tests cover event-loop responsiveness, bounded shared probes, recovery, and error redaction.
 - **Not covered:** `app/services/bot_manager_srv.py`, `app/workers/tasks/pivot_tasks.py`, `app/workers/tasks/firehose_tasks.py`, `app/workers/tasks/import_tasks.py`, `extension/`
 
 ---
