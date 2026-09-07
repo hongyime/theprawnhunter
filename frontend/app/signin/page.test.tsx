@@ -32,7 +32,7 @@ describe("SignInPage", () => {
   it("renders sign in form", () => {
     render(<SignInPage />);
     
-    expect(screen.getByText("Telegram Hunter")).toBeInTheDocument();
+    expect(screen.getByText("The Prawn Hunter")).toBeInTheDocument();
     expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();

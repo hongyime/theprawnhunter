@@ -1,4 +1,4 @@
-# Telegram Hunter Frontend
+# The Prawn Hunter Frontend
 
 A Next.js dashboard for browsing discovered Telegram bot tokens and exfiltrated messages.
 

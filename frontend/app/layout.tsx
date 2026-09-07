@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Telegram Hunter",
+  title: "The Prawn Hunter",
   description: "Exfiltrated Messages Dashboard",
 };
 

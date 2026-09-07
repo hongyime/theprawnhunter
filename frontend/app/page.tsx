@@ -103,7 +103,7 @@ export default function Home() {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-slate-100 gap-4">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">Telegram Hunter</h1>
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">The Prawn Hunter</h1>
           <p className="text-slate-600 mb-4">
             {authError || "Sign in required to access the dashboard"}
           </p>
@@ -137,7 +137,7 @@ export default function Home() {
                 ? "Findings queue"
                 : selected?.meta?.bot_username
                 ? `@${selected.meta.bot_username}`
-                : "Prawn Hunter"}
+                : "The Prawn Hunter"}
             </span>
             <button
               onClick={handleSignOut}

@@ -135,7 +135,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Telegram Hunter')).toBeDefined();
+      expect(screen.getByText('The Prawn Hunter')).toBeDefined();
       expect(screen.getByText('Sign in required to access the dashboard')).toBeDefined();
       expect(screen.getByText('Sign In').closest('a')).toHaveProperty('href', expect.stringContaining('/signin'));
     });
@@ -158,7 +158,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Telegram Hunter')).toBeDefined();
+      expect(screen.getByText('The Prawn Hunter')).toBeDefined();
       expect(screen.getByText('Session expired')).toBeDefined();
     });
 
@@ -187,7 +187,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
     // Should show user email
     expect(screen.getByText('test@example.com')).toBeDefined();
     // Should NOT show sign-in prompt
-    expect(screen.queryByText('Telegram Hunter')).toBeNull();
+    expect(screen.queryByText('The Prawn Hunter')).toBeNull();
   });
 
   it('clicks select button and shows selected credential id', async () => {
