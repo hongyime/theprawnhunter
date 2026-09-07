@@ -56,10 +56,7 @@ def is_valid_telegram_token(token_str: str) -> bool:
 
         # Suspicious: Pure hex (likely hash collision)
         is_pure_hex = all(c in "0123456789abcdefABCDEF" for c in secret)
-        if is_pure_hex:
-            return False
-
-        return True
+        return not is_pure_hex
     except Exception as _swallowed:
         logger.debug(f"[suppressed] {_swallowed}")
         return False

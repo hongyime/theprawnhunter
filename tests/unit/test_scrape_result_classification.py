@@ -1,4 +1,3 @@
-import asyncio
 
 from app.services._scraper.results import (
     ScrapeReason,
@@ -36,7 +35,7 @@ def test_classifier_maps_webhook_too_many_bots_timeout_and_flood_wait():
         strategy="invite",
     ).reason == ScrapeReason.TOO_MANY_BOTS
     assert classifier.classify_exception(
-        asyncio.TimeoutError(),
+        TimeoutError(),
         strategy="telethon",
     ).reason == ScrapeReason.TIMEOUT
     flood = classifier.classify_exception(_FloodWaitError("Flood wait"), strategy="telethon")

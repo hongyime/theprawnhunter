@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 
 
-class ScrapeReason(str, Enum):
+class ScrapeReason(str, Enum):  # noqa: UP042 — StrEnum not available in Python 3.11 standard lib at pinned version
     SUCCESS = "success"
     BOT_HISTORY_RESTRICTED = "bot_history_restricted"
     USER_AGENT_INVITE_FAILED = "user_agent_invite_failed"

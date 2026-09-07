@@ -99,13 +99,10 @@ def _is_valid_token(token_str: str) -> bool:
         if not all(c in allowed for c in secret):
             return False
 
-        # Suspicious: Pure hex (likely hash collision)
+        # Suspicious: Pure hex (likely hash collision).
+        # Real tokens have mixed case and special chars; pure hex is a dedup false positive.
         is_pure_hex = all(c in "0123456789abcdefABCDEF" for c in secret)
-        if is_pure_hex:
-            # Real tokens have mixed case and special chars, pure hex is suspicious
-            return False
-
-        return True
+        return not is_pure_hex
     except Exception as _swallowed:
         logger.debug(f"[suppressed] {_swallowed}")
         return False

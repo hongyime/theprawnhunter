@@ -78,3 +78,4 @@ dist/
 build/
 .next/
 coverage/
+.vercel
