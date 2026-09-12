@@ -233,6 +233,12 @@ NEXT_PUBLIC_SUPABASE_KEY=<anon-key>
 
 Sign in at `https://theprawnhunter.vercel.app/signin` with GitHub. After first login, an admin must set `app_metadata = {"operator": true}` on your Supabase user account to grant access to data.
 
+Dashboard authorization requires a signed-in UUID, the authenticated JWT role and the **JSON boolean** `true` in admin-controlled `app_metadata.operator`. Missing, false, null, string or numeric values do not authorize access; user-editable metadata is never used. Refresh the session after an administrator changes the claim, because an existing JWT keeps its previous claims until refreshed or expired.
+
+Migration `20260912121145_restrict_dashboard_operator_access.sql` restricts the three dashboard tables, checks the existing feedback RPC before privileged writes, and makes the redacted evidence view read-only with an operator filter and security barrier. It preserves the redaction expression and keeps raw-table access revoked. The existing definer view is retained to avoid granting access to private raw fields; the JWT helper uses invoker privileges. No stored records are changed by this migration.
+
+Authorization regression checks run in the `Operator authorization` workflow against synthetic PostgreSQL records without application imports or provider credentials. To run locally, create an empty loopback PostgreSQL database named `prawn_hunter_auth_fixture_<suffix>`, supply standard `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` environment variables, and run `python scripts/test_operator_authorization.py` (`PSQL` optionally selects the client executable). The fixture reproduces the previous bypasses before applying the migration, then exercises real role, RLS, view and RPC allow/deny outcomes. It must never target an application database.
+
 ### API — health
 
 ```bash
