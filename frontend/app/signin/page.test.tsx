@@ -35,7 +35,8 @@ describe("SignInPage", () => {
     expect(screen.getByText("The Prawn Hunter")).toBeInTheDocument();
     expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^sign in$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^sign in with github$/i })).toBeInTheDocument();
   });
 
   it("shows error when signIn returns error - does NOT navigate", async () => {
@@ -46,7 +47,7 @@ describe("SignInPage", () => {
     
     const emailInput = screen.getByLabelText(/email address/i);
     const passwordInput = screen.getByLabelText(/password/i);
-    const submitButton = screen.getByRole("button", { name: /sign in/i });
+    const submitButton = screen.getByRole("button", { name: /^sign in$/i });
 
     await userEvent.type(emailInput, "test@example.com");
     await userEvent.type(passwordInput, "wrongpassword");
@@ -71,7 +72,7 @@ describe("SignInPage", () => {
     
     const emailInput = screen.getByLabelText(/email address/i);
     const passwordInput = screen.getByLabelText(/password/i);
-    const submitButton = screen.getByRole("button", { name: /sign in/i });
+    const submitButton = screen.getByRole("button", { name: /^sign in$/i });
 
     await userEvent.type(emailInput, "test@example.com");
     await userEvent.type(passwordInput, "correctpassword");

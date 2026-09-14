@@ -1,0 +1,47 @@
+name: Operator authorization
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/**"
+      - "scripts/test_operator_authorization.py"
+      - ".github/workflows/operator-authorization.yml"
+  pull_request:
+    paths:
+      - "supabase/**"
+      - "scripts/test_operator_authorization.py"
+      - ".github/workflows/operator-authorization.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-authorization:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_USER: fixture
+          POSTGRES_PASSWORD: synthetic-ci-only
+          POSTGRES_DB: prawn_hunter_auth_fixture_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fixture -d prawn_hunter_auth_fixture_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test restrictive access against synthetic PostgreSQL records
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: fixture
+          PGPASSWORD: synthetic-ci-only
+          PGDATABASE: prawn_hunter_auth_fixture_ci
+        run: python scripts/test_operator_authorization.py
