@@ -14,4 +14,4 @@ jobs:
       - uses: actions/labeler@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          # The action automatically looks for .github/labels.yml by default
+          configuration-path: .github/labels.yml
