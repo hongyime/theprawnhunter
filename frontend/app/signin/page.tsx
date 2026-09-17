@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import NeoCard from "@/components/NeoCard";
+import NeoButton from "@/components/NeoButton";
 
 export default function SignInPage() {
     const { signIn, loading, error } = useAuth();
@@ -44,7 +46,7 @@ export default function SignInPage() {
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-slate-100">
-            <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
+            <NeoCard className="max-w-md w-full space-y-8 p-8">
                 <div>
                     <h2 className="text-center text-3xl font-bold text-slate-900">
                         The Prawn Hunter
@@ -56,18 +58,18 @@ export default function SignInPage() {
 
                 {/* GitHub SSO — primary login method */}
                 <div>
-                    <button
+                    <NeoButton
                         type="button"
                         onClick={handleGitHub}
                         disabled={oauthLoading || loading}
-                        className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-slate-300 rounded-md shadow-sm bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full flex items-center justify-center gap-3 px-4 py-3 text-sm text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {/* GitHub icon */}
                         <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                             <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
                         </svg>
                         {oauthLoading ? "Redirecting…" : "Sign in with GitHub"}
-                    </button>
+                    </NeoButton>
                 </div>
 
                 <div className="relative">
@@ -123,16 +125,16 @@ export default function SignInPage() {
                     )}
 
                     <div>
-                        <button
+                        <NeoButton
                             type="submit"
                             disabled={loading}
-                            className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-full flex justify-center py-2 px-4 text-sm font-medium text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {loading ? "Signing in..." : "Sign in"}
-                        </button>
+                        </NeoButton>
                     </div>
                 </form>
-            </div>
+            </NeoCard>
         </div>
     );
 }
