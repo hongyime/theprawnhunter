@@ -8,6 +8,7 @@ import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
 import { LucideMenu, LucideX, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+import NeoCard from "@/components/NeoCard";
 
 export type DashboardView = "findings" | "chat" | "botTelemetry" | "globalTelemetry";
 
@@ -93,7 +94,9 @@ export default function Home() {
   if (authLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-100">
-        <div className="text-slate-600">Authenticating...</div>
+        <NeoCard className="p-6">
+          <div className="text-slate-600">Authenticating...</div>
+        </NeoCard>
       </div>
     );
   }
@@ -102,7 +105,7 @@ export default function Home() {
   if (!session) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-slate-100 gap-4">
-        <div className="text-center">
+        <NeoCard className="p-8 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">The Prawn Hunter</h1>
           <p className="text-slate-600 mb-4">
             {authError || "Sign in required to access the dashboard"}
@@ -113,7 +116,7 @@ export default function Home() {
           >
             Sign In
           </a>
-        </div>
+        </NeoCard>
       </div>
     );
   }
