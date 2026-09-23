@@ -1,0 +1,16 @@
+tests/
+.agents/
+.github/
+.dockerignore
+.pre-commit-config.yaml
+.kiro/
+.env.template
+docs/
+bugfix.md
+design.md
+tasks.md
+AUDIT.md
+REPO_MAP.md
+README.md
+LICENSE
+NOTICE
