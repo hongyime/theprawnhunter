@@ -1,19 +1,50 @@
+# The Prawn Hunter — Docker Compose (lean, single-stack)
+#
+# One Compose project ("theprawnhunter"), one network ("theprawnhunter_net").
+#
+# DEV (default — minimal footprint): redis + api + worker + beat
+#   docker compose up -d --build
+#
+# Opt-in extras (Compose profiles):
+#   docker compose --profile bot        up -d   # + Telegram bot listener
+#   docker compose --profile monitoring up -d   # + Flower task monitor
+#   docker compose --profile frontend   up -d   # + Next.js dashboard
+#   docker compose --profile full       up -d   # everything above
+#
+# PRODUCTION (lean, tuned via .env + overlay):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
+#
+# Resource knobs (lean defaults; override in .env):
+#   *_CPUS  *_MEM_LIMIT  *_MEM_RESERVATION  WORKER_CONCURRENCY  API_WORKERS  REDIS_MAXMEMORY
+#
+# Port defaults — override in .env on conflict:
+#   API_PORT=8011  REDIS_PORT=6379  FLOWER_PORT=8555  FRONTEND_PORT=3000
 name: theprawnhunter
 
-# Port defaults — override in .env if you have conflicts:
-#   API_PORT=8011   (host port → container 8001)
-#   REDIS_PORT=6379 (host port → container 6379)
+# ---- Shared fragments (DRY) ----
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-build: &app-build
+  build:
+    context: .
 
 services:
+  # =========================================================================
+  # CORE — always started (this is the minimal dev stack)
+  # =========================================================================
   redis:
     image: redis:7-alpine
     container_name: theprawnhunter_redis
-    restart: always
+    restart: unless-stopped
     init: true
-    cpus: "${REDIS_CPUS:-0.50}"
-    mem_limit: "${REDIS_MEM_LIMIT:-1280m}"
-    mem_reservation: "${REDIS_MEM_RESERVATION:-512m}"
-    command: redis-server --appendonly yes --appendfsync everysec --maxmemory 1gb --maxmemory-policy noeviction
+    cpus: "${REDIS_CPUS:-0.25}"
+    mem_limit: "${REDIS_MEM_LIMIT:-320m}"
+    mem_reservation: "${REDIS_MEM_RESERVATION:-128m}"
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy noeviction
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
@@ -23,24 +54,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
   api:
-    build: .
+    <<: *app-build
     container_name: theprawnhunter_api
-    restart: always
+    restart: unless-stopped
     init: true
-    cpus: "${API_CPUS:-2.00}"
-    mem_limit: "${API_MEM_LIMIT:-2g}"
-    mem_reservation: "${API_MEM_RESERVATION:-768m}"
+    cpus: "${API_CPUS:-1.00}"
+    mem_limit: "${API_MEM_LIMIT:-512m}"
+    mem_reservation: "${API_MEM_RESERVATION:-256m}"
     ports:
       - "127.0.0.1:${API_PORT:-8011}:8001"
     env_file: .env
-    command: gunicorn app.api.main:app -k uvicorn.workers.UvicornWorker -w 4 --bind 0.0.0.0:8001 --timeout 120
+    command: gunicorn app.api.main:app -k uvicorn.workers.UvicornWorker -w ${API_WORKERS:-2} --bind 0.0.0.0:8001 --timeout ${API_GUNICORN_TIMEOUT:-120}
     depends_on:
       redis:
         condition: service_healthy
@@ -52,58 +79,25 @@ services:
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/', timeout=5)"]
       interval: 30s
-      timeout: "${API_HEALTHCHECK_TIMEOUT_SECONDS:-45}s"
+      timeout: "${API_HEALTHCHECK_TIMEOUT_SECONDS:-30}s"
       retries: 5
-      start_period: "${API_HEALTHCHECK_START_PERIOD_SECONDS:-180}s"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      start_period: "${API_HEALTHCHECK_START_PERIOD_SECONDS:-120}s"
+    logging: *default-logging
 
-  worker-core:
-    build: .
-    container_name: theprawnhunter_worker-core
-    restart: always
+  # Combined worker — consumes ALL queues (celery, scanners, scrape, validation).
+  # Replaces the former 4 split workers for a minimal footprint. Scale out with
+  # `docker compose up -d --scale worker=N` or raise WORKER_CONCURRENCY in .env.
+  # redis-cli is not in this image, so the healthcheck uses python to ping Redis.
+  worker:
+    <<: *app-build
+    container_name: theprawnhunter_worker
+    restart: unless-stopped
     init: true
-    cpus: "${WORKER_CORE_CPUS:-2.00}"
-    mem_limit: "${WORKER_CORE_MEM_LIMIT:-2g}"
-    mem_reservation: "${WORKER_CORE_MEM_RESERVATION:-512m}"
+    cpus: "${WORKER_CPUS:-1.00}"
+    mem_limit: "${WORKER_MEM_LIMIT:-768m}"
+    mem_reservation: "${WORKER_MEM_RESERVATION:-256m}"
     env_file: .env
-    command: celery -A app.workers.celery_app worker -Q celery --loglevel=info --concurrency=8
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - sessions:/app/sessions
-      - imports:/app/imports
-    healthcheck:
-      # `celery inspect ping` uses broadcast RPC — unreliable (caused 384 false-positive
-      # unhealthy states). redis-cli is not in the worker image. Use Python (always present)
-      # to verify broker connectivity — if the worker can't reach Redis it can't process tasks.
-      # Timeout raised from 90s to 180s: under CPU pressure the `python3 -c 'import redis'`
-      # startup can exceed 90s and cause spurious unhealthy flaps.
-      test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
-      interval: 60s
-      timeout: 180s
-      retries: 3
-      start_period: 120s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  worker-scanners:
-    build: .
-    container_name: theprawnhunter_worker-scanners
-    restart: always
-    init: true
-    cpus: "${WORKER_SCANNERS_CPUS:-2.00}"
-    mem_limit: "${WORKER_SCANNERS_MEM_LIMIT:-2g}"
-    mem_reservation: "${WORKER_SCANNERS_MEM_RESERVATION:-512m}"
-    env_file: .env
-    command: celery -A app.workers.celery_app worker -Q scanners --loglevel=info --concurrency=8
+    command: celery -A app.workers.celery_app worker -Q celery,scanners,scrape,validation --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=${WORKER_CONCURRENCY:-2}
     depends_on:
       redis:
         condition: service_healthy
@@ -113,154 +107,54 @@ services:
     healthcheck:
       test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
       interval: 60s
-      timeout: 180s
+      timeout: 60s
       retries: 3
-      start_period: 120s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  worker-scrape:
-    build: .
-    container_name: theprawnhunter_worker-scrape
-    restart: always
-    init: true
-    cpus: "${WORKER_SCRAPE_CPUS:-2.00}"
-    mem_limit: "${WORKER_SCRAPE_MEM_LIMIT:-2g}"
-    mem_reservation: "${WORKER_SCRAPE_MEM_RESERVATION:-512m}"
-    env_file: .env
-    command: celery -A app.workers.celery_app worker -Q scrape --loglevel=info --concurrency=6
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - sessions:/app/sessions
-      - imports:/app/imports
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
-      interval: 60s
-      timeout: 180s
-      retries: 3
-      start_period: 120s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Async token validation worker — pulls validate_token tasks from the
-  # `validation` queue with global Redis-backed rate limiting (default
-  # 30 getMe calls / 10s across all validator processes).
-  # Concurrency=16: validators are I/O-bound on Telegram getMe; rate limiter
-  # gates total throughput so concurrency just controls in-flight depth.
-  worker-validators:
-    build: .
-    container_name: theprawnhunter_worker-validators
-    restart: always
-    init: true
-    cpus: "${WORKER_VALIDATORS_CPUS:-2.00}"
-    mem_limit: "${WORKER_VALIDATORS_MEM_LIMIT:-2g}"
-    mem_reservation: "${WORKER_VALIDATORS_MEM_RESERVATION:-512m}"
-    env_file: .env
-    command: celery -A app.workers.celery_app worker -Q validation --loglevel=info --concurrency=16
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - sessions:/app/sessions
-      - imports:/app/imports
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
-      interval: 60s
-      timeout: 180s
-      retries: 3
-      start_period: 120s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      start_period: 60s
+    logging: *default-logging
 
   beat:
-    build: .
+    <<: *app-build
     container_name: theprawnhunter_beat
-    restart: always
+    restart: unless-stopped
     init: true
-    cpus: "${BEAT_CPUS:-0.50}"
-    mem_limit: "${BEAT_MEM_LIMIT:-512m}"
-    mem_reservation: "${BEAT_MEM_RESERVATION:-256m}"
+    cpus: "${BEAT_CPUS:-0.25}"
+    mem_limit: "${BEAT_MEM_LIMIT:-256m}"
+    mem_reservation: "${BEAT_MEM_RESERVATION:-128m}"
     env_file: .env
-    command: celery -A app.workers.celery_app beat --loglevel=info --schedule /app/beat/celerybeat-schedule
+    command: celery -A app.workers.celery_app beat --loglevel=${CELERY_LOG_LEVEL:-info} --schedule /app/beat/celerybeat-schedule
     depends_on:
       redis:
         condition: service_healthy
-      worker-core:
+      worker:
         condition: service_started
     volumes:
       - sessions:/app/sessions
       - beat_schedule:/app/beat
     healthcheck:
-      # Beat has no Celery worker — check the schedule file exists and is fresh
-      # (modified within last 5 min). If beat crashes mid-run, the file goes stale.
-      test: ["CMD", "python3", "-c", "import os,time; p='/app/beat/celerybeat-schedule'; assert os.path.exists(p) or True"]
+      # Beat runs no Celery worker — lightweight liveness only.
+      test: ["CMD", "python3", "-c", "import os; p='/app/beat/celerybeat-schedule'; assert os.path.exists(p) or True"]
       interval: 60s
       timeout: 5s
       retries: 3
       start_period: 30s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL}
-        NEXT_PUBLIC_SUPABASE_KEY: ${SUPABASE_KEY}
-    container_name: theprawnhunter_frontend
-    restart: always
-    init: true
-    cpus: "${FRONTEND_CPUS:-1.00}"
-    mem_limit: "${FRONTEND_MEM_LIMIT:-1g}"
-    mem_reservation: "${FRONTEND_MEM_RESERVATION:-256m}"
-    ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
-    # REL-002: healthcheck via node http client (image lacks curl/wget).
-    # Timeout raised to 15s because node cold-start on the frontend image
-    # can exceed 5s under load; healthcheck runs frequently enough that a
-    # 15s ceiling is still tight without false-flapping.
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 60s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
+  # =========================================================================
+  # OPT-IN EXTRAS — started only with their profile (or --profile full)
+  # =========================================================================
   bot:
-    build: .
+    <<: *app-build
     container_name: theprawnhunter_bot
-    restart: always
+    profiles: ["bot", "full"]
+    restart: unless-stopped
     init: true
-    cpus: "${BOT_CPUS:-0.50}"
-    mem_limit: "${BOT_MEM_LIMIT:-512m}"
-    mem_reservation: "${BOT_MEM_RESERVATION:-256m}"
+    cpus: "${BOT_CPUS:-0.25}"
+    mem_limit: "${BOT_MEM_LIMIT:-256m}"
+    mem_reservation: "${BOT_MEM_RESERVATION:-128m}"
     env_file: .env
     command: python -m app.services.bot_listener
     healthcheck:
-      # The bot loop touches /tmp/bot_alive every 10 seconds.
-      # We check that the file exists AND was modified within the last 60s.
-      # If the polling loop stalls silently, this file goes stale and the
-      # container is marked unhealthy — triggering a restart.
+      # The bot loop touches /tmp/bot_alive every 10s; stale (>60s) => unhealthy.
       test: ["CMD", "sh", "-c", "test -f /tmp/bot_alive && [ $(( $(date +%s) - $(date -r /tmp/bot_alive +%s) )) -le 60 ]"]
       interval: 30s
       timeout: 5s
@@ -273,20 +167,17 @@ services:
         condition: service_started
     volumes:
       - sessions:/app/sessions
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
   flower:
-    build: .
+    <<: *app-build
     container_name: theprawnhunter_flower
-    restart: always
+    profiles: ["monitoring", "full"]
+    restart: unless-stopped
     init: true
-    cpus: "${FLOWER_CPUS:-0.50}"
-    mem_limit: "${FLOWER_MEM_LIMIT:-512m}"
-    mem_reservation: "${FLOWER_MEM_RESERVATION:-256m}"
+    cpus: "${FLOWER_CPUS:-0.25}"
+    mem_limit: "${FLOWER_MEM_LIMIT:-256m}"
+    mem_reservation: "${FLOWER_MEM_RESERVATION:-128m}"
     env_file: .env
     command: >-
       sh -c '
@@ -301,30 +192,51 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    # REL-002: healthcheck via raw TCP connect on 5555. Flower's basic-auth
-    # gate makes HTTP probes awkward; a successful TCP handshake is enough
-    # to confirm the process is up and accepting connections.
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket, sys; s = socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', 5555)); s.close(); sys.exit(0)"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_KEY: ${SUPABASE_KEY}
+    container_name: theprawnhunter_frontend
+    profiles: ["frontend", "full"]
+    restart: unless-stopped
+    init: true
+    cpus: "${FRONTEND_CPUS:-0.50}"
+    mem_limit: "${FRONTEND_MEM_LIMIT:-512m}"
+    mem_reservation: "${FRONTEND_MEM_RESERVATION:-128m}"
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    logging: *default-logging
+
+# Single explicit network so every service shares one stack.
+networks:
+  default:
+    name: theprawnhunter_net
+
+# External volumes pinned to the legacy 'telegramhunter_*' prefix — the physical
+# volumes created before the project rename. Data is preserved across rebuilds.
+# First-time setup (once):
+#   docker volume create telegramhunter_redis_data
+#   docker volume create telegramhunter_sessions
+#   docker volume create telegramhunter_imports
+#   docker volume create telegramhunter_beat_schedule
 volumes:
-  # Volume names pinned to legacy 'telegramhunter_*' prefix — these are the
-  # physical volumes created before the project rename to 'theprawnhunter'.
-  # Mark them external so Compose does not warn about legacy project labels.
-  # For first-time setup, create these once with:
-  #   docker volume create telegramhunter_redis_data
-  #   docker volume create telegramhunter_sessions
-  #   docker volume create telegramhunter_imports
-  #   docker volume create telegramhunter_beat_schedule
   redis_data:
     external: true
     name: ${REDIS_VOLUME_NAME:-telegramhunter_redis_data}

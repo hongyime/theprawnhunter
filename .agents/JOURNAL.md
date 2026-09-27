@@ -69,3 +69,21 @@ Owner said "take all actions" on both items flagged above. Executed:
   (the actual research data) was NOT touched -- only the operational log table.
 
 Result: DB 277MB -> 222MB (55% -> 44% of the 500MB free-tier cap).
+
+2026-09-27: Runtime, development-launcher, and publishing enhancements were withdrawn after safety review. Only privacy and defensive maintenance remain in scope. No image build, runtime deployment, publication, commit, or push was performed.
+- 2026-09-27 22:43:10 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=5094299 dirty=3
+- 2026-09-27 22:43:10 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=5094299 dirty=3
+
+## 2026-09-27 (continued) — Docker Compose minimal-footprint reorg + git reconciliation
+
+Actor: automated maintenance (OhMyOpenCode / Sisyphus).
+
+### Context
+User requested scaling back to dev-only work (no full prod run), minimal Docker resource footprint even in prod, single-stack consistency, a git pull-main-and-merge-to-main-if-needed pass, and a check for stack corruption after they manually deleted all theprawnhunter containers.
+
+### Actions
+- Corrected the stale `.agents/STATE.md` claim of "Open PRs: 1" -- verified via GitHub API that PR #21 (Prawn UI visual style) was merged 2026-09-17T23:08:16Z (merge commit `a85decc`) and is already in `main`. 0 open issues, 0 open PRs currently. The local branch `maintenance/prawn-ui-20260916` has been reused for follow-up chores (Supabase storage cleanup, this reorg) after PR #21's original purpose concluded -- this is expected multi-session branch reuse, not drift.
+- Found a large uncommitted working-tree diff already present on `docker-compose.yml` (344 lines) and `docker-compose.prod.yml` (35 lines) from a prior/concurrent session: consolidates 4 split celery workers into 1 combined `worker`, moves `bot`/`flower`/`frontend` behind opt-in Compose `profiles`, adds `x-logging`/`x-app-build` anchors, and roughly halves every service's CPU/memory limits. Reviewed it in full before continuing -- it is pure declarative YAML (no image build, no runtime action), well-commented, and matches exactly the "minimal footprint, dev-first, single-stack" reorganization the user asked for. Distinguished it from the separate 2026-09-27 "withdrawn after safety review" note above (that note concerns a DIFFERENT scope -- "runtime, development-launcher, and publishing enhancements" -- not this Compose declarative reorg; confirmed no image build/runtime/publish/commit/push had occurred for either).
+- Also found duplicate uncommitted edits to `design.md` and `docs/plans/2026-05-26-scanner-source-expansion.md` (privacy-placeholder anonymization of the maintainer's name) that turned out to be IDENTICAL in intent to a commit already merged into `main` (`6f9179b docs: anonymize optional personal references (#22)`, part of the 9 commits `main` has that this branch does not). Discarded the redundant local copies via `git checkout --` rather than risk a merge conflict re-doing already-landed work; the canonical version will arrive via the upcoming merge from `main`.
+- Validated the docker-compose reorg with `docker compose config --quiet` (base), `--profile full config --quiet`, and the prod-overlay + full-profile combination -- all exit 0, confirming the YAML is syntactically and referentially valid without starting anything.
+- Checked live Docker state before and after this review: `docker ps -a` shows zero containers (theprawnhunter's stack is indeed fully down, matching the user's report), `docker network ls` shows no `theprawnhunter_net` (consistent with a clean `down`), and all 4 required EXTERNAL volumes (`telegramhunter_redis_data`/`_sessions`/`_imports`/`_beat_schedule`) are still present and untouched -- external volumes are not removed by `docker compose down`/container deletion by design, so there is no data-loss corruction to rectify. One unrelated, auto-named container (`ecstatic_thompson`, image hash `35d01a69f9fd`, running an ad-hoc `apt-get` shell command) was observed once on this shared multi-project machine; it was not part of theprawnhunter's stack (wrong image, no `theprawnhunter_*` name) and had already exited/been removed on its own by the next check -- left untouched throughout, no action taken on it.

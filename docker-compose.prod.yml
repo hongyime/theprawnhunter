@@ -1,3 +1,11 @@
+# The Prawn Hunter — Production overlay (lean).
+#
+# Apply on top of the base file, enabling the extras you actually run:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
+#
+# Keeps the single-stack, single-worker design; only bumps concurrency/workers
+# and flips runtime flags to production. Resources still come from .env defaults
+# so prod stays lean unless you deliberately raise the *_CPUS / *_MEM_LIMIT knobs.
 name: theprawnhunter
 
 services:
@@ -12,33 +20,12 @@ services:
       --bind 0.0.0.0:8001
       --timeout ${API_GUNICORN_TIMEOUT:-120}
 
-  worker-core:
+  worker:
     command: >-
       celery -A app.workers.celery_app worker
-      -Q celery
+      -Q celery,scanners,scrape,validation
       --loglevel=${CELERY_LOG_LEVEL:-info}
-      --concurrency=${WORKER_CORE_CONCURRENCY:-8}
-
-  worker-scanners:
-    command: >-
-      celery -A app.workers.celery_app worker
-      -Q scanners
-      --loglevel=${CELERY_LOG_LEVEL:-info}
-      --concurrency=${WORKER_SCANNERS_CONCURRENCY:-8}
-
-  worker-scrape:
-    command: >-
-      celery -A app.workers.celery_app worker
-      -Q scrape
-      --loglevel=${CELERY_LOG_LEVEL:-info}
-      --concurrency=${WORKER_SCRAPE_CONCURRENCY:-6}
-
-  worker-validators:
-    command: >-
-      celery -A app.workers.celery_app worker
-      -Q validation
-      --loglevel=${CELERY_LOG_LEVEL:-info}
-      --concurrency=${WORKER_VALIDATORS_CONCURRENCY:-16}
+      --concurrency=${WORKER_CONCURRENCY:-6}
 
   frontend:
     environment:
