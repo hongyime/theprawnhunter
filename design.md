@@ -191,7 +191,7 @@ No lookups needed.
 | 142 broad-except sites (DEAD-008) | Per-site review; too large for one cycle. A per-site inventory is added to `docs/history/broad_except_review.md` so the next cycle can start from data. |
 | `.deepsource.toml`, `.sourcery.yml` (DEAD-005) | Cannot verify subscription from code alone. Operator confirmation required. |
 | `.kiro/specs/*` | Legitimate Kiro spec content; leaving under `.kiro/` is convention. |
-| Renaming `.env.template` → `.env.example` | Kiro convention across Bryan's repos is `.env.template`; consistency wins. |
+| Renaming `.env.template` → `.env.example` | Kiro convention across the maintainer's repos is `.env.template`; consistency wins. |
 | Migration file `20260906000001_dashboard_operator_authorization.sql` | Already present in `supabase/migrations/` — will just be verified applied. |
 | `_scraper/`, `_scanner/` prefix (STRUCT-005/006) | Verified — intentional private packages. Marked invalid in `bugfix.md`. |
 | `PRD.md`, `README.md` factual rewrites | Handled by `03_DOCUMENT` per pipeline design. |
@@ -293,3 +293,5 @@ At CLOSEOUT (Phase 4), I hand over:
 - Every migration file staged for operator apply.
 - The `docs/deployment/rebuild.md` runbook.
 - The residual-risk statement (fixes I could not fully verify without operator action).
+
+Machine-specific values in this document use privacy placeholders.

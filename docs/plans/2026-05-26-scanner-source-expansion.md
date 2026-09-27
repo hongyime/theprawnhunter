@@ -20,7 +20,7 @@
 - Modify: `app/workers/celery_app.py` (beat schedule)
 - Modify: `app/services/scanners.py` (PastebinService — only if killing)
 
-**Decision rule:** Pastebin Pro scraping API requires manual whitelist via pastebin.com/doc_scraping_api → Bryan needs to either pay $30 once + whitelist Singapore IP, or accept dead scanner. Default action: **kill it**, since Exa now covers paste sites with fuller content extraction (no second-fetch needed).
+**Decision rule:** Pastebin Pro scraping API requires manual whitelist via pastebin.com/doc_scraping_api → the maintainer needs to either pay $30 once + whitelist Singapore IP, or accept dead scanner. Default action: **kill it**, since Exa now covers paste sites with fuller content extraction (no second-fetch needed).
 
 **Step 1.1: Comment out beat entry**
 ```python
@@ -73,7 +73,7 @@ Slot picked: minute=15 (Pastebin's old slot, now free).
 ```bash
 grep PUBLICWWW_API_KEY .env
 ```
-Expected: a line with the key. If missing → log warning to user (Bryan must add it), but ship task anyway.
+Expected: a line with the key. If missing → log warning to user (the maintainer must add it), but ship task anyway.
 
 **Step 2.3: Verify**
 ```bash
@@ -94,7 +94,7 @@ feat(scanners): schedule PublicWWW every 12h (HTML source code search)
 **Files:**
 - Modify: `app/services/scanners.py` (GithubService — token pool selection)
 - Modify: `app/core/config.py` (add `GITHUB_TOKENS` list field)
-- Modify: `.env` (Bryan adds `GITHUB_TOKENS=` comma-separated list — manual, post-deploy)
+- Modify: `.env` (the maintainer adds `GITHUB_TOKENS=` comma-separated list — manual, post-deploy)
 
 **Architecture:** Round-robin token selection at request time, NOT at service init. Lets us add tokens without restart. Uses Redis INCR for distributed counter so multiple worker processes share rotation.
 
@@ -169,7 +169,7 @@ docker compose build worker-scanners
 docker compose up -d --force-recreate worker-scanners
 ```
 
-**Step 3.6: Runtime smoke (single token, before Bryan adds pool)**
+**Step 3.6: Runtime smoke (single token, before the maintainer adds pool)**
 ```bash
 docker exec theprawnhunter_worker-scanners celery -A app.workers.celery_app call scanner.scan_github
 sleep 60
@@ -187,7 +187,7 @@ works if GITHUB_TOKENS unset. Pool of 5 PATs = 5x rate limit headroom.
 ```
 
 **Step 3.8: Operator handoff**
-After commit, note: Bryan must populate `GITHUB_TOKENS=ghp_X,ghp_Y,ghp_Z,...` in `.env` (comma-separated, no spaces) and restart worker-scanners. Each PAT must be from a separate GH account.
+After commit, note: the maintainer must populate `GITHUB_TOKENS=ghp_X,ghp_Y,ghp_Z,...` in `.env` (comma-separated, no spaces) and restart worker-scanners. Each PAT must be from a separate GH account.
 
 ---
 
@@ -728,9 +728,11 @@ Across tasks: nothing destructive. No DB migrations, no state mutation. New task
 
 ## Operator handoff (post-deploy)
 
-Bryan must do:
+the maintainer must do:
 1. **Task 2**: confirm `PUBLICWWW_API_KEY` set in `.env` (warn if missing)
 2. **Task 3**: populate `GITHUB_TOKENS=ghp_X,ghp_Y,...` in `.env` to activate rotation
 3. **Task 5**: monitor FloodWait state — first run may eat the budget if queries trigger it
 
 All other tasks self-activate from the next beat tick after deploy.
+
+Machine-specific values in this document use privacy placeholders.
