@@ -224,6 +224,31 @@ services:
       start_period: 60s
     logging: *default-logging
 
+  # Cloudflare Tunnel — publishes the honeypot receiver (api:8001) on a public
+  # HTTPS hostname with NO inbound port and without exposing the host IP.
+  # Remotely-managed (token) tunnel — portable across macOS / Linux / Windows:
+  #   1. Zero Trust dashboard -> Networks -> Tunnels -> Create -> Docker (copy token).
+  #   2. Public hostname: <your-domain>  ->  Service: http://api:8001  (internal, not localhost).
+  #   3. Put the token in CLOUDFLARE_TUNNEL_TOKEN in .env, then:
+  #        docker compose --profile honeypot up -d
+  #   Full guide: docs/deployment/cloudflare_tunnel.md
+  cloudflared:
+    image: cloudflare/cloudflared:latest  # pin a dated tag for prod, e.g. :2025.2.0
+    container_name: theprawnhunter_cloudflared
+    profiles: ["honeypot", "full"]
+    restart: unless-stopped
+    init: true
+    cpus: "${CLOUDFLARED_CPUS:-0.25}"
+    mem_limit: "${CLOUDFLARED_MEM_LIMIT:-128m}"
+    mem_reservation: "${CLOUDFLARED_MEM_RESERVATION:-64m}"
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      api:
+        condition: service_started
+    logging: *default-logging
+
 # Single explicit network so every service shares one stack.
 networks:
   default:

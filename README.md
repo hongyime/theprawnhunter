@@ -185,6 +185,7 @@ All degrade gracefully when absent.
 ```bash
 docker compose up -d --build           # dev default: 4 core services (redis, api, worker, beat)
 docker compose --profile full up -d    # add optional bot, flower, frontend
+docker compose --profile honeypot up -d # + Cloudflare Tunnel receiver (docs/deployment/cloudflare_tunnel.md)
 docker compose logs -f                 # view all logs
 docker compose logs -f worker          # specific service (combined worker)
 docker compose down                    # stop, preserve volumes
