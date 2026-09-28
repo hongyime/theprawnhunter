@@ -79,3 +79,8 @@ build/
 .next/
 coverage/
 .vercel
+
+
+# Volume backup archives — contain live Telethon session keys, NEVER commit
+volume-backups/
+*.tar.gz
