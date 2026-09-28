@@ -1,6 +1,6 @@
 # The Prawn Hunter
 
-A self-hosted OSINT pipeline that discovers exposed Telegram Bot API tokens across 21 public data sources, validates each against the live Telegram API, harvests accessible chat history via Telethon and the Bot API, and delivers findings to a private Telegram supergroup organised as per-bot forum topics. Delivered as a Docker Compose stack of 10 services backed by Supabase managed PostgreSQL and Redis. A read-only analyst dashboard is hosted at `theprawnhunter.vercel.app`.
+A self-hosted OSINT pipeline that discovers exposed Telegram Bot API tokens across 21 public data sources, validates each against the live Telegram API, harvests accessible chat history via Telethon and the Bot API, and delivers findings to a private Telegram supergroup organised as per-bot forum topics. Delivered as a lean single-stack Docker Compose project — 4 always-on core services (API, combined worker, scheduler, Redis) plus optional bot, Flower, and dashboard behind Compose profiles — backed by Supabase managed PostgreSQL and Redis. A read-only analyst dashboard is hosted at `theprawnhunter.vercel.app`.
 
 ---
 
@@ -83,10 +83,11 @@ docker volume create telegramhunter_beat_schedule
 ### 5. Build and start
 
 ```bash
-docker compose up -d --build
+docker compose up -d --build              # core only (redis, api, worker, beat)
+docker compose --profile full up -d --build   # + bot, flower, frontend
 ```
 
-Initial build takes 3–8 minutes. All 10 services start.
+Initial build takes 3–8 minutes. The 4 core services start; optional extras (bot, Flower, frontend) are opt-in via `--profile`.
 
 ### 6. Verify startup
 
@@ -182,11 +183,12 @@ All degrade gracefully when absent.
 ### Production (Docker Compose)
 
 ```bash
-docker compose up -d --build   # start all 10 services
-docker compose logs -f         # view all logs
-docker compose logs -f worker-scrape  # specific service
-docker compose down            # stop, preserve volumes
-docker compose down -v         # full reset — destroys all data
+docker compose up -d --build           # dev default: 4 core services (redis, api, worker, beat)
+docker compose --profile full up -d    # add optional bot, flower, frontend
+docker compose logs -f                 # view all logs
+docker compose logs -f worker          # specific service (combined worker)
+docker compose down                    # stop, preserve volumes
+docker compose down -v                 # full reset — destroys all data
 ```
 
 **Services and ports (all bound to 127.0.0.1):**
@@ -201,7 +203,7 @@ docker compose down -v         # full reset — destroys all data
 ### Production overlay
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
 ```
 
 ### Local API development
@@ -380,7 +382,7 @@ theprawnhunter/
 │   ├── load/                1 load test
 │   └── *.py                 9 top-level test modules
 ├── .env.template            All variable names + purposes
-├── docker-compose.yml       10-service production stack
+├── docker-compose.yml       Lean single-stack (4 core services + profiled extras)
 ├── docker-compose.prod.yml  Production overrides
 ├── Dockerfile               Two-stage build (non-root celery user)
 ├── docker-entrypoint.sh     Container entrypoint
@@ -406,11 +408,25 @@ docker volume create telegramhunter_beat_schedule
 
 `FLOWER_BASIC_AUTH` must be anything other than `admin:changeme`. Entrypoint exits with an explicit error message if not set.
 
+### Redis restarts repeatedly (`Bad file format ... appendonly.aof`)
+
+A torn write in the AOF (e.g. an ungraceful kill mid-write) makes Redis crash
+on load, and the `restart:` policy loops it — cascading every worker into
+`unhealthy`. Truncate the corrupt AOF tail (data is preserved up to the
+corruption point; the RDB base is untouched):
+```bash
+docker rm -f theprawnhunter_redis   # stop the restart loop
+docker run --rm -v telegramhunter_redis_data:/data redis:7-alpine \
+  sh -c "cp -a /data/appendonlydir /data/appendonlydir.bak && \
+         printf 'y\n' | redis-check-aof --fix /data/appendonlydir/appendonly.aof.manifest"
+docker compose up -d redis          # loads clean; RestartCount stays 0
+```
+
 ### Worker shows `unhealthy` after restart
 
-The Redis-ping healthcheck has a 120 s `start_period` and a 180 s timeout. Python import time under CPU pressure can exceed 90 s. Wait for the start period before diagnosing:
+The combined `worker`'s Redis-ping healthcheck has a 60 s `start_period` and a 60 s timeout. Wait for the start period before diagnosing:
 ```bash
-docker inspect theprawnhunter_worker-core --format '{{json .State.Health.Log}}'
+docker inspect theprawnhunter_worker --format '{{json .State.Health.Log}}'
 ```
 
 ### Broadcasts show `flood_wait` and not delivering
@@ -422,9 +438,9 @@ BROADCAST_MAX_PARALLEL_TOPICS=1
 BROADCAST_INTER_MESSAGE_DELAY_SECONDS=5.0
 BROADCAST_BATCH_SIZE=50
 ```
-Then restart worker-core:
+Then restart the worker:
 ```bash
-docker compose up -d --no-deps worker-core
+docker compose up -d --no-deps worker
 ```
 
 ### "No usable user session" broadcast failures
