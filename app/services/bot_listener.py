@@ -1451,7 +1451,7 @@ def _build_application(token: str) -> Application:
     return application
 
 
-async def _run_bot(token: str, is_primary: bool = False):
+async def _run_bot_once(token: str, is_primary: bool = False):
     """Runs a single bot's polling loop. Primary bot also runs the Watchdog."""
     lock_key = await _acquire_poll_lock(token)
     if redis_client and not lock_key:
@@ -1541,6 +1541,33 @@ async def _run_bot(token: str, is_primary: bool = False):
         await application.shutdown()
         await _release_poll_lock(lock_key)
 
+
+async def _run_bot(token: str, is_primary: bool = False):
+    """Supervisor: keep a bot's poller alive across transient failures.
+
+    _run_bot_once returns/raises on transient issues (Redis blip, network
+    error, getUpdates Conflict, lock give-up). Previously that ended the task,
+    main()'s gather returned, the process logged "Bye!" and exited — so
+    Docker's restart policy churned the container in a tight loop with no
+    logged cause. Now we retry in-process with capped backoff until stop_event
+    is set, logging every failure, so brief outages self-heal instead of
+    triggering a full container restart.
+    """
+    backoff = 5
+    while not stop_event.is_set():
+        try:
+            await _run_bot_once(token, is_primary)
+        except Exception as exc:
+            logger.error(f"Bot {_bot_id_from_token(token)} poller crashed: {exc!r}")
+        if stop_event.is_set():
+            break
+        logger.warning(
+            f"Bot {_bot_id_from_token(token)} poller stopped; retrying in {backoff}s."
+        )
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+        backoff = min(backoff * 2, 60)
+
 async def main():
     global redis_client
 
@@ -1596,9 +1623,15 @@ async def main():
     for i, token in enumerate(tokens):
         tasks.append(asyncio.create_task(_run_bot(token, is_primary=(i == 0))))
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for tok, result in zip(tokens, results, strict=True):
+        if isinstance(result, Exception):
+            logger.error(f"Bot {_bot_id_from_token(tok)} supervisor crashed: {result!r}")
     await redis_client.aclose()
-    logger.info("Bye!")
+    if stop_event.is_set():
+        logger.info("Bye! (graceful shutdown)")
+    else:
+        logger.error("All bot supervisors exited without a stop signal — see errors above.")
 
 if __name__ == "__main__":
     try:
