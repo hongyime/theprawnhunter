@@ -14,20 +14,20 @@ python-telegram-bot[job-queue]==22.7
 Telethon==1.43.2
 pyasn1>=0.6.4               # SECURITY: Fixed CVE-2024-12345 (Excessive iteration/algorithmic complexity)
 cryptg==0.4.0
-cryptography==46.0.7      # SECURITY: Fixed CVE-2024-12797, CVE-2026-26007, CVE-2026-34073
+cryptography==50.0.0      # SECURITY: Fernet + primitives; bumped to clear Dependabot advisories (vuln range <50.0.0)
 requests==2.33.1          # SECURITY: Fixed CVE-2024-47081, CVE-2026-25645
-python-dotenv==1.0.0
+python-dotenv==1.2.2         # SECURITY: Dependabot advisory (<1.2.2)
 netlas==0.8.2
 PySocks>=1.7.1
 
 # Test dependencies (baked into image so docker exec python -m pytest works)
-pytest==8.3.5
-pytest-asyncio==0.24.0
+pytest==9.0.3               # SECURITY: Dependabot advisory (<9.0.3)
+pytest-asyncio==1.4.0       # pytest 9 compatible (pip resolver-verified)
 hypothesis==6.131.11
 tornado>=6.5.7 # not directly required, pinned by Snyk to avoid a vulnerability
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
 
 
 # Media forensics — perceptual hashing for duplicate photo detection across bots
-Pillow==11.0.0
+Pillow==12.3.0             # SECURITY: bumped to clear Dependabot advisories (vuln <12.3.0)
 imagehash==4.3.1
