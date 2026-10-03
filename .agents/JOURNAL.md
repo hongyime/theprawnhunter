@@ -88,3 +88,11 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Validated the docker-compose reorg with `docker compose config --quiet` (base), `--profile full config --quiet`, and the prod-overlay + full-profile combination -- all exit 0, confirming the YAML is syntactically and referentially valid without starting anything.
 - Checked live Docker state before and after this review: `docker ps -a` shows zero containers (theprawnhunter's stack is indeed fully down, matching the user's report), `docker network ls` shows no `theprawnhunter_net` (consistent with a clean `down`), and all 4 required EXTERNAL volumes (`telegramhunter_redis_data`/`_sessions`/`_imports`/`_beat_schedule`) are still present and untouched -- external volumes are not removed by `docker compose down`/container deletion by design, so there is no data-loss corruction to rectify. One unrelated, auto-named container (`ecstatic_thompson`, image hash `35d01a69f9fd`, running an ad-hoc `apt-get` shell command) was observed once on this shared multi-project machine; it was not part of theprawnhunter's stack (wrong image, no `theprawnhunter_*` name) and had already exited/been removed on its own by the next check -- left untouched throughout, no action taken on it.
 - 2026-09-28 08:59:14 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=7fce95a dirty=2
+- 2026-09-28 10:22:10 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=492362f dirty=0
+- 2026-09-28 10:30:11 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=492362f dirty=0
+- 2026-09-28 15:20:23 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=adf8690 dirty=0
+- 2026-09-28 16:30:54 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=adf8690 dirty=0
+- 2026-09-28 19:09:55 +08:00 [PRAWN-E14/claude/stop] branch=maintenance/prawn-ui-20260916 head=b04c778 dirty=0
+- 2026-09-28 20:34:43 +08:00 [PRAWN-E14/claude/stop] branch=main head=efee9c2 dirty=0
+- 2026-09-28 20:34:43 +08:00 [PRAWN-E14/claude/stop] branch=main head=efee9c2 dirty=0
+- 2026-09-28 22:08:20 +08:00 [PRAWN-E14/claude/stop] branch=main head=2d5becb dirty=0

@@ -70,12 +70,12 @@ Publish the reviewed portability and privacy maintenance from the current defaul
 <!-- MOLT_AUTO_START -->
 ## Auto State
 
-- Updated: 2026-09-28 08:59:14 +08:00
+- Updated: 2026-09-28 22:08:20 +08:00
 - Machine: PRAWN-E14
 - Harness: claude
 - Event: stop
-- Branch: maintenance/prawn-ui-20260916
-- HEAD: 7fce95a
-- Dirty files: 2
+- Branch: main
+- HEAD: 2d5becb
+- Dirty files: 0
 - Resume hint: Read .agents/STATE.md, then the latest file in .agents/handoffs/ if present.
 <!-- MOLT_AUTO_END -->
