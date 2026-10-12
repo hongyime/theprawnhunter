@@ -84,3 +84,6 @@ coverage/
 # Volume backup archives — contain live Telethon session keys, NEVER commit
 volume-backups/
 *.tar.gz
+
+# Local Cloudflare tunnel state and credentials
+/.cloudflared/
