@@ -23,6 +23,31 @@ from telegram.ext import (
 )
 from telegram.helpers import escape_markdown
 from telegram.request import HTTPXRequest
+
+# --- Bryan: auto-delete bot messages after 30 seconds ---
+AUTO_DELETE_SECONDS = 30
+
+async def _auto_delete_msg(msg, delay=AUTO_DELETE_SECONDS):
+    """Delete a sent Telegram message after delay seconds."""
+    await asyncio.sleep(delay)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+async def _reply_and_delete(update, text, delay=AUTO_DELETE_SECONDS, **kwargs):
+    """Reply to a message and schedule auto-deletion."""
+    sent = await _reply_and_delete(update, text, **kwargs)
+    asyncio.create_task(_auto_delete_msg(sent, delay))
+    return sent
+
+async def _send_and_delete(bot, chat_id, text, delay=AUTO_DELETE_SECONDS, **kwargs):
+    """Send a message via bot and schedule auto-deletion."""
+    sent = await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+    asyncio.create_task(_auto_delete_msg(sent, delay))
+    return sent
+# --- end auto-delete helpers ---
+
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
@@ -229,15 +254,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("[Engagement] /start tracking failed for subject=%s: %s", subject, exc)
     if not is_admin(update):
         logger.info("🚫 subject=%s is not an admin. Sending guest start.", subject)
-        await update.message.reply_text(
-            "👋 **Welcome to Telegram Hunter Bot**\n\n"
-            "This bot is used for OSINT and account management.\n"
-            "Use /starthunter in a private chat to login an account.",
+        await _reply_and_delete(update, 
+            "Welcome. Use /starthunter in a private chat to login.",
             parse_mode=ParseMode.MARKDOWN
         )
         return
     logger.info("✅ subject=%s is an admin. Sending admin start.", subject)
-    await update.message.reply_text("🤖 **Telegram Hunter Bot** is online.\nUse /help to see all available commands.")
+    await _reply_and_delete(update, "Bot online. Use /help for commands.")
 
 
 async def track_private_inbound(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -269,9 +292,8 @@ async def opt_out_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _subject_label(update.effective_user.id),
             exc,
         )
-    await update.message.reply_text(
-        "You are opted out. This bot will not send automated follow-ups. "
-        "You can still contact an administrator directly if you need support."
+    await _reply_and_delete(update, 
+        "Opted out. No automated messages will be sent."
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -282,45 +304,39 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_user_admin:
         help_text = (
-            "📖 **Telegram Hunter Bot Help**\n\n"
-            "Here are the available commands:\n"
-            "• /status - Check system health and pending broadcasts\n"
-            "• /pause - Pause scanners and broadcaster\n"
-            "• /resume - Resume operations\n"
-            "• /restart - Restart the bot service\n"
-            "• /commands - List all commands (Alias for /help)\n"
-            "• /starthunter - Login a new Telegram account\n"
-            "• /bots - Show all available bots\n"
-            "• /telemetry - Show canonical telemetry analytics\n"
-            "• /getfile <message-id> - Retrieve an archived attachment on demand\n"
-            "• /backfill - Re-broadcast messages stuck in General topic\n\n"
-            f"**Available Bots**: {bot_list}\n\n"
-            "Only authorized administrators can use these commands."
+            "Commands:\n"
+            "/status - System health\n"
+            "/pause - Pause operations\n"
+            "/resume - Resume operations\n"
+            "/restart - Restart bot\n"
+            "/starthunter - Login account\n"
+            "/bots - List bots\n"
+            "/telemetry - Telemetry\n"
+            "/getfile <id> - Get attachment\n"
+            "/backfill - Re-broadcast stuck messages"
         )
     else:
         help_text = (
-            "📖 **Telegram Hunter Bot Help**\n\n"
-            "Available commands:\n"
-            "• /starthunter - Login a new Telegram account\n"
-            "• /help - Show this help message\n\n"
-            "Please use /starthunter in a private chat to begin."
+            "Commands:\n"
+            "/starthunter - Login account\n"
+            "/help - This help"
         )
 
-    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    await _reply_and_delete(update, help_text, parse_mode=ParseMode.MARKDOWN)
 
 async def bots_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows all available bots and their lock status."""
     if not is_admin(update):
-        await update.message.reply_text("⚠️ This command is restricted to administrators.")
+        await _reply_and_delete(update, "Admin only.")
         return
 
-    lines = ["🤖 **Bot Rotation Pool**\n"]
+    lines = ["Bot Rotation Pool\n"]
     for token, username in _bot_usernames.items():
-        status = "🔒 Locked" if token in _locked_bots else "✅ Available"
+        status = "Locked" if token in _locked_bots else "Available"
         lines.append(f"• @{username} — {status}")
 
     lines.append(f"\n**Total**: {len(_bot_usernames)} bots")
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+    await _reply_and_delete(update, "\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
 INDICATOR_TYPES = ("network_domain", "canonical_url", "wallet_address")
@@ -418,19 +434,19 @@ def _format_telemetry_summary(summary: dict[str, Any]) -> str:
 
 async def telemetry_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
-        await update.message.reply_text("⚠️ This command is restricted to administrators.")
+        await _reply_and_delete(update, "Admin only.")
         return
 
     try:
         summary = await _fetch_telemetry_summary()
-        await update.message.reply_text(
+        await _reply_and_delete(update, 
             _format_telemetry_summary(summary),
             parse_mode=ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True,
         )
     except Exception as e:
         logger.error(f"Telemetry summary failed: {e}")
-        await update.message.reply_text("❌ Telemetry analytics are temporarily unavailable.")
+        await _reply_and_delete(update, "Telemetry unavailable.")
 
 
 def _is_uuid(value: str) -> bool:
@@ -500,35 +516,35 @@ def _format_archive_result_message(result) -> str:
 
 async def getfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
-        await update.message.reply_text(
+        await _reply_and_delete(update, 
             "For security, /getfile only works in a private chat with me."
         )
         return
 
     if not is_admin(update):
-        await update.message.reply_text("⚠️ This command is restricted to administrators.")
+        await _reply_and_delete(update, "Admin only.")
         return
 
     target_id = (context.args[0] if context and context.args else "").strip()
     if not target_id:
-        await update.message.reply_text("Usage: /getfile <telegram_msg_id or message UUID>")
+        await _reply_and_delete(update, "Usage: /getfile <telegram_msg_id or message UUID>")
         return
 
     row = await _fetch_attachment_message(target_id)
     if not row:
-        await update.message.reply_text("Attachment message not found.")
+        await _reply_and_delete(update, "Attachment message not found.")
         return
 
     if row.get("media_type") in (None, "text"):
-        await update.message.reply_text("That message does not contain an attachment payload.")
+        await _reply_and_delete(update, "No attachment in that message.")
         return
 
     source_chat_id = await _resolve_attachment_source_chat_id(row)
     if not source_chat_id:
-        await update.message.reply_text("Attachment source chat is unavailable for this record.")
+        await _reply_and_delete(update, "Source chat unavailable.")
         return
 
-    await update.message.reply_text("⏳ Retrieving transient attachment from storage...")
+    await _reply_and_delete(update, "Retrieving attachment...")
     from app.services.user_agent_srv import user_agent
 
     result = await user_agent.archive_media_transiently(
@@ -537,16 +553,16 @@ async def getfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_chat_id=update.effective_chat.id,
         caption=f"Archived Attachment [ID: {row['id']}]",
     )
-    await update.message.reply_text(_format_archive_result_message(result))
+    await _reply_and_delete(update, _format_archive_result_message(result))
 
 async def backfill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Triggers re-broadcast of messages stuck in General topic."""
     if not is_admin(update):
-        await update.message.reply_text("⚠️ This command is restricted to administrators.")
+        await _reply_and_delete(update, "Admin only.")
         return
 
-    await update.message.reply_text(
-        "🔄 **Backfill started**.\n"
+    await _reply_and_delete(update, 
+        "Backfill started.\n"
         "Messages stuck in General will be re-queued to their correct topics.\n"
         "Check the monitor group for progress.",
         parse_mode=ParseMode.MARKDOWN
@@ -564,9 +580,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await redis_client.ping()
         except Exception:
-            redis_status = "❌ Unreachable"
+            redis_status = "Unreachable"
     else:
-        redis_status = "⚠️ Not Initialized"
+        redis_status = "Not Initialized"
 
     # 2. Check DB / Pending Queue
     queue_count = "?"
@@ -576,7 +592,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         queue_count = res.count
     except Exception as e:
-        queue_count = f"❌ Error: {str(e)[:20]}"
+        queue_count = f"Error: {str(e)[:20]}"
 
     # 3. Check System Pause State
     is_paused = False
@@ -584,7 +600,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with contextlib.suppress(Exception):
             is_paused = await redis_client.get(PAUSE_KEY)
 
-    system_status = "⏸️ **PAUSED**" if is_paused else "▶️ **RUNNING**"
+    system_status = "PAUSED" if is_paused else "RUNNING"
 
     # 4. Bot pool info
     bot_count = len(_bot_usernames)
@@ -599,7 +615,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"**Monitor Group**: `{settings.MONITOR_GROUP_ID}`\n"
         f"**Environment**: `{settings.ENV}`"
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    await _reply_and_delete(update, msg, parse_mode=ParseMode.MARKDOWN)
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
@@ -607,9 +623,9 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if redis_client:
         await redis_client.set(PAUSE_KEY, "true")
-        await update.message.reply_text("⏸️ **System Paused**.\nScanners and Broadcaster will skip their next run.")
+        await _reply_and_delete(update, "Paused.")
     else:
-         await update.message.reply_text("❌ Redis not available.")
+         await _reply_and_delete(update, "Redis unavailable.")
 
 async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
@@ -617,15 +633,15 @@ async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if redis_client:
         await redis_client.delete(PAUSE_KEY)
-        await update.message.reply_text("▶️ **System Resumed**.\nOperations returning to normal.")
+        await _reply_and_delete(update, "Resumed.")
     else:
-         await update.message.reply_text("❌ Redis not available.")
+         await _reply_and_delete(update, "Redis unavailable.")
 
 async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
 
-    await update.message.reply_text("🔄 **Restarting Bot Process**...\n(Expect a brief downtime)")
+    await _reply_and_delete(update, "Restarting...")
     # Signal main loop to stop gracefully
     stop_event.set()
 
@@ -692,7 +708,7 @@ async def watchdog_loop(bot):
 
 async def _send_alert(bot, msg):
     try:
-        await bot.send_message(chat_id=settings.MONITOR_GROUP_ID, text=f"🚨 [Watchdog]\n{msg}")
+        await _send_and_delete(bot, chat_id=settings.MONITOR_GROUP_ID, text=f"[Watchdog] {msg}")
     except Exception as e:
         logger.error(f"Failed to send watchdog alert: {e}")
 
@@ -742,8 +758,8 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     pollution (3 attempts per 24h)."""
     if update.effective_chat.type != "private":
         bot_username = context.bot.username or "telehunter234bot"
-        await update.message.reply_text(
-            "⚠️ For security, please use /starthunter in a *private chat* with me — not in a group.\n"
+        await _reply_and_delete(update, 
+            "Use /starthunter in a private chat.\n"
             f"Open a DM with @{bot_username} and run /starthunter there.",
             parse_mode=ParseMode.MARKDOWN
         )
@@ -757,7 +773,7 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             "(ALLOW_PUBLIC_STARTHUNTER=False)",
             _subject_label(update.effective_user.id),
         )
-        await update.message.reply_text(
+        await _reply_and_delete(update, 
             "🔒 This bot is not accepting new logins right now.",
         )
         return ConversationHandler.END
@@ -775,8 +791,8 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 _subject_label(user_id),
                 attempts,
             )
-            await update.message.reply_text(
-                "🕒 Too many login attempts. Try again tomorrow.",
+            await _reply_and_delete(update, 
+                "Too many attempts. Try tomorrow.",
             )
             return ConversationHandler.END
     except Exception as rl_exc:
@@ -784,21 +800,11 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         logger.debug(f"[starthunter] rate-limit check skipped: {rl_exc}")
 
     msg = (
-        "🚨 *BEFORE YOU PROCEED — READ THIS*\n\n"
-        "This system logs you into your Telegram account and *uses your session* to:\n"
-        "• Invite bots into a monitoring group so we can passively observe them\n"
-        "• Send /start to bots that have never received a first message\n"
-        "• Cleanup: after login, this bot's chat history with you AND the Telegram "
-        "'login code' service notification are *automatically deleted* from your account\n\n"
-        "*Only proceed if you understand:*\n"
-        "1. Your Telethon session string is stored on our server (encrypted).\n"
-        "2. Your account will be used for the actions above — this is not passive read-only.\n"
-        "3. You can revoke access anytime from Telegram → Settings → Devices.\n\n"
-        "If you understand and consent, reply with your phone number (+countrycode).\n"
+        "Reply with your phone number (+countrycode).\n"
         "Otherwise reply /cancel.\n\n"
-        "_Accepted formats: +1234567890 | +1 234 567 890 | +1-234-567-890_"
+        "Accepted formats: +1234567890 | +1 234 567 890 | +1-234-567-890"
     )
-    sent_msg = await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    sent_msg = await _reply_and_delete(update, msg, parse_mode=ParseMode.MARKDOWN)
 
     # Track both the user's /starthunter command and our reply for full wipe
     context.user_data['bot_messages'] = [update.message.message_id, sent_msg.message_id]
@@ -843,7 +849,7 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             "⚠️ Telegram does not allow forwarding the code to bots. Please send the code with spaces in between numbers, or dashes, or commas.\n"
             "Example: 1 2 3 4 5 instead of 12345"
         )
-        sent_msg = await update.message.reply_text(msg)
+        sent_msg = await _reply_and_delete(update, msg)
         context.user_data['bot_messages'].append(sent_msg.message_id)
 
         return WAIT_CODE
@@ -851,7 +857,7 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error requesting code: {e}")
-        err_msg = await update.message.reply_text(f"❌ Error requesting code: {str(e)}\nPlease try again with /starthunter")
+        err_msg = await _reply_and_delete(update, f"❌ Error requesting code: {str(e)}\nPlease try again with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err_msg.message_id)
         await _wipe_conversation(context, update.effective_chat.id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -872,7 +878,7 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     if not client or not client.is_connected():
         await _cleanup_login_attempt(context, client)
-        err = await update.message.reply_text("❌ Session expired. Please start over with /starthunter")
+        err = await _reply_and_delete(update, "❌ Session expired. Please start over with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -884,14 +890,14 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     except SessionPasswordNeededError:
         msg = "🔐 Two-Step Verification is enabled.\nPlease enter your password:"
-        sent_msg = await update.message.reply_text(msg)
+        sent_msg = await _reply_and_delete(update, msg)
         context.user_data['bot_messages'].append(sent_msg.message_id)
         context.user_data['login_state'] = "WAITING_FOR_2FA"
         return WAIT_PASSWORD
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error signing in: {e}")
-        err = await update.message.reply_text(f"❌ Login failed: {str(e)}\nPlease try again with /starthunter")
+        err = await _reply_and_delete(update, f"❌ Login failed: {str(e)}\nPlease try again with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -907,7 +913,7 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if not client or not client.is_connected():
         await _cleanup_login_attempt(context, client)
-        err = await update.message.reply_text("❌ Session expired. Please start over with /starthunter")
+        err = await _reply_and_delete(update, "❌ Session expired. Please start over with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -918,7 +924,7 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error with 2FA password: {e}")
-        err = await update.message.reply_text(f"❌ Incorrect password or error: {str(e)}\nPlease try again with /starthunter")
+        err = await _reply_and_delete(update, f"❌ Incorrect password or error: {str(e)}\nPlease try again with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -1114,7 +1120,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     f"No other bots are available at this time. Please try again later."
                 )
 
-            sent_msg = await update.message.reply_text(lock_msg, parse_mode=ParseMode.MARKDOWN)
+            sent_msg = await _reply_and_delete(update, lock_msg, parse_mode=ParseMode.MARKDOWN)
             await schedule_deletion(context, chat_id, sent_msg.message_id, delay=30)
             return ConversationHandler.END
 
@@ -1146,7 +1152,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"{invite_url}\n\n"
                 "_This message will self-delete in 60 seconds._"
             )
-            sent_join = await update.message.reply_text(
+            sent_join = await _reply_and_delete(update, 
                 join_msg,
                 parse_mode=ParseMode.MARKDOWN,
                 disable_web_page_preview=True,
@@ -1167,7 +1173,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error finalizing login: {e}")
-        err = await update.message.reply_text(f"❌ Error finalizing login: {str(e)}")
+        err = await _reply_and_delete(update, f"❌ Error finalizing login: {str(e)}")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, update.effective_chat.id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
