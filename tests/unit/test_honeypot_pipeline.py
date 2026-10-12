@@ -690,9 +690,12 @@ async def test_retention_days_strictly_bounded_above_zero(monkeypatch):
         assert "honeypot_updates" in res["details"]
 
 
+@pytest.mark.parametrize("redis_acquired, expected_dispatch", [(True, True), (False, False)])
 @pytest.mark.asyncio
-async def test_forward_honeypot_message_duplicate_skips_celery_dispatch():
-    """Verify that when a message already exists in exfiltrated_messages, forward_honeypot_message skips Celery dispatch."""
+async def test_forward_honeypot_message_recorded_unbroadcast_redispatches_with_redis_dedup(
+    redis_acquired, expected_dispatch
+):
+    """Redispatch an unbroadcast row unless its 300-second Redis dedup key exists."""
     from app.services.honeypot_srv import forward_honeypot_message
 
     payload = {
@@ -704,13 +707,25 @@ async def test_forward_honeypot_message_duplicate_skips_celery_dispatch():
     mock_table.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = (
         types.SimpleNamespace(data=[{"id": "msg-exist-1", "is_broadcasted": False}])
     )
+    mock_redis = MagicMock()
+    mock_redis.client.set.return_value = redis_acquired
 
     with patch("app.services.honeypot_srv.db.table", return_value=mock_table), \
+         patch("app.core.redis_srv.redis_srv", mock_redis), \
          patch("app.workers.celery_app.app.send_task") as mock_send_task:
         res = await forward_honeypot_message(payload, "cred-dup-1")
         assert res is not None
         assert res["telegram_msg_id"] == -999123
-        mock_send_task.assert_not_called()
+        mock_redis.client.set.assert_called_once_with(
+            "broadcast:dispatched:cred-dup-1:-999123", "1", nx=True, ex=300
+        )
+        if expected_dispatch:
+            mock_send_task.assert_called_once_with(
+                "flow.broadcast_honeypot_message",
+                kwargs={"credential_id": "cred-dup-1", "telegram_msg_id": -999123},
+            )
+        else:
+            mock_send_task.assert_not_called()
 
 
 @pytest.mark.asyncio

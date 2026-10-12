@@ -156,7 +156,7 @@ Selected files by directory (all 286 tracked files are on disk; grouped listing 
 - `app/services/_scraper/__init__.py`, `lifecycle.py`, `monitor_guard.py`, `results.py`, `strategies.py`
 
 `app/utils/`
-- `app/utils/__init__.py`, `helpers.py`, `http_client.py`
+- `app/utils/__init__.py`, `helpers.py` (compatibility facade), `parsing.py`, `http_client.py`
 
 `app/workers/`
 - `app/workers/__init__.py`, `celery_app.py`, `flower_app.py`
@@ -191,7 +191,8 @@ Selected files by directory (all 286 tracked files are on disk; grouped listing 
 - `frontend/test/setup.ts`
 
 `scripts/`
-- `scripts/backfill_all_media.py`, `backfill_media.py`, `backfill_via_telethon.py`, `get_account_names.py`, `logrotate.conf`, `ops_report.py`, `post_startup.py`, `release_gate.ps1`, `rotate_credentials.py`, `run_fofa_overnight.ps1`, `run_fofa_scan.mjs`, `schema_drift_check.py`, `setup_cloudflare_tunnel.ps1`, `setup_dev.sh`, `startup.bat`, `telegram_behavior_probe.py`, `TelegramHunter_Startup.xml`, `validate_deployment.py`, `validate_startup.py`
+- Active tools: `scripts/logrotate.conf`, `ops_report.py`, `post_startup.py`, `release_gate.ps1`, `rotate_credentials.py`, `run_fofa_overnight.ps1`, `run_fofa_scan.mjs`, `schema_drift_check.py`, `setup_cloudflare_tunnel.ps1`, `setup_dev.sh`, `startup.bat`, `telegram_behavior_probe.py`, `TelegramHunter_Startup.xml`, `validate_deployment.py`, `validate_startup.py`
+- Archived one-offs: `scripts/ops/one_off/` contains the media backfills and account-name inspector; the backfills default to dry-run and require `--apply` for side effects.
 
 `tests/`
 - Top-level: `tests/conftest.py`, `test_api.py`, `test_auth.py`, `test_error_hygiene.py`, `test_findings_api.py`, `test_scraper_restriction.py`, `test_security.py`, `test_supabase_rw.py`, `test_target_feed_export.py`

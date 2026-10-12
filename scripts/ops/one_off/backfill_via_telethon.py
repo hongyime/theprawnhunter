@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 sys.path.insert(0, '/app')
@@ -142,9 +143,8 @@ async def process_credential(cred_id, bot_token, message_records, broadcaster):
     finally:
         await client.disconnect()
 
-async def main():
+async def main(apply_changes: bool = False):
     logger.info("Starting Historical Media Backfill via Telethon...")
-    broadcaster = BroadcasterService()
 
     # 1. Fetch all messages that are media and missing file_id
     logger.info("Fetching target messages...")
@@ -186,6 +186,15 @@ async def main():
 
     logger.info(f"Grouped into {len(grouped)} distinct bots.")
 
+    if not apply_changes:
+        logger.info(
+            "Dry run only: no Telegram clients were started and no media was broadcast. "
+            "Pass --apply to run the recovery."
+        )
+        return
+
+    broadcaster = BroadcasterService()
+
     # 3. Process each bot
     for cid, msgs in grouped.items():
         bot_token = msgs[0].get("discovered_credentials", {}).get("bot_token") if msgs[0].get("discovered_credentials") else None
@@ -194,4 +203,11 @@ async def main():
     logger.info("Backfill complete!")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Recover and rebroadcast historical media.")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="connect to Telegram and broadcast recovered media (default: report only)",
+    )
+    args = parser.parse_args()
+    asyncio.run(main(apply_changes=args.apply))

@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 sys.path.insert(0, '/app')
@@ -6,7 +7,7 @@ import asyncio  # noqa: E402 — intentional deferred import
 from app.core.database import db  # noqa: E402 — intentional deferred import
 
 
-async def backfill():
+async def backfill(apply_changes: bool = False):
     print("Fetching missed media since July 20th...")
     res = db.table('exfiltrated_messages') \
         .select('id, telegram_msg_id') \
@@ -20,7 +21,13 @@ async def backfill():
         print("No eligible media found to backfill.")
         return
 
-    print(f"Found {len(data)} media records to re-queue. Updating in chunks...")
+    print(f"Found {len(data)} media records to requeue.")
+
+    if not apply_changes:
+        print("Dry run only; pass --apply to requeue these media records.")
+        return
+
+    print("Applying requeue updates in chunks...")
 
     ids = [row['id'] for row in data]
     chunk_size = 50
@@ -42,4 +49,11 @@ async def backfill():
     print(f"Successfully pushed {total_updated} missing media items back into the queue!")
 
 if __name__ == '__main__':
-    asyncio.run(backfill())
+    parser = argparse.ArgumentParser(description="Requeue recent broadcast media records.")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="write requeue updates to the database (default: report only)",
+    )
+    args = parser.parse_args()
+    asyncio.run(backfill(apply_changes=args.apply))

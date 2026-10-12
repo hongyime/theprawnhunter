@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 sys.path.insert(0, '/app')
@@ -6,7 +7,7 @@ import asyncio  # noqa: E402 — intentional deferred import
 from app.core.database import db  # noqa: E402 — intentional deferred import
 
 
-async def backfill_all():
+async def backfill_all(apply_changes: bool = False):
     print("Fetching all media records from the beginning of time...")
 
     # We will fetch IDs in pages of 1000 to bypass Supabase limits
@@ -34,7 +35,13 @@ async def backfill_all():
         print("No eligible media found to backfill.")
         return
 
-    print(f"\nFound {len(all_ids)} total media records! Pushing them into the queue in chunks of 50...")
+    print(f"\nFound {len(all_ids)} total media records to requeue in chunks of 50.")
+
+    if not apply_changes:
+        print("Dry run only; pass --apply to requeue these media records.")
+        return
+
+    print("Applying requeue updates...")
 
     chunk_size = 50
     total_updated = 0
@@ -55,4 +62,11 @@ async def backfill_all():
     print(f"\nSuccess! Pushed {total_updated} historical media items back into the queue!")
 
 if __name__ == '__main__':
-    asyncio.run(backfill_all())
+    parser = argparse.ArgumentParser(description="Requeue all broadcast media records.")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="write requeue updates to the database (default: report only)",
+    )
+    args = parser.parse_args()
+    asyncio.run(backfill_all(apply_changes=args.apply))
