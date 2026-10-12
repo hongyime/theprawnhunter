@@ -47,8 +47,10 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
 # Python runtime dependencies from builder; build-essential stays out of final image.
 COPY --from=builder /opt/venv /opt/venv
 
-# Application code
-COPY . .
+# Application runtime and operator scripts
+COPY app ./app
+COPY scripts ./scripts
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 # Required directories + ownership
 # /app/beat is used by celery beat for schedule persistence (named volume mounted at runtime).

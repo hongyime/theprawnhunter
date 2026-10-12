@@ -25,6 +25,15 @@ env/
 *.session
 *.session-journal
 sessions/
+.cloudflared/
+
+# ── Source and tooling not used by the Python runtime image ───────────────────
+tests/
+frontend/
+extension/
+supabase/
+docs/history/
+scripts/test_operator_authorization.py
 
 # ── Git & CI ──────────────────────────────────────────────────────────────────
 .git/
