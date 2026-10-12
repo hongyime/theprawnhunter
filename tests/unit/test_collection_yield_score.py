@@ -271,9 +271,9 @@ class TestValidatorWritesBothMetaKeys:
 class TestMonitorApiAllowsNewSortKey:
     @pytest.fixture(scope="class")
     def source(self) -> str:
-        return (REPO_ROOT / "app" / "api" / "routers" / "monitor.py").read_text(
-            encoding="utf-8"
-        )
+        return (
+            REPO_ROOT / "app" / "api" / "routers" / "_monitor" / "credentials.py"
+        ).read_text(encoding="utf-8")
 
     def test_collection_yield_score_in_allowed_sorts(self, source: str):
         # Both keys must be in the whitelist for backwards-compat + new callers.

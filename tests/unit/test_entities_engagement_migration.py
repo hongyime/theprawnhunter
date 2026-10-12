@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "supabase" / "migrations" / "20260904000003_entities_engagement.sql"
-BOT_LISTENER = ROOT / "app" / "services" / "bot_listener.py"
+BOT_LISTENER_DIR = ROOT / "app" / "services" / "_bot_listener"
 CELERY = ROOT / "app" / "workers" / "celery_app.py"
 
 
@@ -61,7 +61,9 @@ def test_graph_and_funnel_are_authenticated_read_service_write_only():
 
 
 def test_only_owned_monitor_bot_handlers_feed_the_funnel():
-    listener = _read(BOT_LISTENER)
+    listener = "\n".join(
+        _read(path) for path in sorted(BOT_LISTENER_DIR.glob("*.py"))
+    )
     assert "track_owned_bot_start(update, context)" in listener
     assert "track_owned_bot_first_inbound(update, context)" in listener
     assert "track_owned_bot_opt_out(update, context)" in listener
