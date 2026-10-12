@@ -336,7 +336,7 @@ class BroadcasterService:
                     file_meta = msg_obj.get("file_meta") or {}
                     file_id = file_meta.get("file_id")
                     has_telethon_hash = bool(file_meta.get("id") and file_meta.get("access_hash"))
-                    bot_thread_id = None  # Bryan: topics disabled, all to General
+                    bot_thread_id = thread_id
                     sent_via_media = False
                     media_delivery_failure: BroadcastSendError | None = None
 
