@@ -35,10 +35,19 @@ host-level service install.
      `localhost`. `cloudflared` runs on the same Docker network and reaches the
      API by its service name.
 
-### 2. Configure `.env`
+### 2. Configure the tunnel token separately from application settings
+
+The app services load the repository's `.env`, so keep the tunnel token in a
+separate ignored file that only the `cloudflared` service reads:
 
 ```
-CLOUDFLARE_TUNNEL_TOKEN=eyJ...            # the connector token from step 1.3
+# .cloudflared/tunnel.env (file mode 0600; ignored by Git)
+TUNNEL_TOKEN=<connector-token-from-step-1.3>
+```
+
+Keep the honeypot application settings in `.env`:
+
+```bash
 HONEYPOT_MODE=True
 HONEYPOT_WEBHOOK_URL=https://winnethepooh.hong-yi.me
 HONEYPOT_SECRET=<random 32+ char string>

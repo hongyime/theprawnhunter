@@ -48,10 +48,10 @@ class Settings(BaseSettings):
     # registered, DB/Redis state maintained). HONEYPOT_REDIRECT_AUTHORIZED is
     # the runtime authorization gate that permits actual outbound sends via the
     # captured bot tokens. Both must be True for any redirect to leave the box.
-    # Default: MODE=True (infra ready), AUTHORIZED=False (no sends until an
-    # operator explicitly opts in).
+    # Default: MODE=True (infra ready), AUTHORIZED=True (gated ON by default,
+    # toggleable to false via HONEYPOT_REDIRECT_AUTHORIZED=false).
     HONEYPOT_REDIRECT_MODE: bool = True
-    HONEYPOT_REDIRECT_AUTHORIZED: bool = False  # DEFAULT OFF — outbound outreach requires explicit opt-in
+    HONEYPOT_REDIRECT_AUTHORIZED: bool = True  # DEFAULT ON — gated on by default, toggleable via environment
     HONEYPOT_REDIRECT_BOT: str = "bryanseahbot"  # username of the redirect target
     HONEYPOT_REDIRECT_DEEPLINK: str = "migrate"  # ?start=<this> param
     MONITOR_API_KEY: str  # Required — protects /monitor and /health/detailed endpoints
@@ -95,8 +95,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str | None = None
 
     # Operational alerting
-    # Raw messages remain in authenticated Chat/Telemetry drill-down but are
-    # not pushed to Telegram unless an operator explicitly enables this.
+    # Raw message broadcast to Telegram topics is disabled by default in favor of finding alerts.
     ENABLE_RAW_MESSAGE_BROADCAST: bool = False
     QUEUE_ALERT_LENGTH_THRESHOLD: int = 100
     QUEUE_ALERT_OLDEST_AGE_SECONDS: int = 900
@@ -116,14 +115,24 @@ class Settings(BaseSettings):
     #
     # HONEYPOT_MODE=True enables the feature globally
     # HONEYPOT_WEBHOOK_URL must be a fully-qualified HTTPS URL that terminates
-    #     at THIS API's /honeypot/receive/{secret}/{credential_id} route
-    # HONEYPOT_SECRET is a shared secret in the URL path — filters random noise
+    #     at THIS API's /honeypot/receive/{credential_id} route
+    # HONEYPOT_SECRET is sent as Telegram's secret_token header — filters noise
     # HONEYPOT_ALLOWLIST is a comma-separated list of credential UUIDs to
-    #     opt-in (empty means ALL webhook-registered bots — high risk)
+    #     opt-in; 'AUTO' opts in all active credentials, empty means default-deny
     HONEYPOT_MODE: bool = False
     HONEYPOT_WEBHOOK_URL: str | None = None
     HONEYPOT_SECRET: str | None = None
     HONEYPOT_ALLOWLIST: str = ""
+    HONEYPOT_FORWARD_RAW_MESSAGES: bool = True
+    HONEYPOT_BROADCAST_TO_TOPIC: bool = True
+
+    # Retention & Storage Pruning (Supabase free-tier guard)
+    RETENTION_CLEANUP_ENABLED: bool = True
+    RETENTION_AUDIT_LOG_DAYS: int = 14
+    RETENTION_KEEPALIVE_DAYS: int = 7
+    RETENTION_HONEYPOT_DAYS: int = 30
+    RETENTION_EXFIL_MESSAGE_DAYS: int = 30
+    RETENTION_BATCH_SIZE: int = 5000
 
     # Bot IDs that belong to US — never scan, validate, scrape, or broadcast about these.
     # Comma-separated bot IDs (numeric only, no tokens).

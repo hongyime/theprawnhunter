@@ -720,13 +720,13 @@ class ScraperService:
             logger.warning(f"    ⚠️ [Scraper] Auto-invite error: {e}")
             return False
 
-    async def _scrape_via_bot_api(self, bot_token: str) -> list[dict]:
+    async def _scrape_via_bot_api(self, bot_token: str, credential_id: str | None = None) -> list[dict]:
         """
         Fallback: Use httpx to hit https://api.telegram.org/bot<token>/getUpdates
         If webhook is active, only delete it when policy allows.
         """
         logger.info("🔄 [Scraper] Attempting Bot API getUpdates fallback...")
-        outcome = await self.bot_api_update_reader.read(bot_token, limit=100)
+        outcome = await self.bot_api_update_reader.read(bot_token, limit=100, credential_id=credential_id)
         if outcome.attempt and outcome.attempt.reason == ScrapeReason.WEBHOOK_CONFLICT:
             logger.warning("    ⚠️ [Scraper] Webhook conflict — getUpdates skipped by policy.")
         elif outcome.attempt and not outcome.attempt.success:
@@ -736,7 +736,7 @@ class ScraperService:
             )
         return outcome.messages
 
-    async def discover_chats(self, bot_token: str) -> (dict, list[dict]):
+    async def discover_chats(self, bot_token: str, credential_id: str | None = None) -> (dict, list[dict]):
         """
         Validates a bot token and discovers chats using Telegram Bot API.
         Returns: (bot_info, discovered_chats)
@@ -786,6 +786,7 @@ class ScraperService:
                             bot_token,
                             client,
                             strategy="discover_chats",
+                            credential_id=credential_id,
                         )
                         if not webhook_decision.can_poll:
                             if webhook_decision.attempt.reason == ScrapeReason.WEBHOOK_CONFLICT:

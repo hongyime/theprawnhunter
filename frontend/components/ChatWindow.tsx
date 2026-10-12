@@ -20,15 +20,17 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
 
         let cancelled = false;
 
-        async function fetchMsgs() {
-            setLoading(true);
-            setAuthError(null);
-            setMessages([]);
+        async function fetchMsgs(isPolling = false) {
+            if (!isPolling) {
+                setLoading(true);
+                setAuthError(null);
+                setMessages([]);
+            }
             
             // Gate: must be authenticated to read evidence
             if (!session) {
                 setAuthError("Sign in required to view exfiltrated messages.");
-                setLoading(false);
+                if (!isPolling) setLoading(false);
                 return;
             }
             
@@ -55,19 +57,40 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                         ? "Sign in required to view exfiltrated messages."
                         : `Failed to load messages: ${error.message}`
                 );
-                setLoading(false);
+                if (!isPolling) setLoading(false);
                 return;
             }
 
             if (data) setMessages((data as ChatMessage[]).reverse());
-            setLoading(false);
+            if (!isPolling) setLoading(false);
         }
 
-        fetchMsgs();
-        // NO realtime subscription - poll-based refresh only for redacted view
+        fetchMsgs(false);
+
+        // Active polling: refresh every 3 seconds for chat freshness when visible
+        const intervalId = setInterval(() => {
+            if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+                return;
+            }
+            fetchMsgs(true);
+        }, 3000);
+
+        const handleVisibilityChange = () => {
+            if (typeof document !== "undefined" && document.visibilityState === "visible") {
+                fetchMsgs(true);
+            }
+        };
+
+        if (typeof document !== "undefined") {
+            document.addEventListener("visibilitychange", handleVisibilityChange);
+        }
 
         return () => {
             cancelled = true;
+            clearInterval(intervalId);
+            if (typeof document !== "undefined") {
+                document.removeEventListener("visibilitychange", handleVisibilityChange);
+            }
         };
     }, [credentialId, session]);
 

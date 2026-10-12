@@ -5,25 +5,19 @@ Flow:
     1. Bot X's webhook is registered to https://malicious.example.com/hook
     2. flow.exfiltrate_chat detects webhook conflict + deletes it (existing)
     3. If HONEYPOT_MODE=True and credential opts in, we register our OWN
-       webhook to HONEYPOT_WEBHOOK_URL/{secret}/{credential_id}
+       webhook to HONEYPOT_WEBHOOK_URL/receive/{credential_id}, authenticated
+       with Telegram's X-Telegram-Bot-Api-Secret-Token header
     4. Telegram now sends all messages meant for the third party to us
-    5. This router receives them, stores them in honeypot_updates, and
-       broadcasts to the same topic as regular exfiltration
+    5. This router receives them, validates secret header & payload, dedupes update_id,
+       stores in honeypot_updates, forwards raw messages to exfiltrated_messages
+       (visible in the webapp), and triggers broadcast to the credential's forum topic.
 
-Safety:
-    - Path-based secret (HONEYPOT_SECRET) filters random noise
-    - Per-credential opt-in via HONEYPOT_ALLOWLIST env var
-    - Only activated after we've already taken over the webhook —
-      we never intercept traffic to a legitimate operator
-
-Deployment requirements (all of these MUST be true):
-    - Public HTTPS endpoint (Telegram won't POST to HTTP or self-signed)
-    - HONEYPOT_MODE=True
-    - HONEYPOT_WEBHOOK_URL=https://your-public-host/honeypot/receive
-    - HONEYPOT_SECRET=<random 32-char string>
-
-Without a public HTTPS endpoint, this endpoint exists but never receives
-traffic because we never call setWebhook.
+Safety & Resilience:
+    - Header-based secret token (HONEYPOT_SECRET) filters random noise
+    - Per-credential opt-in via HONEYPOT_ALLOWLIST env var (or 'AUTO')
+    - Idempotent update_id deduplication avoids duplicate records on Telegram retry
+    - Returns HTTP 500 on database failures so Telegram retries delivery (no silent loss)
+    - Only activated after taking over the webhook — never intercepts legitimate operators
 """
 
 import asyncio as _asyncio
@@ -75,8 +69,8 @@ async def receive_webhook_update(credential_id: str, request: Request):
     over path-based secrets because setWebhook URLs can be read back by anyone
     with the bot token via getWebhookInfo — leaking a path-embedded secret.
 
-    Backwards-compat: still checks the path secret in the OLD format
-    (/receive/{secret}/{credential_id}) so existing registrations don't break.
+    Legacy path-secret URLs (/receive/{secret}/{credential_id}) are
+    intentionally unsupported because getWebhookInfo exposes the full URL.
 
     Response is always 200 OK — Telegram retries non-2xx aggressively.
     """
@@ -128,31 +122,74 @@ async def receive_webhook_update(credential_id: str, request: Request):
         logger.warning(f"[Honeypot] non-JSON body: {e}")
         return {"ok": True}
 
-    # Structural sanity: Telegram webhook updates must be JSON objects with an update_id
+    # Structural sanity: Telegram webhook updates must be JSON objects with a strictly positive integer update_id
     if not isinstance(payload, dict) or "update_id" not in payload:
         logger.warning("[Honeypot] payload missing update_id — dropping")
         return {"ok": True}
 
+    raw_update_id = payload.get("update_id")
+    # Strict validation: reject bool (subclass of int), floats, strings, None, <= 0, and > 2^31 - 1
+    MAX_TELEGRAM_UPDATE_ID = 2_147_483_647
+    if (
+        raw_update_id is None
+        or isinstance(raw_update_id, bool)
+        or not isinstance(raw_update_id, int)
+        or raw_update_id <= 0
+        or raw_update_id > MAX_TELEGRAM_UPDATE_ID
+    ):
+        logger.warning(f"[Honeypot] payload update_id={raw_update_id!r} not a valid 32-bit positive integer — dropping")
+        return {"ok": True}
+
+    update_id = raw_update_id
     now = datetime.now(UTC)
+
     try:
         db.table("honeypot_updates").insert(
             {
                 "credential_id": credential_id,
+                "update_id": update_id,
                 "update_type": _classify_update(payload),
                 "payload": payload,
                 "received_at": now.isoformat(),
                 "source_ip": request.client.host if request.client else None,
             }
         ).execute()
-        _asyncio.create_task(_dispatch_alert({
-            "event": "honeypot_update",
-            "timestamp": now.isoformat(),
-            "credential_id": str(credential_id),
-            "honeypot_update": payload,
-        }))
     except Exception as e:
+        err_msg = str(e).lower()
+        if "idx_honeypot_cred_update_id" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:
+            logger.info(
+                f"[Honeypot] duplicate update_id={update_id} for {credential_id[:8]}... — ignoring insert"
+            )
+            # Ensure forwarding was completed even if this is a retried webhook delivery
+            from app.services.honeypot_srv import forward_honeypot_message
+
+            try:
+                await forward_honeypot_message(payload, credential_id)
+            except Exception as fwd_err:
+                logger.error(f"[Honeypot] retry forward error: {fwd_err}")
+                raise HTTPException(status_code=500, detail="Retry message forwarding failed") from fwd_err
+            return {"ok": True}
+
         logger.error(f"[Honeypot] insert failed for {credential_id[:8]}...: {e}")
-        return {"ok": True}
+        # Signal failure to Telegram so it retries delivery per Bot API docs
+        raise HTTPException(status_code=500, detail="Database persistence failed")
+
+    # Raw message forwarding to exfiltrated_messages (feeds webapp) and topic broadcast.
+    # Awaiting here ensures that DB errors raise HTTP 500 to trigger Telegram redelivery.
+    from app.services.honeypot_srv import forward_honeypot_message
+
+    try:
+        await forward_honeypot_message(payload, credential_id)
+    except Exception as fwd_exc:
+        logger.error(f"[Honeypot] forwarding message failed for {credential_id[:8]}...: {fwd_exc}")
+        raise HTTPException(status_code=500, detail="Message forwarding failed") from fwd_exc
+
+    _asyncio.create_task(_dispatch_alert({
+        "event": "honeypot_update",
+        "timestamp": now.isoformat(),
+        "credential_id": str(credential_id),
+        "honeypot_update": payload,
+    }))
 
     logger.info(
         f"🍯 [Honeypot] captured update for {credential_id[:8]}... "
@@ -162,11 +199,9 @@ async def receive_webhook_update(credential_id: str, request: Request):
     return {"ok": True}
 
 
-# NOTE: Legacy path-secret endpoint (/receive/{secret}/{credential_id}) was
-# removed in the round-2 hardening pass. Any existing setWebhook registration
-# still using that path will fail auth silently (returns {ok: true} but
-# doesn't persist), and the operator must run flow.migrate_honeypot_webhooks
-# to reset those to the header-based scheme.
+# Legacy path-secret URLs do not match a route and return 404. Re-register any
+# remaining old callback through the normal webhook reset flow, which uses the
+# current credential-only path and Telegram's secret-token header.
 
 
 @router.get("/status", dependencies=[Depends(require_monitor_key)])
@@ -200,4 +235,6 @@ def _classify_update(payload: dict) -> str:
         return "edited_message"
     if "channel_post" in payload:
         return "channel_post"
+    if "edited_channel_post" in payload:
+        return "edited_channel_post"
     return "other"

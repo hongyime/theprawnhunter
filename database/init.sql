@@ -68,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_discovered_credentials_chat_member_count
 CREATE TABLE IF NOT EXISTS exfiltrated_messages (
     id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     credential_id        UUID        REFERENCES discovered_credentials(id) ON DELETE CASCADE,
-    telegram_msg_id      INT         NOT NULL,
+    telegram_msg_id      BIGINT      NOT NULL,
     sender_name          TEXT,
     content              TEXT,
     media_type           TEXT        DEFAULT 'text',

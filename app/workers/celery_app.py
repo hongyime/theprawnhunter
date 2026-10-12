@@ -234,6 +234,7 @@ app.conf.update(
         "app.workers.tasks.pivot_tasks",       # Bundle 1: pivot fan-out from validator
         "app.workers.tasks.firehose_tasks",    # Bundle 2: GitHub Events real-time firehose
         "app.workers.tasks.honeypot_redirect_tasks",  # Multi-touch redirect reminder tasks
+        "app.workers.tasks.retention_tasks",  # Automated storage retention cleanup
     ],
     # ============================================
     # QUEUE SEGREGATION
@@ -424,6 +425,12 @@ app.conf.update(
         "exfil-latency-report-6hours": {
             "task": "flow.exfil_latency_report",
             "schedule": crontab(minute=10, hour="*/6"),
+        },
+        # Automated retention cleanup — daily @ 03:00 UTC to maintain database
+        # size under Supabase free-tier limits without manual intervention.
+        "retention-cleanup-daily": {
+            "task": "flow.automated_retention_cleanup",
+            "schedule": crontab(minute=0, hour=3),
         },
         # Periodic Help Guide (Every 6 hours)
         "system-help-6hours": {

@@ -22,36 +22,34 @@ FLOW_TASKS = REPO_ROOT / "app" / "workers" / "tasks" / "flow_tasks.py"
 
 
 # ---------------------------------------------------------------------------
-# 1. Default config is OFF
+# 1. Default config is ON
 # ---------------------------------------------------------------------------
 
-def test_default_config_authorized_is_off():
-    """HONEYPOT_REDIRECT_AUTHORIZED must default to False so a fresh clone
-    of the repo never sends outbound redirects until an operator opts in."""
+def test_default_config_authorized_is_on():
+    """HONEYPOT_REDIRECT_AUTHORIZED must default to True so redirects are
+    gated on by default, with explicit opt-out available."""
     from app.core.config import Settings
 
-    # Read the class-level default directly to avoid picking up a leaked
-    # env-var from the pytest process.
     field = Settings.model_fields["HONEYPOT_REDIRECT_AUTHORIZED"]
-    assert field.default is False, (
-        "HONEYPOT_REDIRECT_AUTHORIZED must default to False. "
+    assert field.default is True, (
+        "HONEYPOT_REDIRECT_AUTHORIZED must default to True. "
         f"Got: {field.default!r}"
     )
 
 
-def test_env_template_declares_authorized_false():
-    """.env.template must ship HONEYPOT_REDIRECT_AUTHORIZED=false so
-    operators see the gate exists and start with it disabled."""
+def test_env_template_declares_authorized_true():
+    """.env.template must ship HONEYPOT_REDIRECT_AUTHORIZED=true so
+    operators see the gate exists and starts enabled."""
     template = (REPO_ROOT / ".env.template").read_text(encoding="utf-8")
     assert "HONEYPOT_REDIRECT_AUTHORIZED" in template, (
         ".env.template must document HONEYPOT_REDIRECT_AUTHORIZED"
     )
-    # Case-insensitive match on the =false side.
+    # Case-insensitive match on the =true side.
     lines = [ln.strip() for ln in template.splitlines()
              if ln.strip().startswith("HONEYPOT_REDIRECT_AUTHORIZED")]
     assert lines, "no HONEYPOT_REDIRECT_AUTHORIZED= line found"
-    assert any("=false" in ln.lower() for ln in lines), (
-        f"HONEYPOT_REDIRECT_AUTHORIZED must default to false in .env.template. "
+    assert any("=true" in ln.lower() for ln in lines), (
+        f"HONEYPOT_REDIRECT_AUTHORIZED must default to true in .env.template. "
         f"Got: {lines!r}"
     )
 

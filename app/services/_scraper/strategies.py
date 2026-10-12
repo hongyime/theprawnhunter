@@ -81,6 +81,17 @@ class WebhookStateService:
         strategy: str = "bot_api_updates",
         credential_id: str | None = None,
     ) -> WebhookDecision:
+        if not credential_id:
+            import hashlib
+            _token_hash = hashlib.sha256(bot_token.encode()).hexdigest()
+            try:
+                from app.core.database import db
+                _lookup = db.table("discovered_credentials").select("id").eq("token_hash", _token_hash).limit(1).execute()
+                if _lookup.data:
+                    credential_id = _lookup.data[0]["id"]
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
+
         base_url = f"https://api.telegram.org/bot{bot_token}"
         try:
             response = await client.get(f"{base_url}/getWebhookInfo")
@@ -137,6 +148,29 @@ class WebhookStateService:
                 "pending_update_count": result.get("pending_update_count"),
             }
         )
+
+        # HONEYPOT SELF-TAKEOVER GUARD (2026-10-12 fix):
+        # If the registered webhook is already OUR honeypot receiver, there is
+        # nothing to take over. Previously the code fell through to
+        # deleteWebhook + setWebhook on our own URL every scrape cycle, churning
+        # registrations and losing in-flight messages. Skip the takeover path
+        # entirely and keep polling; the receiver collects updates via webhook.
+        _our_receiver = (settings.HONEYPOT_WEBHOOK_URL or "").rstrip("/")
+        if settings.HONEYPOT_MODE and _our_receiver and _our_receiver in webhook_url:
+            logger.info(
+                f"🍯 [Webhook] honeypot already active for "
+                f"{(credential_id or '')[:8]}... — skipping takeover"
+            )
+            return WebhookDecision(
+                can_poll=True,
+                webhook_url=webhook_url,
+                attempt=StrategyAttempt(
+                    name=strategy,
+                    success=True,
+                    reason=ScrapeReason.NO_NEW_MESSAGES,
+                    evidence={**evidence, "honeypot_active": True},
+                ),
+            )
 
         # Detect third-party re-takeover of OUR honeypot webhook.
         # If the found webhook_url is NOT ours but we're in honeypot mode

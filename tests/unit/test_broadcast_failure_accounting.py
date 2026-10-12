@@ -75,9 +75,10 @@ async def test_mark_broadcast_failure_records_error_attempts_and_retry(monkeypat
     await flow_tasks._mark_broadcast_failure(
         {"id": "msg-1", "credential_id": "cred-1", "broadcast_attempts": 2},
         BroadcastSendError("timeout", "send exceeded timeout", retryable=True),
+        claim_token="claim-1",
     )
 
-    assert captured["filters"] == [("id", "msg-1")]
+    assert captured["filters"] == [("id", "msg-1"), ("broadcast_claimed_at", "claim-1")]
     assert captured["payload"]["broadcast_claimed_at"] is None
     assert captured["payload"]["broadcast_attempts"] == 3
     assert captured["payload"]["broadcast_error"]["reason"] == "timeout"
@@ -107,6 +108,7 @@ async def test_mark_broadcast_failure_falls_back_when_columns_missing(monkeypatc
     await flow_tasks._mark_broadcast_failure(
         {"id": "msg-1", "credential_id": "cred-1", "broadcast_attempts": 2},
         BroadcastSendError("timeout", "send exceeded timeout", retryable=True),
+        claim_token="claim-1",
     )
 
     assert payloads[0]["broadcast_error"]["reason"] == "timeout"

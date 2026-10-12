@@ -229,7 +229,7 @@ services:
   # Remotely-managed (token) tunnel — portable across macOS / Linux / Windows:
   #   1. Zero Trust dashboard -> Networks -> Tunnels -> Create -> Docker (copy token).
   #   2. Public hostname: <your-domain>  ->  Service: http://api:8001  (internal, not localhost).
-  #   3. Put the token in CLOUDFLARE_TUNNEL_TOKEN in .env, then:
+  #   3. Put TUNNEL_TOKEN in .cloudflared/tunnel.env (mode 0600), then:
   #        docker compose --profile honeypot up -d
   #   Full guide: docs/deployment/cloudflare_tunnel.md
   cloudflared:
@@ -242,8 +242,9 @@ services:
     mem_limit: "${CLOUDFLARED_MEM_LIMIT:-128m}"
     mem_reservation: "${CLOUDFLARED_MEM_RESERVATION:-64m}"
     command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    # Keep the tunnel token out of the shared .env loaded by app services.
+    env_file:
+      - .cloudflared/tunnel.env
     depends_on:
       api:
         condition: service_started

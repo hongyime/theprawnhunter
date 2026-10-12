@@ -155,6 +155,12 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
         def limit(self, *_):
             return self
 
+        def is_(self, *_):
+            return self
+
+        def gte(self, *_):
+            return self
+
         def execute(self):
             return types.SimpleNamespace(data=[{"bot_token": "gAAAAfake"}])
 
@@ -217,6 +223,7 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
             user_id=12345,
             chat_id=12345,
             update_type="message",
+            claim_token="claim-001",
         )
 
     assert result["status"] == "failed"
@@ -260,6 +267,12 @@ async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
             return self
 
         def limit(self, *_):
+            return self
+
+        def is_(self, *_):
+            return self
+
+        def gte(self, *_):
             return self
 
         def execute(self):
@@ -325,6 +338,7 @@ async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
             user_id=99999,
             chat_id=99999,
             update_type="message",
+            claim_token="claim-002",
         )
 
     assert result["status"] == "sent"
@@ -387,6 +401,7 @@ async def test_callback_failure_does_not_mark_redirected(monkeypatch):
             user_id=111,
             chat_id=111,
             update_type="callback_query",
+            claim_token="claim-003",
         )
 
     assert result.get("sent") is False or result.get("status") == "callback_handled"
@@ -415,7 +430,7 @@ async def test_callback_branch_returns_early_no_sendmessage(monkeypatch):
         return True  # simulate success
 
     async def fake_update_redirect_record(*_a, **_kw):
-        pass
+        return True
 
     def fake_mark_redirect_sent(*_a, **_kw):
         pass
@@ -454,6 +469,7 @@ async def test_callback_branch_returns_early_no_sendmessage(monkeypatch):
             user_id=222,
             chat_id=222,
             update_type="callback_query",
+            claim_token="claim-cb",
         )
 
     assert result["status"] == "callback_handled", (
@@ -485,7 +501,7 @@ async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
         return True  # simulate success
 
     async def fake_update_redirect_record(*_a, **_kw):
-        pass
+        return True
 
     def fake_mark_redirect_sent(*_a, **_kw):
         pass
@@ -524,6 +540,7 @@ async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
             user_id=333,
             chat_id=333,
             update_type="inline_query",
+            claim_token="claim-iq",
         )
 
     assert result["status"] == "inline_handled", (
