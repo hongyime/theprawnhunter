@@ -70,7 +70,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/bots - List bots\n"
             "/telemetry - Telemetry\n"
             "/getfile <id> - Get attachment\n"
-            "/backfill - Re-broadcast stuck messages"
+            "/backfill [--apply] - Re-broadcast stuck messages (dry run by default)"
         )
     else:
         help_text = (
@@ -299,19 +299,33 @@ async def getfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _reply_and_delete(update, _format_archive_result_message(result))
 
 async def backfill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Triggers re-broadcast of messages stuck in General topic."""
+    """Dry-run by default; require --apply before re-queueing or broadcasting."""
     if not is_admin(update):
         await _reply_and_delete(update, "Admin only.")
         return
 
-    await _reply_and_delete(update,
-        "Backfill started.\n"
-        "Messages stuck in General will be re-queued to their correct topics.\n"
-        "Check the monitor group for progress.",
-        parse_mode=ParseMode.MARKDOWN
-    )
+    args = list(getattr(context, "args", None) or [])
+    if args not in ([], ["--dry-run"], ["--apply"]):
+        await _reply_and_delete(update, "Usage: /backfill [--dry-run|--apply]. No backfill was queued.")
+        return
+
+    apply_changes = args == ["--apply"]
+    if apply_changes:
+        await _reply_and_delete(
+            update,
+            "Backfill apply queued. Eligible messages will be re-queued for their current topics.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    else:
+        await _reply_and_delete(
+            update,
+            "Backfill dry run queued. No rows will be changed and no messages will be sent. "
+            "Pass /backfill --apply to re-queue eligible messages.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
     from app.workers.tasks.audit_tasks import backfill_general_messages
-    backfill_general_messages.delay()
+    backfill_general_messages.delay(apply_changes=apply_changes)
 
 async def schedule_deletion(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 30):
     """Deletes a message after a delay."""

@@ -7,7 +7,12 @@ from telegram.error import TelegramError
 from app.core.config import settings
 from app.core.database import db
 from app.workers.celery_app import _run_sync, app
-from app.workers.tasks.flow_tasks import _broadcast_logic, async_execute, get_broadcaster
+from app.workers.tasks.flow_tasks import (
+    _broadcast_logic,
+    async_execute,
+    get_broadcaster,
+    redis_client,
+)
 
 logger = logging.getLogger("audit.tasks")
 logger.setLevel(logging.INFO)
@@ -627,7 +632,7 @@ async def _cleanup_matkap_bots_async():
 
 
 @app.task(name="system.backfill_general_messages")
-def backfill_general_messages():
+def backfill_general_messages(apply_changes: bool = False):
     """
     One-time/on-demand task: re-broadcasts messages that were previously
     dumped into the General topic because their credential had no topic_id
@@ -638,18 +643,107 @@ def backfill_general_messages():
     2. Resets is_broadcasted=False for their messages (capped per batch)
     3. Normal broadcast_pending picks them up and sends to the correct topic
 
-    Triggered via /backfill bot command or manually via Celery.
-    Safe to run multiple times — skips already-backfilled messages.
+    Triggered via /backfill bot command or manually via Celery. Dry-run is the
+    default; an explicit apply choice is required to update rows or dispatch
+    the normal broadcaster.
     """
-    return _run_sync(_backfill_general_messages_async())
+    return _run_sync(_backfill_general_messages_async(apply_changes=apply_changes))
 
 
-async def _backfill_general_messages_async():
+_GENERAL_BACKFILL_DEDUP_KEY = "backfill:general:v1:processed_messages"
+_GENERAL_BACKFILL_OPTIONAL_COLUMNS = (
+    "broadcast_message_id",
+    "broadcast_status",
+    "broadcast_error",
+    "broadcast_attempts",
+    "next_retry_at",
+)
+
+
+def _general_backfill_member(row: dict) -> str:
+    """Return the Redis member for the existing unique message identity."""
+    return f"{row['credential_id']}:{row['telegram_msg_id']}"
+
+
+def _general_backfill_filter_marked(rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+
+    pipe = redis_client.pipeline(transaction=True)
+    for row in rows:
+        pipe.sismember(_GENERAL_BACKFILL_DEDUP_KEY, _general_backfill_member(row))
+    seen = pipe.execute()
+    if len(seen) != len(rows):
+        raise RuntimeError("Redis returned an incomplete backfill marker check")
+    return [row for row, is_marked in zip(rows, seen, strict=True) if not is_marked]
+
+
+def _general_backfill_claim_rows(rows: list[dict]) -> list[dict]:
+    """Atomically claim unprocessed message identities in Redis."""
+    if not rows:
+        return []
+
+    pipe = redis_client.pipeline(transaction=True)
+    for row in rows:
+        pipe.sadd(_GENERAL_BACKFILL_DEDUP_KEY, _general_backfill_member(row))
+    added = pipe.execute()
+    if len(added) != len(rows):
+        raise RuntimeError("Redis returned an incomplete backfill marker claim")
+    return [row for row, was_added in zip(rows, added, strict=True) if was_added]
+
+
+def _is_missing_backfill_column(exc: BaseException, column: str) -> bool:
+    text = str(exc).lower()
+    return column in text and any(
+        marker in text
+        for marker in ("column", "schema cache", "does not exist", "42703", "pgrst204")
+    )
+
+
+async def _update_general_backfill_batch(message_ids: list[str]) -> list[dict]:
+    payload = {
+        "is_broadcasted": False,
+        "broadcast_claimed_at": None,
+        "broadcast_message_id": None,
+        "broadcast_status": "pending",
+        "broadcast_error": None,
+        "broadcast_attempts": 0,
+        "next_retry_at": None,
+    }
+
+    while True:
+        try:
+            response = await async_execute(
+                db.table("exfiltrated_messages")
+                .update(payload)
+                .in_("id", message_ids)
+                .eq("is_broadcasted", True)
+                .is_("broadcast_claimed_at", "null")
+                .select("id")
+            )
+            return response.data or []
+        except Exception as exc:
+            missing_columns = [
+                column
+                for column in _GENERAL_BACKFILL_OPTIONAL_COLUMNS
+                if column in payload and _is_missing_backfill_column(exc, column)
+            ]
+            if not missing_columns:
+                raise
+            for column in missing_columns:
+                payload.pop(column)
+            logger.warning(
+                "[Backfill] Compatibility fallback; database lacks optional columns: %s",
+                ", ".join(missing_columns),
+            )
+
+
+async def _backfill_general_messages_async(apply_changes: bool = False):
     import os
-    broadcaster = get_broadcaster()
-    await broadcaster.send_log("🔄 **Backfill**: Scanning for messages stuck in General topic...")
 
     BATCH_SIZE = int(os.getenv("BACKFILL_BATCH_SIZE", 200))  # noqa: N806 — function-scoped constant
+    if BATCH_SIZE <= 0:
+        raise ValueError("BACKFILL_BATCH_SIZE must be greater than zero")
 
     try:
         # Find active credentials that have a valid topic_id (i.e., they have
@@ -670,37 +764,62 @@ async def _backfill_general_messages_async():
                 eligible_cred_ids.append(c["id"])
 
         if not eligible_cred_ids:
-            msg = "Backfill: No credentials with valid topics found."
-            await broadcaster.send_log(msg)
+            msg = "Backfill: no active credentials with valid topics were found."
+            logger.info(msg)
             return msg
 
-        # Find broadcasted messages for these credentials that haven't been
-        # backfilled yet. We add a backfilled_at marker to prevent re-processing.
-        reset_count = 0
-        for cred_id in eligible_cred_ids:
+        # Scan in stable pages so previously marked messages do not prevent a
+        # later run from reaching the next unprocessed batch.
+        page_size = min(max(BATCH_SIZE, 200), 1000)
+        offset = 0
+        candidates = []
+        while len(candidates) < BATCH_SIZE:
             msgs_res = await async_execute(
                 db.table("exfiltrated_messages")
-                .select("id")
-                .eq("credential_id", cred_id)
+                .select("id, credential_id, telegram_msg_id")
+                .in_("credential_id", eligible_cred_ids)
                 .eq("is_broadcasted", True)
                 .is_("broadcast_claimed_at", "null")
-                .limit(BATCH_SIZE - reset_count)
+                .order("id")
+                .range(offset, offset + page_size - 1)
             )
-            for m in (msgs_res.data or []):
-                await async_execute(
-                    db.table("exfiltrated_messages")
-                    .update({"is_broadcasted": False})
-                    .eq("id", m["id"])
-                )
-                reset_count += 1
-                if reset_count >= BATCH_SIZE:
-                    break
-            if reset_count >= BATCH_SIZE:
+            page = msgs_res.data or []
+            if not page:
                 break
 
-        msg = f"🔄 **Backfill**: Reset {reset_count} messages for re-broadcast to correct topics."
+            offset += len(page)
+            unseen = _general_backfill_filter_marked(
+                [row for row in page if row.get("credential_id") and row.get("telegram_msg_id") is not None]
+            )
+            candidates.extend(unseen[: BATCH_SIZE - len(candidates)])
+            if len(page) < page_size:
+                break
+
+        if not candidates:
+            msg = "Backfill: no unprocessed broadcast messages with valid topics were found."
+            logger.info(msg)
+            return msg
+
+        if not apply_changes:
+            msg = (
+                f"Backfill dry run: {len(candidates)} messages are eligible "
+                f"(batch cap {BATCH_SIZE}); no changes were made. Pass --apply to requeue."
+            )
+            logger.info(msg)
+            return msg
+
+        # Claim before touching the DB. Redis failure stops the apply; a worker
+        # crash after the claim is fail-closed and cannot create duplicate sends.
+        claimed = _general_backfill_claim_rows(candidates)
+        if not claimed:
+            msg = "Backfill: another run already claimed the eligible messages; no rows were changed."
+            logger.info(msg)
+            return msg
+
+        updated_rows = await _update_general_backfill_batch([row["id"] for row in claimed])
+        reset_count = len(updated_rows)
+        msg = f"Backfill applied: requeued {reset_count} messages (batch cap {BATCH_SIZE})."
         logger.info(msg)
-        await broadcaster.send_log(msg)
 
         if reset_count > 0:
             from app.workers.tasks.flow_tasks import broadcast_pending
@@ -711,5 +830,4 @@ async def _backfill_general_messages_async():
     except Exception as e:
         error_msg = f"❌ **Backfill** failed: {e}"
         logger.error(error_msg)
-        await broadcaster.send_log(error_msg)
         return error_msg
