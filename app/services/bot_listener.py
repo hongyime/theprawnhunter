@@ -173,7 +173,7 @@ def is_admin(update: Update) -> bool:
     # Only numeric entries count. Warn about any non-numeric (username) entries
     # since they're insecure and were used by the old code path.
     numeric_whitelist = {w for w in whitelist if w.isdigit()}
-    non_numeric = whitelist - numeric_whitelist
+    non_numeric = set(whitelist) - numeric_whitelist
     if non_numeric:
         logger.warning(
             f"[is_admin] Ignoring non-numeric WHITELISTED_BOT_IDS entries "
@@ -499,6 +499,12 @@ def _format_archive_result_message(result) -> str:
 
 
 async def getfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "For security, /getfile only works in a private chat with me."
+        )
+        return
+
     if not is_admin(update):
         await update.message.reply_text("⚠️ This command is restricted to administrators.")
         return
@@ -811,6 +817,8 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     temp_dir = tempfile.gettempdir()
     session_id = uuid.uuid4().hex
     temp_session_path = os.path.join(temp_dir, f"temp_login_{session_id}")
+    context.user_data['temp_session_path'] = temp_session_path
+    client = None
 
     # Clean up old temp file if exists (not strictly needed with uuid but good practice)
     if os.path.exists(temp_session_path + ".session"):
@@ -841,11 +849,10 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return WAIT_CODE
 
     except Exception as e:
+        await _cleanup_login_attempt(context, client)
         logger.error(f"Error requesting code: {e}")
         err_msg = await update.message.reply_text(f"❌ Error requesting code: {str(e)}\nPlease try again with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err_msg.message_id)
-        if 'client' in context.user_data:
-            await context.user_data['client'].disconnect()
         await _wipe_conversation(context, update.effective_chat.id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
 
@@ -864,6 +871,7 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     phone_code_hash = context.user_data.get('phone_code_hash')
 
     if not client or not client.is_connected():
+        await _cleanup_login_attempt(context, client)
         err = await update.message.reply_text("❌ Session expired. Please start over with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
@@ -881,10 +889,10 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data['login_state'] = "WAITING_FOR_2FA"
         return WAIT_PASSWORD
     except Exception as e:
+        await _cleanup_login_attempt(context, client)
         logger.error(f"Error signing in: {e}")
         err = await update.message.reply_text(f"❌ Login failed: {str(e)}\nPlease try again with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
-        await client.disconnect()
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
 
@@ -898,6 +906,7 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     client = context.user_data.get('client')
 
     if not client or not client.is_connected():
+        await _cleanup_login_attempt(context, client)
         err = await update.message.reply_text("❌ Session expired. Please start over with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
@@ -907,10 +916,10 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await client.sign_in(password=password)
         return await finalize_login(update, context)
     except Exception as e:
+        await _cleanup_login_attempt(context, client)
         logger.error(f"Error with 2FA password: {e}")
         err = await update.message.reply_text(f"❌ Incorrect password or error: {str(e)}\nPlease try again with /starthunter")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
-        await client.disconnect()
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
 
@@ -1078,6 +1087,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 logger.error(f"Failed to update database: {e}")
 
         if not saved_successfully:
+            await _cleanup_temp_session(context)
             logger.warning(f"Bot @{current_bot_username} could not save session — recommending alternative bot.")
             current_token = context.bot_data.get('_bot_token', '')
             if current_token:
@@ -1114,8 +1124,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if current_token:
             _locked_bots.discard(current_token)
 
-        with contextlib.suppress(Exception):
-            os.remove(temp_session_path + ".session")
+        await _cleanup_temp_session(context)
 
         # Auto-join monitor group step: generate a single-use invite link and
         # DM it to the user. The user's session MUST be a member of the
@@ -1156,10 +1165,10 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
 
     except Exception as e:
+        await _cleanup_login_attempt(context, client)
         logger.error(f"Error finalizing login: {e}")
         err = await update.message.reply_text(f"❌ Error finalizing login: {str(e)}")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
-        await client.disconnect()
         await _wipe_conversation(context, update.effective_chat.id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
 
@@ -1169,13 +1178,23 @@ async def _cleanup_temp_session(context: ContextTypes.DEFAULT_TYPE):
     temp_path = context.user_data.get('temp_session_path')
     if not temp_path:
         return
-    for suffix in (".session", ".session-journal", ""):
+    for suffix in (".session", ".session-journal", ".session-wal", ".session-shm", ""):
         p = temp_path + suffix
         try:
             if os.path.exists(p):
                 os.remove(p)
         except Exception as e:
             logger.debug(f"[TempCleanup] could not remove {p}: {e}")
+
+
+async def _cleanup_login_attempt(context: ContextTypes.DEFAULT_TYPE, client=None):
+    """Disconnect an active login client and remove its temporary session files."""
+    client = client or context.user_data.get('client')
+    if client:
+        with contextlib.suppress(Exception):
+            if client.is_connected():
+                await client.disconnect()
+    await _cleanup_temp_session(context)
 
 
 async def cancel_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

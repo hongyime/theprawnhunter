@@ -1254,6 +1254,118 @@ class UserAgentService:
             finally:
                 await self._disconnect()
 
+    async def cleanup_bots(
+        self,
+        group_id: int | str,
+        whitelist_ids: list[int | str] | None = None,
+        only_non_admins: bool = True,
+    ) -> int:
+        """Remove non-whitelisted bots, optionally preserving group admins."""
+        async with self.lock:
+            if not await self.start():
+                return 0
+
+            removed_count = 0
+            whitelist = {
+                str(identifier).strip().lstrip("@").casefold()
+                for identifier in (whitelist_ids or [])
+                if str(identifier).strip()
+            }
+
+            try:
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
+                entity = await self.client.get_entity(target)
+                from telethon.tl.functions.channels import EditBannedRequest, GetParticipantRequest
+                from telethon.tl.types import (
+                    ChannelParticipantAdmin,
+                    ChannelParticipantCreator,
+                    ChatBannedRights,
+                )
+
+                logger.info(
+                    "    🧹 [UserAgent] Starting bot cleanup in %s...",
+                    getattr(entity, "title", group_id),
+                )
+
+                async for user in self.client.iter_participants(entity):
+                    if not getattr(user, "bot", False) or getattr(user, "is_self", False):
+                        continue
+
+                    username = getattr(user, "username", None)
+                    if str(user.id) in whitelist or (
+                        username and username.casefold() in whitelist
+                    ):
+                        continue
+
+                    if only_non_admins:
+                        try:
+                            result = await self.client(
+                                GetParticipantRequest(channel=entity, participant=user)
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "    ⚠️ [UserAgent] Cannot verify admin status for bot id=%s; skipping cleanup: %s",
+                                user.id,
+                                type(exc).__name__,
+                            )
+                            continue
+
+                        if isinstance(
+                            result.participant,
+                            (ChannelParticipantAdmin, ChannelParticipantCreator),
+                        ):
+                            continue
+
+                    try:
+                        await self.client(
+                            EditBannedRequest(
+                                channel=entity,
+                                participant=user,
+                                banned_rights=ChatBannedRights(
+                                    until_date=None,
+                                    view_messages=True,
+                                ),
+                            )
+                        )
+                        removed_count += 1
+                        try:
+                            await self.client(
+                                EditBannedRequest(
+                                    channel=entity,
+                                    participant=user,
+                                    banned_rights=ChatBannedRights(
+                                        until_date=None,
+                                        view_messages=False,
+                                    ),
+                                )
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "    ⚠️ [UserAgent] Removed bot id=%s but could not clear its ban: %s",
+                                user.id,
+                                type(exc).__name__,
+                            )
+                    except Exception as exc:
+                        logger.error(
+                            "    ❌ [UserAgent] Failed to remove bot id=%s: %s",
+                            user.id,
+                            type(exc).__name__,
+                        )
+
+                logger.info(
+                    "    ✨ [UserAgent] Bot cleanup complete. Removed %d bot(s).",
+                    removed_count,
+                )
+                return removed_count
+            except Exception as exc:
+                logger.error(
+                    "    ❌ [UserAgent] Bot cleanup failed: %s",
+                    type(exc).__name__,
+                )
+                return removed_count
+            finally:
+                await self._disconnect()
+
     async def delete_old_messages(self, group_id: int | str, age_hours: int, topic_id: int | None = None) -> int:
         async with self.lock:
             if not await self.start():
