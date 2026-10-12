@@ -31,6 +31,7 @@ from app.core.config import settings
 from app.core.database import db
 from app.core.logger import get_logger
 from app.core.webhook import dispatch_alert as _dispatch_alert
+from app.infrastructure.database import execute_async
 
 logger = get_logger(__name__)
 
@@ -95,7 +96,12 @@ async def receive_webhook_update(credential_id: str, request: Request):
     # Optional: verify credential exists and is active — declines payloads for
     # revoked/inactive credentials so we don't accumulate garbage in DB.
     try:
-        cred = db.table("discovered_credentials").select("id, status").eq("id", credential_id).limit(1).execute()
+        cred = await execute_async(
+            db.table("discovered_credentials")
+            .select("id, status")
+            .eq("id", credential_id)
+            .limit(1)
+        )
         if not cred.data or (cred.data[0].get("status") not in ("active",)):
             logger.info(f"[Honeypot] credential {credential_id[:8]}... not active — dropping")
             return {"ok": True}
@@ -144,16 +150,18 @@ async def receive_webhook_update(credential_id: str, request: Request):
     now = datetime.now(UTC)
 
     try:
-        db.table("honeypot_updates").insert(
-            {
-                "credential_id": credential_id,
-                "update_id": update_id,
-                "update_type": _classify_update(payload),
-                "payload": payload,
-                "received_at": now.isoformat(),
-                "source_ip": request.client.host if request.client else None,
-            }
-        ).execute()
+        await execute_async(
+            db.table("honeypot_updates").insert(
+                {
+                    "credential_id": credential_id,
+                    "update_id": update_id,
+                    "update_type": _classify_update(payload),
+                    "payload": payload,
+                    "received_at": now.isoformat(),
+                    "source_ip": request.client.host if request.client else None,
+                }
+            )
+        )
     except Exception as e:
         err_msg = str(e).lower()
         if "idx_honeypot_cred_update_id" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:

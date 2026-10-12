@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import logging
@@ -12,6 +13,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.core.audit import AuditEvent, AuditLogger
 from app.core.auth import require_monitor_key
 from app.core.database import db
+from app.infrastructure.database import execute_async
 from app.schemas.models import (
     CredentialOut,
     EngagementLifecycleIn,
@@ -52,7 +54,7 @@ async def get_stats():
     try:
         from app.core.redis_srv import redis_srv
 
-        cached_raw = redis_srv.client.get(_STATS_REDIS_KEY)
+        cached_raw = await asyncio.to_thread(redis_srv.client.get, _STATS_REDIS_KEY)
         if cached_raw:
             try:
                 import json as _json
@@ -65,7 +67,7 @@ async def get_stats():
         logger.debug(f"[suppressed] {_swallowed}")  # Redis unavailable, recompute
 
     try:
-        stats = _get_monitor_stats()
+        stats = await _get_monitor_stats_async()
     except Exception as exc:
         logger.exception("monitor/stats query failed")
         raise HTTPException(status_code=500, detail="Internal error") from exc
@@ -76,7 +78,8 @@ async def get_stats():
 
         from app.core.redis_srv import redis_srv
 
-        redis_srv.client.set(
+        await asyncio.to_thread(
+            redis_srv.client.set,
             _STATS_REDIS_KEY,
             _json.dumps(stats.model_dump()),
             ex=_STATS_CACHE_TTL_SECONDS,
@@ -107,8 +110,45 @@ def _get_monitor_stats() -> StatsOut:
     )
 
 
+async def _get_monitor_stats_async() -> StatsOut:
+    try:
+        stats = await _get_monitor_stats_from_rpc_async()
+    except Exception as exc:
+        if not _is_missing_monitor_stats_rpc(exc):
+            raise
+        logger.warning("monitor stats RPC unavailable; falling back to exact narrow counts")
+        stats = None
+
+    if stats is not None:
+        return stats
+
+    credentials_total = await _exact_count_async("discovered_credentials")
+    credentials_active = await _exact_count_async(
+        "discovered_credentials", "status", "active"
+    )
+    messages_exfiltrated = await _exact_count_async("exfiltrated_messages")
+    messages_broadcasted = await _exact_count_async(
+        "exfiltrated_messages", "is_broadcasted", True
+    )
+    return StatsOut(
+        credentials_total=credentials_total,
+        credentials_active=credentials_active,
+        messages_exfiltrated=messages_exfiltrated,
+        messages_broadcasted=messages_broadcasted,
+    )
+
+
 def _get_monitor_stats_from_rpc() -> StatsOut | None:
     res = db.rpc("get_monitor_stats").execute()
+    return _monitor_stats_from_result(res)
+
+
+async def _get_monitor_stats_from_rpc_async() -> StatsOut | None:
+    res = await execute_async(db.rpc("get_monitor_stats"))
+    return _monitor_stats_from_result(res)
+
+
+def _monitor_stats_from_result(res: Any) -> StatsOut | None:
     rows = res.data or []
     row = rows[0] if isinstance(rows, list) and rows else rows if isinstance(rows, dict) else None
     if not row:
@@ -126,6 +166,20 @@ def _exact_count(table: str, column: str | None = None, value: Any = None) -> in
     if column is not None:
         query = query.eq(column, value)
     res = query.execute()
+    if res.count is not None:
+        return int(res.count)
+    return len(res.data or [])
+
+
+async def _exact_count_async(
+    table: str,
+    column: str | None = None,
+    value: Any = None,
+) -> int:
+    query = db.table(table).select("id", count="exact").limit(0)
+    if column is not None:
+        query = query.eq(column, value)
+    res = await execute_async(query)
     if res.count is not None:
         return int(res.count)
     return len(res.data or [])
@@ -183,7 +237,9 @@ async def list_credentials(
         if sort_expr in ("collection_yield_score", "confidence_score", "chat_member_count"):
             try:
                 # nullslast keeps unscored legacy rows out of the way on desc.
-                res = q.order(sort_expr, desc=desc, nullsfirst=not desc).limit(limit).execute()
+                res = await execute_async(
+                    q.order(sort_expr, desc=desc, nullsfirst=not desc).limit(limit)
+                )
             except Exception as e:
                 # Migration 004 not applied yet — column doesn't exist. Fall back.
                 msg = str(e).lower()
@@ -193,17 +249,16 @@ async def list_credentials(
                     or "chat_member_count" in msg
                     or "column" in msg
                 ):
-                    res = (
+                    res = await execute_async(
                         db.table("discovered_credentials")
                         .select("*")
                         .order("created_at", desc=True)
                         .limit(limit)
-                        .execute()
                     )
                 else:
                     raise
         else:
-            res = q.order(sort_expr, desc=desc).limit(limit).execute()
+            res = await execute_async(q.order(sort_expr, desc=desc).limit(limit))
         return res.data
     except Exception as exc:
         logger.exception("monitor/credentials query failed")
@@ -215,7 +270,12 @@ async def list_messages(limit: int = 100):
     """List recent exfiltrated messages. Requires X-Monitor-Key header."""
     limit = max(1, min(limit, 1000))  # Clamp to [1, 1000]
     try:
-        res = db.table("exfiltrated_messages").select("*").order("created_at", desc=True).limit(limit).execute()
+        res = await execute_async(
+            db.table("exfiltrated_messages")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
         return res.data
     except Exception as exc:
         logger.exception("monitor/messages query failed")
@@ -393,7 +453,7 @@ async def export_messages(
     if since:
         q = q.gte("created_at", since.isoformat())
 
-    result = q.execute()
+    result = await execute_async(q)
     rows = result.data or []
 
     if format == "csv":
@@ -593,12 +653,11 @@ async def list_captured_webhooks(limit: int = 200):
     try:
         # Fetch a bounded slice; population is small (~2k credentials) so
         # a Python-side filter on meta->>webhook_url is cheap.
-        res = (
+        res = await execute_async(
             db.table("discovered_credentials")
             .select("id, bot_username, bot_id, chat_name, status, meta, created_at, updated_at")
             .order("created_at", desc=True)
             .limit(2000)
-            .execute()
         )
         out = []
         for row in res.data or []:
@@ -632,7 +691,7 @@ async def list_captured_webhooks(limit: int = 200):
 
 
 @router.get("/targets/export")
-async def export_targets(limit: int = 100):
+def export_targets(limit: int = 100):
     """Export a sanitized generic target feed for downstream tooling.
 
     The feed intentionally contains only domain/URL candidates and neutral

@@ -7,6 +7,7 @@ Provides:
   - Triggering Telegram topic broadcasting for newly captured honeypot messages.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +15,7 @@ from app.core.config import settings
 from app.core.database import db
 from app.core.logger import get_logger
 from app.domain.media import bot_api_media_info
+from app.infrastructure.database import execute_async
 
 logger = get_logger(__name__)
 
@@ -184,12 +186,13 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
         return None
 
     # Check if this message was already recorded in exfiltrated_messages
-    existing = db.table("exfiltrated_messages")\
-        .select("id, is_broadcasted")\
-        .eq("credential_id", credential_id)\
-        .eq("telegram_msg_id", msg_data["telegram_msg_id"])\
-        .limit(1)\
-        .execute()
+    existing = await execute_async(
+        db.table("exfiltrated_messages")
+        .select("id, is_broadcasted")
+        .eq("credential_id", credential_id)
+        .eq("telegram_msg_id", msg_data["telegram_msg_id"])
+        .limit(1)
+    )
 
     if existing.data:
         is_already_broadcasted = bool(existing.data[0].get("is_broadcasted"))
@@ -206,7 +209,7 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
         )
     else:
         # Fresh insert: preserves is_broadcasted=False
-        db.table("exfiltrated_messages").insert(msg_data).execute()
+        await execute_async(db.table("exfiltrated_messages").insert(msg_data))
 
     # Trigger targeted honeypot message broadcast if enabled
     if getattr(settings, "HONEYPOT_BROADCAST_TO_TOPIC", True):
@@ -216,14 +219,23 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
             dispatch_key = f"broadcast:dispatched:{credential_id}:{msg_data['telegram_msg_id']}"
             should_dispatch = True
             try:
-                should_dispatch = bool(redis_srv.client.set(dispatch_key, "1", nx=True, ex=300))
+                should_dispatch = bool(
+                    await asyncio.to_thread(
+                        redis_srv.client.set,
+                        dispatch_key,
+                        "1",
+                        nx=True,
+                        ex=300,
+                    )
+                )
             except Exception as _r_err:
                 logger.debug(f"[Honeypot] redis dispatch dedup check skipped: {_r_err}")
 
             if should_dispatch:
                 from app.workers.celery_app import app as celery_app
 
-                celery_app.send_task(
+                await asyncio.to_thread(
+                    celery_app.send_task,
                     "flow.broadcast_honeypot_message",
                     kwargs={
                         "credential_id": credential_id,

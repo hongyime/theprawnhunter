@@ -7,6 +7,7 @@ from telegram.request import HTTPXRequest
 from app.core.auth import require_monitor_key
 from app.core.database import db
 from app.core.security import security
+from app.infrastructure.database import execute_async
 
 logger = logging.getLogger("media_proxy")
 router = APIRouter(dependencies=[Depends(require_monitor_key)])
@@ -23,11 +24,12 @@ async def get_media(message_id: str):
     """
     # 1. Look up the message
     try:
-        msg_res = db.table("exfiltrated_messages") \
-            .select("credential_id, file_meta, media_type") \
-            .eq("id", message_id) \
-            .single() \
-            .execute()
+        msg_res = await execute_async(
+            db.table("exfiltrated_messages")
+            .select("credential_id, file_meta, media_type")
+            .eq("id", message_id)
+            .single()
+        )
     except Exception as err:
         raise HTTPException(status_code=404, detail="Message not found") from err
 
@@ -46,11 +48,12 @@ async def get_media(message_id: str):
 
     # 2. Get the source bot token
     try:
-        cred_res = db.table("discovered_credentials") \
-            .select("bot_token") \
-            .eq("id", credential_id) \
-            .single() \
-            .execute()
+        cred_res = await execute_async(
+            db.table("discovered_credentials")
+            .select("bot_token")
+            .eq("id", credential_id)
+            .single()
+        )
     except Exception as err:
         raise HTTPException(status_code=404, detail="Credential not found") from err
 

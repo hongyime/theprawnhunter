@@ -276,7 +276,7 @@ async def get_metrics():
 
 
 @router.get("/queues", dependencies=[Depends(require_monitor_key)])
-async def get_queue_health():
+def get_queue_health():
     """
     Get operational queue depth and oldest tracked job age.
     """
@@ -301,7 +301,7 @@ async def get_queue_health():
 
 
 @router.get("/operational", dependencies=[Depends(require_monitor_key)])
-async def get_operational_health():
+def get_operational_health():
     """Operational readiness report: health, queues, canary, and recent failures."""
     now = datetime.now(UTC)
     report: dict[str, Any] = {
@@ -390,7 +390,7 @@ _QUOTA_LIMITS: dict[str, int] = {
 
 
 @router.get("/quotas", dependencies=[Depends(require_monitor_key)])
-async def get_quotas():
+def get_quotas():
     """Per-service daily API-budget usage.
 
     Reads Redis counters at ``quota:{service}:{yyyymmdd}`` (UTC date) for
@@ -428,7 +428,7 @@ async def get_quotas():
 
 
 @router.get("/bot-pool", dependencies=[Depends(require_monitor_key)])
-async def get_bot_pool():
+def get_bot_pool():
     """Bot pool state — total configured, active bots (cluster-wide), and Redis lock view.
 
     ``total_bots`` counts tokens configured via ``MONITOR_BOT_TOKEN``.
