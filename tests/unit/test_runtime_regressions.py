@@ -112,7 +112,7 @@ def test_captured_redirect_logs_never_include_raw_user_ids():
     redirect_source = (
         root / "app/workers/tasks/honeypot_redirect_tasks.py"
     ).read_text(encoding="utf-8")
-    flow_source = (root / "app/workers/tasks/flow_tasks.py").read_text(
+    flow_source = (root / "app/workers/tasks/flows/honeypot.py").read_text(
         encoding="utf-8"
     )
     source = f"{redirect_source}\n{flow_source}"

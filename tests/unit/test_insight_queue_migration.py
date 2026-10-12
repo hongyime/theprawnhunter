@@ -7,7 +7,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "supabase" / "migrations" / "20260904000002_insight_queue.sql"
-FLOW_TASKS = ROOT / "app" / "workers" / "tasks" / "flow_tasks.py"
+FLOW_TASKS = ROOT / "app" / "workers" / "tasks" / "flows" / "findings.py"
+ENTITY_TASKS = ROOT / "app" / "workers" / "tasks" / "flows" / "entities.py"
+REPORT_TASKS = ROOT / "app" / "workers" / "tasks" / "flows" / "reports.py"
+FINDING_SERVICE = ROOT / "app" / "services" / "findings.py"
 CELERY = ROOT / "app" / "workers" / "celery_app.py"
 
 
@@ -85,11 +88,15 @@ def test_feedback_is_append_only_audited_and_updates_disposition_atomically():
 
 def test_existing_reports_persist_findings_and_never_broadcast_raw_user_ids():
     flow = _read(FLOW_TASKS)
+    entity_tasks = _read(ENTITY_TASKS)
+    report_tasks = _read(REPORT_TASKS)
+    finding_service = _read(FINDING_SERVICE)
+    domain_source = "\n".join((flow, entity_tasks, report_tasks, finding_service))
     assert '@app.task(name="flow.produce_findings")' in flow
-    assert "infrastructure_cluster_candidates" in flow
-    assert "cross_bot_pattern_candidates" in flow
-    assert "pseudonymize_subject(uid)" in flow
-    assert 'f"• `user:{uid}`' not in flow
+    assert "infrastructure_cluster_candidates" in domain_source
+    assert "cross_bot_pattern_candidates" in domain_source
+    assert "pseudonymize_subject(uid)" in domain_source
+    assert 'f"• `user:{uid}`' not in domain_source
 
 
 def test_bounded_idempotent_producer_is_scheduled():

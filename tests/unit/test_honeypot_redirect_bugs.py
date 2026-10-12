@@ -2,7 +2,7 @@
 Regression tests for multi-touch redirect system bug fixes.
 
 BUG 1: celery_app.py missing honeypot_redirect_tasks import
-BUG 2: flow_tasks.py sweep SELECT omits update_type column
+BUG 2: honeypot flow sweep SELECT omits update_type column
 BUG 3: redirect_one normal path references undefined `text` variable
 BUG 4: redirect_1_sent_at never written on first successful send
 BUG 5: Failure paths mark rows redirected/deduplicated despite failed delivery
@@ -35,7 +35,7 @@ def test_sweep_select_includes_update_type():
     """The honeypot_redirect_sweep SELECT must fetch update_type so the
     callback_query / inline_query / edited_message / channel_post branches
     in honeypot_redirect_one are reachable."""
-    source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flow_tasks.py"
+    source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flows" / "honeypot.py"
     text = source.read_text(encoding="utf-8")
 
     # Find the sweep logic block
@@ -61,7 +61,7 @@ def test_redirect_one_defines_text_before_send():
     """The normal (non-callback, non-inline) message path in
     _honeypot_redirect_one_logic must define `text` before calling
     sendMessage — previously it referenced an undefined variable."""
-    source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flow_tasks.py"
+    source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flows" / "honeypot.py"
     text_src = source.read_text(encoding="utf-8")
 
     fn_start = text_src.find("async def _honeypot_redirect_one_logic")
@@ -93,7 +93,7 @@ def test_redirect_one_writes_redirect_1_sent_at_on_success():
     is unrelated to the success payload, so a naive first-occurrence search
     would false-fail; iterate to find the pairing that matters.
     """
-    source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flow_tasks.py"
+    source = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "flows" / "honeypot.py"
     text_src = source.read_text(encoding="utf-8")
 
     fn_start = text_src.find("async def _honeypot_redirect_one_logic")

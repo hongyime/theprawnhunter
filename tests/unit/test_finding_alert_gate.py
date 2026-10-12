@@ -18,7 +18,7 @@ def test_finding_alerts_default_to_disabled():
 
 
 def test_alert_workers_check_gate_before_delivery_code():
-    source = (ROOT / "app" / "workers" / "tasks" / "flow_tasks.py").read_text(
+    source = (ROOT / "app" / "workers" / "tasks" / "flows" / "findings.py").read_text(
         encoding="utf-8"
     )
     for name in ("_route_finding_alerts_logic", "_weekly_finding_alerts_logic"):

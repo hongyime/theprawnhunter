@@ -5,7 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "supabase" / "migrations" / "20260904000004_finding_alert_policies.sql"
 CONFIG = ROOT / "app" / "core" / "config.py"
-FLOW = ROOT / "app" / "workers" / "tasks" / "flow_tasks.py"
+FLOW = ROOT / "app" / "workers" / "tasks" / "flows" / "findings.py"
+BROADCAST = ROOT / "app" / "workers" / "tasks" / "flows" / "broadcast.py"
 CELERY = ROOT / "app" / "workers" / "celery_app.py"
 
 
@@ -45,10 +46,11 @@ def test_alert_tables_are_authenticated_read_and_service_write_only():
 def test_raw_stream_is_default_off_and_policy_jobs_are_scheduled():
     config = _read(CONFIG)
     flow = _read(FLOW)
+    broadcast = _read(BROADCAST)
     celery = _read(CELERY)
     assert "ENABLE_RAW_MESSAGE_BROADCAST: bool = False" in config
     assert "ENABLE_LEGACY_EVENT_ALERTS: bool = False" in config
-    assert "if not settings.ENABLE_RAW_MESSAGE_BROADCAST" in flow
+    assert "if not settings.ENABLE_RAW_MESSAGE_BROADCAST" in broadcast
     for task in (
         "flow.route_finding_deltas",
         "flow.daily_findings_digest",

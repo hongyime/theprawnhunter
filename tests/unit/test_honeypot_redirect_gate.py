@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).parents[2]
 REDIRECT_TASKS = REPO_ROOT / "app" / "workers" / "tasks" / "honeypot_redirect_tasks.py"
-FLOW_TASKS = REPO_ROOT / "app" / "workers" / "tasks" / "flow_tasks.py"
+FLOW_TASKS = REPO_ROOT / "app" / "workers" / "tasks" / "flows" / "honeypot.py"
 
 
 # ---------------------------------------------------------------------------
@@ -281,10 +281,10 @@ def test_three_touch_tasks_still_registered():
             f"— gating must not delete the tasks."
         )
 
-    # Initial sweep lives in flow_tasks.py.
+    # Initial sweep lives in the honeypot flow module.
     flow_src = FLOW_TASKS.read_text(encoding="utf-8")
     assert "flow.honeypot_redirect_sweep" in flow_src, (
-        "flow.honeypot_redirect_sweep must still be registered in flow_tasks.py"
+        "flow.honeypot_redirect_sweep must remain registered via the facade"
     )
 
 

@@ -226,7 +226,18 @@ app.conf.update(
     broker_pool_limit=10,
     # Auto-discover tasks in these modules
     imports=[
-        "app.workers.tasks.flow_tasks",
+        "app.workers.tasks.flows.reports",
+        "app.workers.tasks.flows.diagnostics",
+        "app.workers.tasks.flows.media",
+        "app.workers.tasks.flows.findings",
+        "app.workers.tasks.flows.broadcast",
+        "app.workers.tasks.flows.health",
+        "app.workers.tasks.flows.webhooks",
+        "app.workers.tasks.flows.entities",
+        "app.workers.tasks.flows.scrape",
+        "app.workers.tasks.flows.honeypot",
+        "app.workers.tasks.flows.help_text",
+        "app.workers.tasks.flow_tasks",  # stable import facade for existing callers
         "app.workers.tasks.scanner_tasks",
         "app.workers.tasks.audit_tasks",
         "app.workers.tasks.import_tasks",   # CSV import pipeline
