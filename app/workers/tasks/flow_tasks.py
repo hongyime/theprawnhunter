@@ -1282,25 +1282,37 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
     else:
         topic_name = f"Cred-{credential_id[:8]}"
 
-    thread_id = meta.get("topic_id")
-    if not thread_id:
-        try:
-            thread_id = await broadcaster.ensure_topic(group_id, topic_name)
-            meta["topic_id"] = thread_id
+    saved_topic_id = meta.get("topic_id")
+    try:
+        thread_id = await broadcaster.ensure_topic(
+            group_id,
+            topic_name,
+            preferred_topic_id=saved_topic_id,
+        )
+        if str(saved_topic_id or "") != str(thread_id):
+            current = await async_execute(
+                db.table("discovered_credentials")
+                .select("meta")
+                .eq("id", credential_id)
+                .limit(1)
+            )
+            current_meta = (current.data or [{}])[0].get("meta") or meta
+            updated_meta = dict(current_meta)
+            updated_meta["topic_id"] = thread_id
             await async_execute(
                 db.table("discovered_credentials")
-                .update({"meta": meta})
+                .update({"meta": updated_meta})
                 .eq("id", credential_id)
             )
-        except Exception as topic_err:
-            logger.error(f"[HoneypotBroadcast] Could not ensure topic: {topic_err}")
-            await async_execute(
-                db.table("exfiltrated_messages")
-                .update({"broadcast_claimed_at": None})
-                .eq("id", msg["id"])
-                .eq("broadcast_claimed_at", claim_time)
-            )
-            return {"status": "topic_failed", "error": str(topic_err)}
+    except Exception as topic_err:
+        logger.error(f"[HoneypotBroadcast] Could not ensure topic: {topic_err}")
+        await async_execute(
+            db.table("exfiltrated_messages")
+            .update({"broadcast_claimed_at": None})
+            .eq("id", msg["id"])
+            .eq("broadcast_claimed_at", claim_time)
+        )
+        return {"status": "topic_failed", "error": str(topic_err)}
 
     if not await _is_broadcast_claim_valid(msg["id"], claim_time, lease_minutes=5):
         logger.warning(f"[HoneypotBroadcast] Fenced out immediately pre-send for {msg['id']}")

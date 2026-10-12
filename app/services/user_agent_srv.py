@@ -850,12 +850,22 @@ class UserAgentService:
     async def find_topic_id(self, group_id: int | str, topic_name: str) -> int | None:
         async with self.lock:
             if not await self.start():
-                return None
+                raise RuntimeError("No usable Telegram user session is available to resolve forum topics.")
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
-                from telethon.tl.functions.channels import GetForumTopicsRequest
-                res = await self.client(GetForumTopicsRequest(channel=entity, q=topic_name, offset_date=0, offset_id=0, offset_topic=0, limit=10))
+                from telethon.tl.functions.messages import GetForumTopicsRequest
+
+                res = await self.client(
+                    GetForumTopicsRequest(
+                        peer=entity,
+                        q=topic_name,
+                        offset_date=0,
+                        offset_id=0,
+                        offset_topic=0,
+                        limit=10,
+                    )
+                )
                 if res.topics:
                     for topic in res.topics:
                         if topic.title == topic_name:
@@ -864,7 +874,31 @@ class UserAgentService:
                 return None
             except Exception as e:
                 logger.warning(f"    ⚠️ [UserAgent] Find topic failed: {e}")
+                raise
+            finally:
+                await self._disconnect()
+
+    async def get_topic_title(self, group_id: int | str, topic_id: int | str) -> str | None:
+        """Return a forum topic's title, or ``None`` when the topic is absent."""
+        async with self.lock:
+            if not await self.start():
+                raise RuntimeError("No usable Telegram user session is available to inspect forum topics.")
+            try:
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
+                entity = await self.client.get_entity(target)
+                from telethon.tl.functions.messages import GetForumTopicsByIDRequest
+
+                topic_id_int = int(topic_id)
+                result = await self.client(
+                    GetForumTopicsByIDRequest(peer=entity, topics=[topic_id_int])
+                )
+                for topic in getattr(result, "topics", []) or []:
+                    if int(getattr(topic, "id", -1)) == topic_id_int:
+                        return getattr(topic, "title", None)
                 return None
+            except Exception as e:
+                logger.warning(f"    ⚠️ [UserAgent] Topic lookup failed for {topic_id}: {e}")
+                raise
             finally:
                 await self._disconnect()
 

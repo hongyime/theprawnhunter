@@ -584,17 +584,40 @@ class BroadcasterService:
             logger.warning(f"[Broadcaster] unpin_message failed msg_id={message_id}: {e}")
             return False
 
-    async def ensure_topic(self, group_id: int | str, topic_name: str) -> int:
-        """Ensures a forum topic exists. Retries once before raising."""
-        try:
-            existing_id = await user_agent.find_topic_id(group_id, topic_name)
-            if existing_id:
-                return existing_id
-        except Exception as _swallowed:
-            logger.debug(f"[suppressed] {_swallowed}")
-
+    async def ensure_topic(
+        self,
+        group_id: int | str,
+        topic_name: str,
+        *,
+        preferred_topic_id: int | str | None = None,
+    ) -> int:
+        """Resolve an existing topic by verified ID or exact title, creating only if absent."""
         if topic_name in ["General", "general", "main"]:
             return 1
+
+        if preferred_topic_id is not None:
+            try:
+                preferred_id = int(preferred_topic_id)
+            except (TypeError, ValueError):
+                preferred_id = None
+            if preferred_id:
+                try:
+                    preferred_title = await user_agent.get_topic_title(group_id, preferred_id)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Could not verify saved topic {preferred_id} for '{topic_name}': {exc}"
+                    ) from exc
+                if preferred_title == topic_name:
+                    return preferred_id
+
+        try:
+            existing_id = await user_agent.find_topic_id(group_id, topic_name)
+        except Exception as exc:
+            # Do not create a duplicate topic when Telegram's current topic list
+            # could not be read; retry once topic resolution is available.
+            raise RuntimeError(f"Could not resolve existing topic '{topic_name}': {exc}") from exc
+        if existing_id:
+            return existing_id
 
         bot = self._get_bot_instance(self.bot_tokens[0])
         last_err = None

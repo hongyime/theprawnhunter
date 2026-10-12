@@ -82,9 +82,9 @@ class TestOnDemandDisconnect:
         svc.client = client
 
         with patch.object(svc, "start", new_callable=AsyncMock, return_value=True):
-            result = await svc.find_topic_id(-100123, "some-topic")
+            with pytest.raises(Exception, match="resolve failed"):
+                await svc.find_topic_id(-100123, "some-topic")
 
-        assert result is None
         client.disconnect.assert_awaited()
 
     @pytest.mark.asyncio
