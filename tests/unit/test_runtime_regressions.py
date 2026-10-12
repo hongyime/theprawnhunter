@@ -185,7 +185,15 @@ def test_backfill_scoring_does_not_update_top_level_confidence_score():
 
 
 def test_retry_cold_does_not_require_top_level_retry_reason_column():
-    path = Path(__file__).parents[2] / "app" / "workers" / "tasks" / "scanner_tasks.py"
+    path = (
+        Path(__file__).parents[2]
+        / "app"
+        / "workers"
+        / "tasks"
+        / "scanners"
+        / "providers"
+        / "cold.py"
+    )
     source = path.read_text(encoding="utf-8")
     assert '.select("id, retry_reason")' not in source
     assert '.select("id, meta")' in source

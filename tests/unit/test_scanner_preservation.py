@@ -17,13 +17,17 @@ from hypothesis import settings as h_settings
 from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
-# Source parsing helpers (same approach as test_scanner_query_coverage_bug.py)
+# Source parsing helpers for the extracted scanner task providers.
 # We parse the source file directly to avoid importing the full Celery/Redis/DB stack.
 # ---------------------------------------------------------------------------
 
-_SCANNER_TASKS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "app", "workers", "tasks", "scanner_tasks.py"
-)
+_SCANNER_TASK_PATHS = [
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "app", "workers", "tasks", "scanners",
+        "providers", provider
+    )
+    for provider in ("shodan.py", "fofa.py", "netlas.py")
+]
 _QUERIES_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "app", "workers", "tasks", "_scanner", "queries.py"
 )
@@ -149,9 +153,10 @@ def _get_netlas_query_list(src: str, query: str) -> list:
 # Load source once
 # ---------------------------------------------------------------------------
 
-# Concatenate scanner_tasks.py + _scanner/queries.py so extraction helpers
-# find constants regardless of which file holds them after the monolith split.
-_scanner_src = _read_source(_SCANNER_TASKS_PATH) + "\n" + _read_source(_QUERIES_PATH)
+# Concatenate the relevant provider tasks and shared query constants so the
+# extraction helpers cover the split source layout.
+_scanner_src = "\n".join(_read_source(path) for path in _SCANNER_TASK_PATHS)
+_scanner_src += "\n" + _read_source(_QUERIES_PATH)
 _c2_queries = _extract_c2_queries(_scanner_src)
 _netlas_queries = _extract_netlas_queries(_scanner_src)
 _fofa_queries = _extract_fofa_queries(_scanner_src)

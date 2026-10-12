@@ -15,17 +15,20 @@ import os
 import re
 
 # ---------------------------------------------------------------------------
-# Helpers to extract the inline query lists from scanner_tasks without
+# Helpers to extract the scanner query lists from provider task modules without
 # importing the full Celery/Redis/DB stack.
 # ---------------------------------------------------------------------------
 
 # We parse the source file directly so we don't need a running environment.
-# Query constants were extracted from scanner_tasks.py into _scanner/queries.py
-# during the monolith split; we concatenate both sources so extraction helpers
-# see the same content regardless of which file holds the constants.
-_SCANNER_TASKS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "app", "workers", "tasks", "scanner_tasks.py"
-)
+# Query constants live in _scanner/queries.py; concatenate those with provider
+# task sources so extraction helpers cover the split source layout.
+_SCANNER_TASK_PATHS = [
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "app", "workers", "tasks", "scanners",
+        "providers", provider
+    )
+    for provider in ("shodan.py", "fofa.py", "netlas.py")
+]
 _QUERIES_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "app", "workers", "tasks", "_scanner", "queries.py"
 )
@@ -178,9 +181,10 @@ def _extract_base_query_template(js_src: str) -> str:
 # Load sources once
 # ---------------------------------------------------------------------------
 
-# Concatenate scanner_tasks.py + _scanner/queries.py so extraction helpers
-# find constants regardless of which file holds them after the monolith split.
-_scanner_src = _read_source(_SCANNER_TASKS_PATH) + "\n" + _read_source(_QUERIES_PATH)
+# Concatenate provider task sources and shared query constants so extraction
+# helpers find constants regardless of which file holds them after the split.
+_scanner_src = "\n".join(_read_source(path) for path in _SCANNER_TASK_PATHS)
+_scanner_src += "\n" + _read_source(_QUERIES_PATH)
 _js_src = _read_source(_BACKGROUND_JS_PATH)
 
 
