@@ -270,11 +270,19 @@ class HoneypotRedirectStrategies:
         redirect_bot: str,
         error: str | None = None,
         proactive: bool = False,
-    ) -> None:
-        """Update honeypot_updates record with redirect outcome."""
+        claim_token: str | None = None,
+    ) -> bool:
+        """Update honeypot_updates record with redirect outcome, strictly fenced by claim_token."""
+        if not claim_token:
+            logger.warning(
+                f"[HoneypotRedirect] update_redirect_record rejected: missing claim_token for {update_id}"
+            )
+            return False
+
         now = datetime.now(UTC).isoformat()
         payload = {
             "redirected_at": now,
+            "redirect_claimed_at": None,
             "redirected_bot": redirect_bot,
             "sender_user_id": user_id,
         }
@@ -283,9 +291,15 @@ class HoneypotRedirectStrategies:
         if proactive:
             payload["proactive_sent_at"] = now
 
-        with contextlib.suppress(Exception):
-            await async_execute(
+        try:
+            query = (
                 db.table("honeypot_updates")
                 .update(payload)
                 .eq("id", update_id)
+                .eq("redirect_claimed_at", claim_token)
             )
+            res = await async_execute(query)
+            return bool(res.data)
+        except Exception as e:
+            logger.warning(f"[HoneypotRedirect] update_redirect_record error: {e}")
+            return False

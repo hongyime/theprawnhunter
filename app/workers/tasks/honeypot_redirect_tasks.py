@@ -3,13 +3,14 @@ Multi-touch redirect reminder tasks (Level 2).
 Sends up to 3 reminder messages with increasing urgency, 24 hours apart.
 Uses TTL-based Redis keys to track which message number each user has received.
 """
+import contextlib
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import settings
 from app.core.database import db
 from app.core.logger import get_logger
 from app.workers.celery_app import app, get_worker_loop
-from app.workers.tasks.flow_tasks import async_execute
+from app.workers.tasks.flow_tasks import async_execute, _safe_release_redis_reservation
 
 logger = get_logger(__name__)
 from app.workers.tasks.honeypot_redirect_strategies import (  # noqa: E402 — intentional deferred import
@@ -41,6 +42,7 @@ async def _redirect_touch2_logic() -> dict:
 
     # Find updates where redirect_1_sent_at is set but redirect_2_sent_at is null
     # AND it's been at least 24 hours since redirect_1
+    stale_claim_cutoff = (datetime.now(UTC) - timedelta(minutes=15)).isoformat()
     try:
         response = await async_execute(
             db.table("honeypot_updates")
@@ -49,6 +51,7 @@ async def _redirect_touch2_logic() -> dict:
             .is_("redirect_2_sent_at", "null")
             .not_.is_("sender_user_id", "null")
             .lt("redirect_1_sent_at", (datetime.now(UTC) - timedelta(hours=24)).isoformat())
+            .or_(f"redirect_claimed_at.is.null,redirect_claimed_at.lt.{stale_claim_cutoff}")
             .limit(100)
         )
 
@@ -57,38 +60,112 @@ async def _redirect_touch2_logic() -> dict:
             return {"status": "ok", "sent": 0, "reason": "no_candidates"}
 
         sent = 0
+        from app.core.redis_srv import redis_srv
+
         for row in candidates:
             credential_id = row["credential_id"]
             user_id = row["sender_user_id"]
             update_id = row["id"]
 
-            # Check Redis dedup
-            if HoneypotRedirectStrategies.check_multi_touch_sent(credential_id, user_id, 2):
+            now_claim = datetime.now(UTC).isoformat()
+            claim_token = now_claim
+            dedup_key = f"redirect:touch2:{credential_id}:{user_id}"
+            owner_token = f"claiming:{update_id}:{claim_token}"
+
+            # 1. Atomic Redis reservation (SET NX 300s)
+            try:
+                reserved = bool(redis_srv.client.set(dedup_key, owner_token, nx=True, ex=300))
+                if not reserved:
+                    continue
+            except Exception as r_err:
+                logger.debug(f"[Touch2] Redis reservation error: {r_err}")
                 continue
 
-            # Get bot token
+            # 2. Atomic Database claim with stale lease recovery
+            try:
+                claim_res = await async_execute(
+                    db.table("honeypot_updates")
+                    .update({"redirect_claimed_at": claim_token})
+                    .eq("id", update_id)
+                    .is_("redirect_2_sent_at", "null")
+                    .or_(f"redirect_claimed_at.is.null,redirect_claimed_at.lt.{stale_claim_cutoff}")
+                )
+                if not claim_res.data:
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                    continue
+            except Exception as db_claim_err:
+                logger.warning(f"[Touch2] DB claim error: {db_claim_err}")
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                continue
+
+            # 3. Get bot token
             bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
             if not bot_token:
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("honeypot_updates")
+                        .update({"redirect_claimed_at": None})
+                        .eq("id", update_id)
+                        .eq("redirect_claimed_at", claim_token)
+                    )
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
                 continue
 
-            # Send second touch message
+            # 4. Immediate pre-send lease fence check directly before outbound Bot API call
+            stale_lease_cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+            try:
+                fence_check = await async_execute(
+                    db.table("honeypot_updates")
+                    .select("id")
+                    .eq("id", update_id)
+                    .eq("redirect_claimed_at", claim_token)
+                    .is_("redirect_2_sent_at", "null")
+                    .gte("redirect_claimed_at", stale_lease_cutoff)
+                    .limit(1)
+                )
+                if not fence_check.data:
+                    logger.warning(f"🔀 [Touch2] Fenced out immediately pre-send for {update_id}")
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                    continue
+            except Exception as fence_exc:
+                logger.warning(f"[Touch2] fence check error: {fence_exc}")
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                continue
+
+            # 5. Send second touch message
             sent_ok = await HoneypotRedirectStrategies.send_multi_touch_message(
                 bot_token, user_id, 2, redirect_url, redirect_bot
             )
 
             if sent_ok:
-                # Update database
                 now = datetime.now(UTC).isoformat()
-                await async_execute(
+                upd = await async_execute(
                     db.table("honeypot_updates")
-                    .update({"redirect_2_sent_at": now})
+                    .update({
+                        "redirect_2_sent_at": now,
+                        "redirect_attempt": 2,
+                        "redirect_claimed_at": None,
+                    })
                     .eq("id", update_id)
+                    .eq("redirect_claimed_at", claim_token)
                 )
-
-                # Mark in Redis with 24h TTL
-                HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 2)
-                sent += 1
-                logger.info(f"🔀 [Touch2] sent cred:{credential_id[:8]}...")
+                if upd.data:
+                    # Mark in Redis with 24h TTL
+                    HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 2)
+                    sent += 1
+                    logger.info(f"🔀 [Touch2] sent cred:{credential_id[:8]}...")
+                else:
+                    logger.warning(f"🔀 [Touch2] Fenced out post-send for {update_id}")
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+            else:
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("honeypot_updates")
+                        .update({"redirect_claimed_at": None})
+                        .eq("id", update_id)
+                        .eq("redirect_claimed_at", claim_token)
+                    )
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
 
         return {"status": "ok", "sent": sent, "candidates": len(candidates)}
 
@@ -116,6 +193,7 @@ async def _redirect_touch3_logic() -> dict:
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
 
+    stale_claim_cutoff = (datetime.now(UTC) - timedelta(minutes=15)).isoformat()
     try:
         response = await async_execute(
             db.table("honeypot_updates")
@@ -124,6 +202,7 @@ async def _redirect_touch3_logic() -> dict:
             .is_("redirect_3_sent_at", "null")
             .not_.is_("sender_user_id", "null")
             .lt("redirect_2_sent_at", (datetime.now(UTC) - timedelta(hours=24)).isoformat())
+            .or_(f"redirect_claimed_at.is.null,redirect_claimed_at.lt.{stale_claim_cutoff}")
             .limit(100)
         )
 
@@ -132,33 +211,111 @@ async def _redirect_touch3_logic() -> dict:
             return {"status": "ok", "sent": 0, "reason": "no_candidates"}
 
         sent = 0
+        from app.core.redis_srv import redis_srv
+
         for row in candidates:
             credential_id = row["credential_id"]
             user_id = row["sender_user_id"]
             update_id = row["id"]
 
-            if HoneypotRedirectStrategies.check_multi_touch_sent(credential_id, user_id, 3):
+            now_claim = datetime.now(UTC).isoformat()
+            claim_token = now_claim
+            dedup_key = f"redirect:touch3:{credential_id}:{user_id}"
+            owner_token = f"claiming:{update_id}:{claim_token}"
+
+            # 1. Atomic Redis reservation (SET NX 300s)
+            try:
+                reserved = bool(redis_srv.client.set(dedup_key, owner_token, nx=True, ex=300))
+                if not reserved:
+                    continue
+            except Exception as r_err:
+                logger.debug(f"[Touch3] Redis reservation error: {r_err}")
                 continue
 
+            # 2. Atomic Database claim with stale lease recovery
+            try:
+                claim_res = await async_execute(
+                    db.table("honeypot_updates")
+                    .update({"redirect_claimed_at": claim_token})
+                    .eq("id", update_id)
+                    .is_("redirect_3_sent_at", "null")
+                    .or_(f"redirect_claimed_at.is.null,redirect_claimed_at.lt.{stale_claim_cutoff}")
+                )
+                if not claim_res.data:
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                    continue
+            except Exception as db_claim_err:
+                logger.warning(f"[Touch3] DB claim error: {db_claim_err}")
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                continue
+
+            # 3. Get bot token
             bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
             if not bot_token:
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("honeypot_updates")
+                        .update({"redirect_claimed_at": None})
+                        .eq("id", update_id)
+                        .eq("redirect_claimed_at", claim_token)
+                    )
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
                 continue
 
+            # 4. Immediate pre-send lease fence check directly before outbound Bot API call
+            stale_lease_cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+            try:
+                fence_check = await async_execute(
+                    db.table("honeypot_updates")
+                    .select("id")
+                    .eq("id", update_id)
+                    .eq("redirect_claimed_at", claim_token)
+                    .is_("redirect_3_sent_at", "null")
+                    .gte("redirect_claimed_at", stale_lease_cutoff)
+                    .limit(1)
+                )
+                if not fence_check.data:
+                    logger.warning(f"🔀 [Touch3] Fenced out immediately pre-send for {update_id}")
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                    continue
+            except Exception as fence_exc:
+                logger.warning(f"[Touch3] fence check error: {fence_exc}")
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                continue
+
+            # 5. Send third touch message
             sent_ok = await HoneypotRedirectStrategies.send_multi_touch_message(
                 bot_token, user_id, 3, redirect_url, redirect_bot
             )
 
             if sent_ok:
                 now = datetime.now(UTC).isoformat()
-                await async_execute(
+                upd = await async_execute(
                     db.table("honeypot_updates")
-                    .update({"redirect_3_sent_at": now})
+                    .update({
+                        "redirect_3_sent_at": now,
+                        "redirect_attempt": 3,
+                        "redirect_claimed_at": None,
+                    })
                     .eq("id", update_id)
+                    .eq("redirect_claimed_at", claim_token)
                 )
-
-                HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 3)
-                sent += 1
-                logger.info(f"🔀 [Touch3] sent cred:{credential_id[:8]}...")
+                if upd.data:
+                    HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 3)
+                    sent += 1
+                    logger.info(f"🔀 [Touch3] sent cred:{credential_id[:8]}...")
+                else:
+                    logger.warning(f"🔀 [Touch3] Fenced out post-send for {update_id}")
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+            else:
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("honeypot_updates")
+                        .update({"redirect_claimed_at": None})
+                        .eq("id", update_id)
+                        .eq("redirect_claimed_at", claim_token)
+                    )
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
 
         return {"status": "ok", "sent": sent, "candidates": len(candidates)}
 
@@ -187,8 +344,7 @@ async def _proactive_outreach_logic() -> dict:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
 
-    # Find users who triggered honeypot BUT were not redirected yet
-    # (initial redirect didn't happen - they just saw the honeypot)
+    stale_claim_cutoff = (datetime.now(UTC) - timedelta(minutes=15)).isoformat()
     try:
         response = await async_execute(
             db.table("honeypot_updates")
@@ -196,6 +352,7 @@ async def _proactive_outreach_logic() -> dict:
             .is_("redirected_at", "null")
             .is_("proactive_sent_at", "null")
             .not_.is_("sender_user_id", "null")
+            .or_(f"redirect_claimed_at.is.null,redirect_claimed_at.lt.{stale_claim_cutoff}")
             .limit(100)
         )
 
@@ -205,46 +362,115 @@ async def _proactive_outreach_logic() -> dict:
             return {"status": "ok", "sent": 0, "reason": "no_candidates"}
 
         sent = 0
+        from app.core.redis_srv import redis_srv
+
         for row in candidates:
             credential_id = row["credential_id"]
             user_id = row["sender_user_id"]
             update_id = row["id"]
 
-            # Check if already sent (Redis dedup)
-            key = f"redirect:proactive:{credential_id}:{user_id}"
-            try:
-                from app.core.redis_srv import redis_srv
-                if redis_srv.client.exists(key):
-                    continue
-            except Exception as _swallowed:
-                logger.debug(f"[suppressed] {_swallowed}")
+            now_claim = datetime.now(UTC).isoformat()
+            claim_token = now_claim
+            dedup_key = f"redirect:proactive:{credential_id}:{user_id}"
+            owner_token = f"claiming:{update_id}:{claim_token}"
 
-            bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
-            if not bot_token:
+            # 1. Atomic Redis reservation (SET NX 300s)
+            try:
+                reserved = bool(redis_srv.client.set(dedup_key, owner_token, nx=True, ex=300))
+                if not reserved:
+                    continue
+            except Exception as r_err:
+                logger.debug(f"[Proactive] Redis reservation error: {r_err}")
                 continue
 
-            # Send proactive inline request
+            # 2. Atomic Database claim with stale lease recovery
+            try:
+                claim_res = await async_execute(
+                    db.table("honeypot_updates")
+                    .update({"redirect_claimed_at": claim_token})
+                    .eq("id", update_id)
+                    .is_("proactive_sent_at", "null")
+                    .or_(f"redirect_claimed_at.is.null,redirect_claimed_at.lt.{stale_claim_cutoff}")
+                )
+                if not claim_res.data:
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                    continue
+            except Exception as db_claim_err:
+                logger.warning(f"[Proactive] DB claim error: {db_claim_err}")
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                continue
+
+            # 3. Get bot token
+            bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
+            if not bot_token:
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("honeypot_updates")
+                        .update({"redirect_claimed_at": None})
+                        .eq("id", update_id)
+                        .eq("redirect_claimed_at", claim_token)
+                    )
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                continue
+
+            # 4. Immediate pre-send lease fence check directly before outbound Bot API call
+            stale_lease_cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+            try:
+                fence_check = await async_execute(
+                    db.table("honeypot_updates")
+                    .select("id")
+                    .eq("id", update_id)
+                    .eq("redirect_claimed_at", claim_token)
+                    .is_("proactive_sent_at", "null")
+                    .gte("redirect_claimed_at", stale_lease_cutoff)
+                    .limit(1)
+                )
+                if not fence_check.data:
+                    logger.warning(f"🔀 [Proactive] Fenced out immediately pre-send for {update_id}")
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                    continue
+            except Exception as fence_exc:
+                logger.warning(f"[Proactive] fence check error: {fence_exc}")
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+                continue
+
+            # 5. Send proactive inline request
             sent_ok = await HoneypotRedirectStrategies.send_proactive_inline_request(
                 bot_token, user_id, redirect_bot
             )
 
             if sent_ok:
                 now = datetime.now(UTC).isoformat()
-                await async_execute(
+                upd = await async_execute(
                     db.table("honeypot_updates")
-                    .update({"proactive_sent_at": now})
+                    .update({
+                        "proactive_sent_at": now,
+                        "redirect_claimed_at": None,
+                    })
                     .eq("id", update_id)
+                    .eq("redirect_claimed_at", claim_token)
                 )
+                if upd.data:
+                    # Set Redis dedup key (24h TTL)
+                    try:
+                        redis_srv.client.setex(dedup_key, 86400, "1")
+                    except Exception as _swallowed:
+                        logger.debug(f"[suppressed] {_swallowed}")
 
-                # Set Redis dedup key (24h TTL)
-                try:
-                    from app.core.redis_srv import redis_srv
-                    redis_srv.client.setex(key, 86400, "1")
-                except Exception as _swallowed:
-                    logger.debug(f"[suppressed] {_swallowed}")
-
-                sent += 1
-                logger.info(f"🔗 [Proactive] sent cred:{credential_id[:8]}...")
+                    sent += 1
+                    logger.info(f"🔗 [Proactive] sent cred:{credential_id[:8]}...")
+                else:
+                    logger.warning(f"🔀 [Proactive] Fenced out post-send for {update_id}")
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+            else:
+                with contextlib.suppress(Exception):
+                    await async_execute(
+                        db.table("honeypot_updates")
+                        .update({"redirect_claimed_at": None})
+                        .eq("id", update_id)
+                        .eq("redirect_claimed_at", claim_token)
+                    )
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
 
         return {"status": "ok", "sent": sent, "candidates": len(candidates)}
 

