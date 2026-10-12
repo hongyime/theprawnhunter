@@ -273,7 +273,11 @@ class WebhookStateService:
                     name=strategy,
                     success=True,
                     reason=ScrapeReason.NO_NEW_MESSAGES,
-                    evidence={**evidence, "honeypot_repointed": True},
+                    evidence={
+                        **evidence,
+                        "honeypot_repointed": True,
+                        "honeypot_active": True,
+                    },
                 ),
             )
 
@@ -351,7 +355,7 @@ class WebhookStateService:
 
             # Preserve the existing post-delete registration path using the
             # same fully gated request and retry behavior.
-            await self._set_honeypot_webhook(
+            honeypot_active = await self._set_honeypot_webhook(
                 bot_token,
                 client,
                 credential_id=credential_id,
@@ -368,6 +372,7 @@ class WebhookStateService:
                         **evidence,
                         "delete_policy": "allow",
                         "deleteWebhook_status": delete_response.status_code,
+                        "honeypot_active": honeypot_active,
                     },
                 ),
             )
@@ -456,6 +461,20 @@ class BotApiUpdateReader:
 
         evidence: dict[str, Any] = {"getUpdates_status": response.status_code}
         if response.status_code == 409:
+            if webhook.attempt.evidence.get("honeypot_active"):
+                logger.info(
+                    f"🍯 [Honeypot] getUpdates unavailable while webhook is active for "
+                    f"{(self._current_credential_id or '')[:8]}... — continuing scraper flow"
+                )
+                return StrategyReadOutcome(
+                    attempt=StrategyAttempt(
+                        name=strategy,
+                        success=True,
+                        reason=ScrapeReason.NO_NEW_MESSAGES,
+                        evidence={**evidence, "honeypot_active": True},
+                    ),
+                    terminal=False,
+                )
             return StrategyReadOutcome(
                 attempt=StrategyAttempt(
                     name=strategy,

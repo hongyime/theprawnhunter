@@ -60,7 +60,7 @@ async def test_approved_foreign_webhook_is_repointed_and_reader_continues(
     client = _FakeClient([
         _Resp(payload={"ok": True, "result": {"url": "https://scammer.example/hook"}}),
         _Resp(payload={"ok": True, "result": True}),
-        _Resp(payload={"ok": True, "result": []}),
+        _Resp(status_code=409, payload={"ok": False}, text="Conflict: webhook"),
     ])
 
     class _FakeAsyncClient:
@@ -85,6 +85,7 @@ async def test_approved_foreign_webhook_is_repointed_and_reader_continues(
 
     assert outcome.terminal is False
     assert outcome.attempt.success is True
+    assert outcome.attempt.reason == ScrapeReason.NO_NEW_MESSAGES
     assert [call[0][0].rsplit("/", 1)[-1] for call in client.get_calls] == [
         "getWebhookInfo",
         "getUpdates",
