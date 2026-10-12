@@ -73,6 +73,71 @@ class WebhookStateService:
         self.allow_delete = allow_delete
         self.classifier = classifier or ScrapeResultClassifier()
 
+    async def _set_honeypot_webhook(
+        self,
+        bot_token: str,
+        client: httpx.AsyncClient,
+        *,
+        credential_id: str | None,
+    ) -> bool:
+        """Point an explicitly approved bot at our receiver, if fully configured."""
+        if (
+            not settings.HONEYPOT_MODE
+            or not settings.HONEYPOT_WEBHOOK_URL
+            or not settings.HONEYPOT_SECRET
+            or not credential_id
+        ):
+            return False
+
+        allowlist_raw = (settings.HONEYPOT_ALLOWLIST or "").strip()
+        allowed = False
+        if allowlist_raw:
+            allowed = allowlist_raw.upper() == "AUTO" or credential_id in {
+                credential.strip()
+                for credential in allowlist_raw.split(",")
+                if credential.strip()
+            }
+        if not allowed:
+            return False
+
+        base_url = f"https://api.telegram.org/bot{bot_token}"
+        honeypot_url = f"{settings.HONEYPOT_WEBHOOK_URL.rstrip('/')}/receive/{credential_id}"
+        set_ok = False
+        for attempt in range(3):
+            try:
+                set_resp = await client.post(
+                    f"{base_url}/setWebhook",
+                    data={
+                        "url": honeypot_url,
+                        "secret_token": settings.HONEYPOT_SECRET,
+                        "allowed_updates": '["message","callback_query","edited_message","channel_post","inline_query"]',
+                        "drop_pending_updates": "false",
+                    },
+                )
+                set_ok = (
+                    set_resp.status_code == 200
+                    and (_response_json(set_resp) or {}).get("ok") is True
+                )
+                if set_ok:
+                    break
+                if set_resp.status_code == 429:
+                    await asyncio.sleep(2 ** (attempt + 1))
+                else:
+                    break
+            except Exception:
+                await asyncio.sleep(2**attempt)
+
+        if set_ok:
+            logger.info(
+                f"🍯 [Honeypot] setWebhook succeeded for "
+                f"{credential_id[:8]}... → observing (foreign webhook re-taken over)"
+            )
+        else:
+            logger.warning(
+                f"🍯 [Honeypot] setWebhook FAILED after 3 attempts for {credential_id[:8]}..."
+            )
+        return set_ok
+
     async def prepare_polling(
         self,
         bot_token: str,
@@ -172,9 +237,8 @@ class WebhookStateService:
                 ),
             )
 
-        # Detect third-party re-takeover of OUR honeypot webhook.
-        # If the found webhook_url is NOT ours but we're in honeypot mode
-        # with this credential allowlisted, someone overwrote our registration.
+        # Log foreign URLs while honeypot is configured. Repointing itself is
+        # separately gated below by the credential allowlist.
         try:
             from app.core.config import settings as _hp_settings
             our_receiver = (_hp_settings.HONEYPOT_WEBHOOK_URL or "").rstrip("/")
@@ -187,12 +251,31 @@ class WebhookStateService:
             ):
                 # Third party re-registered over us — log it as a counter-attack
                 logger.warning(
-                    f"🚨 [Webhook] COUNTER-TAKEOVER detected — third party re-registered "
-                    f"webhook ({webhook_url}) over our honeypot for cred {credential_id[:8]}... "
-                    f"Will delete + re-register ours."
+                    f"🚨 [Webhook] foreign webhook detected — "
+                    f"({webhook_url}) for cred {credential_id[:8]}..."
                 )
         except Exception as _swallowed:
             logger.debug(f"[suppressed] {_swallowed}")
+
+        # A foreign webhook blocks getUpdates by design. For approved honeypot
+        # credentials, overwrite it directly and then continue the usual scrape
+        # flow; setWebhook replaces the prior delivery URL without dropping its
+        # queued updates. Unapproved credentials retain the existing policy.
+        if await self._set_honeypot_webhook(
+            bot_token,
+            client,
+            credential_id=credential_id,
+        ):
+            return WebhookDecision(
+                can_poll=True,
+                webhook_url=webhook_url,
+                attempt=StrategyAttempt(
+                    name=strategy,
+                    success=True,
+                    reason=ScrapeReason.NO_NEW_MESSAGES,
+                    evidence={**evidence, "honeypot_repointed": True},
+                ),
+            )
 
         if not self.allow_delete:
             return WebhookDecision(
@@ -266,77 +349,13 @@ class WebhookStateService:
             except Exception as audit_exc:
                 logger.debug(f"[Webhook] takeover audit skipped: {audit_exc}")
 
-            # Honeypot mode — after successful takeover, optionally register OUR
-            # webhook so we observe what the C2 was expecting. Fully gated on
-            # env vars; only active if credential is in allowlist (or blanket
-            # mode with empty allowlist). Fire-and-forget; failure never
-            # blocks the scrape.
-            try:
-                from app.core.config import settings as _settings
-
-                if (
-                    _settings.HONEYPOT_MODE
-                    and _settings.HONEYPOT_WEBHOOK_URL
-                    and _settings.HONEYPOT_SECRET
-                    and credential_id
-                ):
-                    _hp_allowlist_raw = (_settings.HONEYPOT_ALLOWLIST or "").strip()
-                    _hp_allowed = (
-                        _hp_allowlist_raw.upper() == "AUTO"
-                        or credential_id in {
-                            c.strip()
-                            for c in _hp_allowlist_raw.split(",")
-                            if c.strip()
-                        }
-                    ) if _hp_allowlist_raw else False
-
-                    if _hp_allowed:
-                        honeypot_url = (
-                            f"{_settings.HONEYPOT_WEBHOOK_URL.rstrip('/')}/"
-                            f"receive/{credential_id}"
-                        )
-                        # Retry setWebhook up to 3 times — Telegram can 429 or
-                        # transiently fail. Short exponential backoff.
-                        set_ok = False
-                        for _attempt in range(3):
-                            try:
-                                set_resp = await client.post(
-                                    f"{base_url}/setWebhook",
-                                    data={
-                                        "url": honeypot_url,
-                                        "secret_token": _settings.HONEYPOT_SECRET,
-                                        "allowed_updates": '["message","callback_query","edited_message","channel_post","inline_query"]',
-                                        "drop_pending_updates": "false",
-                                    },
-                                )
-                                set_ok = (
-                                    set_resp.status_code == 200
-                                    and (_response_json(set_resp) or {}).get("ok") is True
-                                )
-                                if set_ok:
-                                    break
-                                # 429 or transient — wait and retry
-                                if set_resp.status_code == 429:
-                                    import asyncio as _aio
-                                    await _aio.sleep(2 ** (_attempt + 1))
-                                else:
-                                    break  # non-retryable HTTP error
-                            except Exception:
-                                import asyncio as _aio
-                                await _aio.sleep(2 ** _attempt)
-
-                        if set_ok:
-                            logger.info(
-                                f"🍯 [Honeypot] setWebhook succeeded for "
-                                f"{credential_id[:8]}... → observing"
-                            )
-                        else:
-                            logger.warning(
-                                f"🍯 [Honeypot] setWebhook FAILED after 3 attempts "
-                                f"for {credential_id[:8]}..."
-                            )
-            except Exception as hp_exc:
-                logger.debug(f"[Honeypot] setWebhook dispatch skipped: {hp_exc}")
+            # Preserve the existing post-delete registration path using the
+            # same fully gated request and retry behavior.
+            await self._set_honeypot_webhook(
+                bot_token,
+                client,
+                credential_id=credential_id,
+            )
 
             return WebhookDecision(
                 can_poll=True,
