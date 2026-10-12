@@ -13,6 +13,7 @@ from telegram.request import HTTPXRequest
 from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
+from app.infrastructure.database import execute_async as _execute_async_shared
 from app.services.user_agent_srv import user_agent
 
 logger = logging.getLogger("broadcaster")
@@ -89,7 +90,7 @@ def _classify_broadcast_exception(exc: BaseException) -> BroadcastSendError:
 
 async def _async_execute(query_builder):
     """Run synchronous PostgREST calls without blocking the event loop."""
-    return await asyncio.to_thread(query_builder.execute)
+    return await _execute_async_shared(query_builder)
 
 
 def _username_from_meta(meta: object) -> str | None:

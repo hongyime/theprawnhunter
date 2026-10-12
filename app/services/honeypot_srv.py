@@ -13,33 +13,17 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import db
 from app.core.logger import get_logger
+from app.domain.media import bot_api_media_info
 
 logger = get_logger(__name__)
 
 
 def _extract_media_info(target: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Extract media type and file metadata from a Telegram message dict."""
-    file_meta: dict[str, Any] = {"source": "bot_api"}
-
-    if isinstance(target.get("photo"), list) and target["photo"]:
-        photo = target["photo"][-1] or {}
-        if isinstance(photo, dict):
-            for k in ("file_id", "file_unique_id", "file_size", "width", "height"):
-                if photo.get(k) is not None:
-                    file_meta[k] = photo[k]
-        return "photo", file_meta
-
-    for key in ("document", "video", "audio", "voice", "video_note", "sticker"):
-        media = target.get(key)
-        if isinstance(media, dict):
-            for k in ("file_id", "file_unique_id", "file_name", "file_size"):
-                if media.get(k) is not None:
-                    file_meta[k] = media[k]
-            if media.get("mime_type"):
-                file_meta["mime"] = media["mime_type"]
-            return key, file_meta
-
-    return "text", file_meta
+    return bot_api_media_info(
+        target,
+        extra_media_keys=("voice", "video_note", "sticker"),
+    )
 
 
 def _to_int(val: Any) -> int | None:

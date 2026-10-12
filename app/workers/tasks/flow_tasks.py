@@ -16,6 +16,7 @@ from app.core.audit import AuditEvent, AuditLogger
 from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
+from app.infrastructure.database import execute_async as _execute_async_shared
 from app.services.scraper_srv import scraper_service
 from app.workers.celery_app import app
 
@@ -40,7 +41,7 @@ def _is_positive_scraped_message_id(value: Any) -> bool:
 # Helper for async DB execution
 async def async_execute(query_builder):
     """Executes a Supabase query builder synchronously in a background thread."""
-    return await asyncio.to_thread(query_builder.execute)
+    return await _execute_async_shared(query_builder)
 
 
 async def _send_alert(message: str) -> None:

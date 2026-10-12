@@ -24,6 +24,8 @@ from telegram.ext import (
 from telegram.helpers import escape_markdown
 from telegram.request import HTTPXRequest
 
+from app.infrastructure.database import execute_async as _execute_async_shared
+
 # --- Bryan: auto-delete bot messages after 30 seconds ---
 AUTO_DELETE_SECONDS = 30
 
@@ -343,7 +345,7 @@ INDICATOR_TYPES = ("network_domain", "canonical_url", "wallet_address")
 
 
 async def _execute_db(query_builder):
-    return await asyncio.to_thread(query_builder.execute)
+    return await _execute_async_shared(query_builder)
 
 
 async def _telemetry_count(indicator_type: str) -> int:

@@ -7,7 +7,6 @@ the database RPC owns atomic upsert semantics and evidence-count maintenance.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 from collections import defaultdict
@@ -18,6 +17,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app.core.database import db
+from app.infrastructure.database import execute_async
 
 FINDING_TYPES = frozenset(
     {"credential_exposure", "infrastructure_cluster", "cross_bot_pattern"}
@@ -429,7 +429,7 @@ async def persist_candidates(
             "upsert_findings_batch",
             {"p_candidates": [candidate.as_rpc_params() for candidate in batch]},
         )
-        await asyncio.to_thread(query.execute)
+        await execute_async(query)
         for candidate in batch:
             persisted[candidate.finding_type] += 1
     return persisted
@@ -439,7 +439,7 @@ async def produce_recent_findings(
     *, credential_limit: int = 2_000, message_limit: int = 50_000, client: Any = db
 ) -> dict[str, Any]:
     """Build and atomically persist a bounded, rerunnable recent-window backfill."""
-    credential_result = await asyncio.to_thread(
+    credential_query = (
         client.table("discovered_credentials")
         .select(
             "id,status,source,meta,created_at,updated_at,"
@@ -447,16 +447,16 @@ async def produce_recent_findings(
         )
         .order("updated_at", desc=True)
         .limit(max(1, min(credential_limit, 5_000)))
-        .execute
     )
-    message_result = await asyncio.to_thread(
+    message_query = (
         client.table("exfiltrated_messages")
         .select("id,sender_user_id,credential_id,created_at")
         .not_.is_("sender_user_id", "null")
         .order("created_at", desc=True)
         .limit(max(1, min(message_limit, 50_000)))
-        .execute
     )
+    credential_result = await execute_async(credential_query)
+    message_result = await execute_async(message_query)
 
     credential_rows = credential_result.data or []
     message_rows = message_result.data or []

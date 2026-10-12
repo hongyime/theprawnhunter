@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.config import settings
 from app.core.database import db
+from app.infrastructure.database import execute_async
 
 logger = logging.getLogger("finding_alerts")
 
@@ -254,7 +255,7 @@ def render_findings_digest(
 
 
 async def _execute(query: Any) -> Any:
-    return await asyncio.to_thread(query.execute)
+    return await execute_async(query)
 
 
 async def _claim(

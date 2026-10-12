@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import logging
 from typing import Any
@@ -9,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_monitor_key
 from app.core.database import db
 from app.core.security import security
+from app.infrastructure.database import execute_async as _execute_async_shared
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def _looks_like_bot_token(token: str) -> bool:
 
 
 async def _exec(query_builder):
-    return await asyncio.to_thread(query_builder.execute)
+    return await _execute_async_shared(query_builder)
 
 
 class ExtensionCredential(BaseModel):

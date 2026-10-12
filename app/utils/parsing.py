@@ -1,108 +1,14 @@
-"""Implementation of the legacy token, chat-ID, and Telegram message parsers."""
-import re
+"""Telegram message parsing with token and chat-ID compatibility exports."""
 from typing import Any
 
-from app.core.logger import get_logger
-
-logger = get_logger("app.utils.helpers")
-
-# Token validation regex (reused across scanners)
-TOKEN_PATTERN = re.compile(r'(?<![A-Za-z0-9])(?:bot)?(\d{8,15}:[A-Za-z0-9_-]{35})(?![A-Za-z0-9_-])')
-CHAT_ID_PATTERN = re.compile(r'(?:chat_id|chat|target|cid)[=_":\s]+([-\d]+)', re.IGNORECASE)
-
-
-def is_valid_telegram_token(token_str: str) -> bool:
-    """
-    Strict validation to filter out Fernet strings, hashes, and junk.
-    Valid Telegram token: 123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-    Args:
-        token_str: String to validate as Telegram bot token
-
-    Returns:
-        True if valid token format, False otherwise
-    """
-    try:
-        # Explicit Fernet rejection (starts with gAAAA)
-        if token_str.startswith("gAAAA"):
-            return False
-
-        # Must contain exactly one colon
-        if ":" not in token_str or token_str.count(":") != 1:
-            return False
-
-        parts = token_str.split(":", 1)
-        bot_id, secret = parts
-
-        # Bot ID must be 8-15 digits, no leading zeros
-        if not bot_id.isdigit():
-            return False
-        if len(bot_id) < 8 or len(bot_id) > 15:
-            return False
-        if len(bot_id) > 1 and bot_id.startswith("0"):
-            return False
-
-        # Secret must be exactly 35 characters (standardized — matches scanners.py)
-        if len(secret) != 35:
-            return False
-
-        # Secret must only contain allowed chars (base64-ish)
-        allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
-        if not all(c in allowed for c in secret):
-            return False
-
-        # Suspicious: Pure hex (likely hash collision)
-        is_pure_hex = all(c in "0123456789abcdefABCDEF" for c in secret)
-        return not is_pure_hex
-    except Exception as _swallowed:
-        logger.debug(f"[suppressed] {_swallowed}")
-        return False
-
-
-def extract_chat_id(text: str) -> str | None:
-    """
-    Extract chat ID from text using regex pattern.
-
-    Args:
-        text: Text to search for chat ID
-
-    Returns:
-        Chat ID string if found, None otherwise
-    """
-    matches = CHAT_ID_PATTERN.findall(text)
-    return matches[0] if matches else None
-
-
-def extract_tokens_and_chat_ids(text: str) -> list[dict[str, Any]]:
-    """
-    Extract both tokens and associated chat IDs from text.
-
-    Args:
-        text: Text to parse
-
-    Returns:
-        List of dicts with 'token' and 'chat_id' keys
-    """
-    tokens = TOKEN_PATTERN.findall(text)
-    chat_ids = CHAT_ID_PATTERN.findall(text)
-
-    results = []
-
-    # For short text (like URLs), pair tokens with chat IDs
-    if len(text) < 500:
-        cid = chat_ids[0] if chat_ids else None
-        for t in tokens:
-            if is_valid_telegram_token(t):
-                results.append({'token': t, 'chat_id': cid})
-        return results
-
-    # For larger bodies, just grab all valid tokens
-    cid = chat_ids[0] if chat_ids else None
-    for t in set(tokens):  # dedup
-        if is_valid_telegram_token(t):
-            results.append({'token': t, 'chat_id': cid})
-
-    return results
+from app.domain.tokens import (
+    CHAT_ID_PATTERN,
+    TOKEN_PATTERN,
+    extract_chat_id,
+    extract_tokens_and_chat_ids,
+    is_valid_telegram_token,
+    logger,
+)
 
 
 def parse_telegram_message(message: Any) -> dict[str, Any]:

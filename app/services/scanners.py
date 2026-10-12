@@ -19,6 +19,7 @@ import httpx
 import urllib3
 
 from app.core.config import settings
+from app.domain.tokens import CHAT_ID_PATTERN, TOKEN_PATTERN, _is_valid_token
 from app.utils.http_client import (  # noqa: F401 — retry_with_backoff moved here in DEAD-007, re-exported for existing importers
     get_async_http_client,
     retry_with_backoff,
@@ -51,61 +52,12 @@ SPOOFED_HEADERS = {
     "Sec-Ch-Ua-Platform": '"Windows"'
 }
 
-# Regex for Telegram Bot Token: digits:35chars
-# Handles bare tokens and /bot{token} URL form (e.g. api.telegram.org/bot123:xxx)
-# Negative lookbehind on [A-Za-z0-9] so "mybot12345:..." won't match, but "/bot12345:..." will.
-TOKEN_PATTERN = re.compile(r'(?<![A-Za-z0-9])(?:bot)?(\d{8,15}:[A-Za-z0-9_-]{35})(?![A-Za-z0-9_-])')
 ADJACENT_ENDPOINT_REGEX = re.compile(
     r"(https?://[^\s'\"]+)|"
     r"(?:[a-zA-Z0-9_]+_(?:HOST|DOMAIN|URL|IP|SERVER|API|ENDPOINT|PORT)\s*[:=]\s*[\"']?([^\s'\"]+)[\"']?)",
     re.IGNORECASE,
 )
 LOCAL_ENDPOINT_VALUES = {"127.0.0.1", "0.0.0.0", "localhost", "::1"}
-
-
-def _is_valid_token(token_str: str) -> bool:
-    """
-    Strict validation to filter out Fernet strings, hashes, and junk.
-    Valid Telegram token: 123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (digits:35chars)
-    """
-    try:
-        # Explicit Fernet rejection (starts with gAAAA)
-        if token_str.startswith("gAAAA"):
-            return False
-
-        # Must contain exactly one colon
-        if ":" not in token_str:
-            return False
-        if token_str.count(":") != 1:
-            return False
-
-        parts = token_str.split(":", 1)
-        bot_id, secret = parts
-
-        # Bot ID must be 8-15 digits, no leading zeros
-        if not bot_id.isdigit():
-            return False
-        if len(bot_id) < 8 or len(bot_id) > 15:
-            return False
-        if len(bot_id) > 1 and bot_id.startswith("0"):
-            return False
-
-        # Secret must be exactly 35 characters
-        if len(secret) != 35:
-            return False
-
-        # Secret must only contain allowed chars (base64-ish)
-        allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
-        if not all(c in allowed for c in secret):
-            return False
-
-        # Suspicious: Pure hex (likely hash collision).
-        # Real tokens have mixed case and special chars; pure hex is a dedup false positive.
-        is_pure_hex = all(c in "0123456789abcdefABCDEF" for c in secret)
-        return not is_pure_hex
-    except Exception as _swallowed:
-        logger.debug(f"[suppressed] {_swallowed}")
-        return False
 
 
 def _token_context(code_text: str, token: str, line_radius: int = 50) -> str:
@@ -157,10 +109,6 @@ def extract_infrastructure_context(
         "co_located_endpoints": sorted(endpoints),
         "extracted_at": datetime.now(UTC).isoformat(),
     }
-
-# Strict Regex: \b (boundary) + digits + : + 35 chars + \b
-# Regex for extracting chat_id (e.g., chat_id=12345 or "chat_id": 12345)
-CHAT_ID_PATTERN = re.compile(r'(?:chat_id|chat|target|cid)[=_":\s]+([-\d]+)', re.IGNORECASE)
 
 async def _perform_active_deep_scan(target_url: str, client: httpx.AsyncClient = None) -> list[dict[str, str]]:
     """

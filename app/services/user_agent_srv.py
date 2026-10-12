@@ -11,6 +11,8 @@ from telethon import TelegramClient, errors, types
 from telethon.errors import SecurityError
 
 from app.core.config import settings
+from app.domain.media import telethon_media_info
+from app.infrastructure.database import execute_async as _execute_async_shared
 from app.services._scraper.lifecycle import TelegramClientLifecycle
 
 logger = logging.getLogger("user_agent")
@@ -23,7 +25,7 @@ ARCHIVE_TMP_PREFIX = "archive_"
 
 
 async def _async_execute(query_builder):
-    return await asyncio.to_thread(query_builder.execute)
+    return await _execute_async_shared(query_builder)
 
 
 def _username_from_meta(meta: object) -> str | None:
@@ -67,43 +69,12 @@ def _is_terminal_invite_error(exc: Exception) -> bool:
 
 
 def _telethon_media_info(message) -> tuple[str, dict]:
-    if not getattr(message, "media", None):
-        return "text", {}
-
-    file_meta = {}
-    try:
-        from telethon import utils as telethon_utils
-
-        file_id = telethon_utils.pack_bot_file_id(message.media)
-        if file_id:
-            file_meta["file_id"] = file_id
-    except Exception as _swallowed:
-        logger.debug(f"[suppressed] {_swallowed}")
-
-    if isinstance(message.media, types.MessageMediaPhoto):
-        photo = getattr(message.media, "photo", None)
-        file_meta["wc"] = "photo"
-        file_meta["id"] = getattr(photo, "id", 0)
-        return "photo", file_meta
-
-    if isinstance(message.media, types.MessageMediaDocument):
-        document = getattr(message.media, "document", None)
-        mime = getattr(document, "mime_type", None) or getattr(getattr(message, "file", None), "mime_type", None)
-        if mime:
-            file_meta["mime"] = mime
-        file_name = getattr(getattr(message, "file", None), "name", None)
-        if file_name:
-            file_meta["file_name"] = file_name
-        doc_id = getattr(document, "id", None)
-        if doc_id is not None:
-            file_meta["id"] = doc_id
-        if isinstance(mime, str) and mime.startswith("video/"):
-            return "video", file_meta
-        if isinstance(mime, str) and mime.startswith("audio/"):
-            return "audio", file_meta
-        return "document", file_meta
-
-    return "other", file_meta
+    return telethon_media_info(
+        message,
+        event_logger=logger,
+        photo_type=types.MessageMediaPhoto,
+        document_type=types.MessageMediaDocument,
+    )
 
 
 # Determine absolute path to project root

@@ -14,6 +14,8 @@ from telethon.tl.types import Message, MessageMediaDocument, MessageMediaPhoto
 from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
+from app.domain.media import bot_api_media_info, telethon_media_info
+from app.infrastructure.database import execute_async as _execute_async_shared
 from app.services._scraper.results import (
     ScrapeReason,
     ScrapeResult,
@@ -56,90 +58,21 @@ async def _resolve_history_result(result):
 
 
 async def _async_execute(query_builder):
-    return await asyncio.to_thread(query_builder.execute)
-
-
-def _copy_if_present(target: dict[str, Any], source: dict[str, Any], source_key: str, target_key: str | None = None) -> None:
-    value = source.get(source_key)
-    if value is not None:
-        target[target_key or source_key] = value
+    return await _execute_async_shared(query_builder)
 
 
 def _bot_api_media_info(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    file_meta: dict[str, Any] = {}
-    file_meta["source"] = "bot_api"
-
-    if isinstance(payload.get("photo"), list) and payload["photo"]:
-        photo = payload["photo"][-1] or {}
-        if isinstance(photo, dict):
-            _copy_if_present(file_meta, photo, "file_id")
-            _copy_if_present(file_meta, photo, "file_unique_id")
-            _copy_if_present(file_meta, photo, "file_size")
-            _copy_if_present(file_meta, photo, "width")
-            _copy_if_present(file_meta, photo, "height")
-        return "photo", file_meta
-
-    for key in ("document", "video", "audio"):
-        media = payload.get(key)
-        if isinstance(media, dict):
-            _copy_if_present(file_meta, media, "file_id")
-            _copy_if_present(file_meta, media, "file_unique_id")
-            _copy_if_present(file_meta, media, "file_name")
-            _copy_if_present(file_meta, media, "mime_type", "mime")
-            _copy_if_present(file_meta, media, "file_size")
-            return key, file_meta
-
-    return "text", file_meta
+    return bot_api_media_info(payload)
 
 
 def _telethon_media_info(message: Message) -> tuple[str, dict[str, Any]]:
-    if not getattr(message, "media", None):
-        return "text", {}
-
-    file_meta: dict[str, Any] = {}
-    file_meta["source"] = "telethon"
-    try:
-        from telethon import utils as telethon_utils
-
-        file_id = telethon_utils.pack_bot_file_id(message.media)
-        if file_id:
-            file_meta["file_id"] = file_id
-    except Exception as _swallowed:
-        logger.debug(f"[suppressed] {_swallowed}")
-
-    if isinstance(message.media, MessageMediaPhoto):
-        photo = getattr(message.media, "photo", None)
-        file_meta["wc"] = "photo"
-        file_meta["id"] = getattr(photo, "id", 0)
-        file_meta["access_hash"] = getattr(photo, "access_hash", 0)
-
-        # safely get file_reference (it's bytes)
-        file_ref = getattr(photo, "file_reference", b"")
-        file_meta["file_reference"] = file_ref.hex() if isinstance(file_ref, bytes) else ""
-
-        return "photo", file_meta
-
-    if isinstance(message.media, MessageMediaDocument):
-        document = getattr(message.media, "document", None)
-        mime = getattr(document, "mime_type", None) or getattr(getattr(message, "file", None), "mime_type", None)
-        if mime:
-            file_meta["mime"] = mime
-        file_name = getattr(getattr(message, "file", None), "name", None)
-        if file_name:
-            file_meta["file_name"] = file_name
-        doc_id = getattr(document, "id", None)
-        if doc_id is not None:
-            file_meta["id"] = doc_id
-            file_meta["access_hash"] = getattr(document, "access_hash", 0)
-            file_ref = getattr(document, "file_reference", b"")
-            file_meta["file_reference"] = file_ref.hex() if isinstance(file_ref, bytes) else ""
-        if isinstance(mime, str) and mime.startswith("video/"):
-            return "video", file_meta
-        if isinstance(mime, str) and mime.startswith("audio/"):
-            return "audio", file_meta
-        return "document", file_meta
-
-    return "other", file_meta
+    return telethon_media_info(
+        message,
+        include_extended_metadata=True,
+        event_logger=logger,
+        photo_type=MessageMediaPhoto,
+        document_type=MessageMediaDocument,
+    )
 
 
 class ScrapedMessage(TypedDict):
