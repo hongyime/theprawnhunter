@@ -120,14 +120,14 @@ See: [`docs/cloudflare_waf_rules.md`](cloudflare_waf_rules.md)
 ### 3. Database Migrations
 
 ```bash
-# Both migrations are idempotent
-# Apply via Supabase SQL Editor:
+# These schema changes belong to the sole migration stream at
+# supabase/migrations/. Apply through the reviewed Supabase process:
 
 # 1. Honeypot table
-database/migrations/20260803000012_honeypot.sql
+supabase/migrations/20260803000012_honeypot.sql
 
 # 2. Redirect tracking columns
-database/migrations/20260806000001_honeypot_redirect.sql
+supabase/migrations/20260806000001_honeypot_redirect.sql
 ```
 
 ---

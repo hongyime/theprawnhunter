@@ -1,6 +1,8 @@
 -- ============================================
--- Row Level Security (RLS) Policies
--- Execute these in Supabase SQL Editor
+-- Row Level Security (RLS) policy snapshot (reference only)
+-- The sole schema-change stream is supabase/migrations/.
+-- This file may not match later migration-managed policies; do not apply it as
+-- an alternate migration stream or over an existing database.
 -- ============================================
 
 -- ============================================

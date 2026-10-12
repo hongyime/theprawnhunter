@@ -16,6 +16,8 @@
 
 Overriding LIVE finding: **the running Docker images are 8 days out of date and lack the security fixes present on HEAD**. See DRIFT-001 (P0). No unbackupped destructive action was proposed or taken.
 
+> Historical snapshot for commit `3a033cfe06123627c37cbfb03662a9a543c61ebf`. Its migration-directory and schema-authority findings describe that checkout; the current migration authority is `supabase/migrations/`, with legacy patches archived under `docs/history/legacy_migrations/` and `database/init.sql` / `database/rls_policies.sql` retained as snapshots.
+
 ---
 
 ## 1. Filesystem Health

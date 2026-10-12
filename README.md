@@ -53,7 +53,7 @@ FLOWER_BASIC_AUTH       # user:password — must not be admin:changeme
 
 ### 3. Apply the database schema
 
-In the **Supabase SQL editor** (or via the Management API), run each file in `supabase/migrations/` in filename order. All are idempotent. Using the Management API:
+`supabase/migrations/` is the sole schema-change stream. In the **Supabase SQL editor** (or via the Management API), run its migrations in filename order as part of a reviewed deployment. `database/init.sql` and `database/rls_policies.sql` are reference snapshots, not alternate migration sources. All current migrations are idempotent. Using the Management API:
 
 ```powershell
 # PowerShell — requires your Supabase Personal Access Token
@@ -359,7 +359,7 @@ theprawnhunter/
 │       └── tasks/           79 @app.task handlers across 9 modules
 ├── database/
 │   ├── init.sql             Canonical schema DDL
-│   ├── rls_policies.sql     Row Level Security policies
+│   ├── rls_policies.sql     Row Level Security policy snapshot/reference
 │   └── operations/          Retention cleanup SQL
 ├── docs/
 │   ├── PRD.md               This product requirements document
@@ -450,7 +450,7 @@ Media-archive messages require a Telethon session account. Run `/starthunter` in
 
 ### `/monitor/findings` returns 500
 
-The findings tables are missing. Apply all 25 migrations in `supabase/migrations/` in filename order via the SQL editor or Management API.
+The findings tables were introduced by migrations in `supabase/migrations/`, the sole schema-change stream. Check the applied migration state and apply any missing migrations in filename order through the reviewed Supabase process.
 
 ### Migrations timing out via Supabase SQL editor
 

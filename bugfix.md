@@ -557,8 +557,8 @@ Status values: `Open`, `In Progress`, `Fixed`, `Blocked`, `Invalid`, `Deferred`.
 - Status: Invalid — same reasoning as STRUCT-005.
 
 ## STRUCT-007 — Two migration directories
-- Status: Open
-- Fix: Move `database/migrations/*.sql` (8 files) to `docs/history/legacy_migrations/`. Protected files — use `git mv` only; never delete.
+- Status: Fixed
+- Fix: The eight legacy SQL patches and their README are archived under `docs/history/legacy_migrations/`. `supabase/migrations/` is the sole active migration stream.
 
 ---
 

@@ -110,7 +110,7 @@ The Prawn Hunter is a self-hosted OSINT pipeline that discovers exposed Telegram
 | GitHub SSO | Supabase Auth + `frontend/app/signin/page.tsx` | Implemented | OAuth 2.0; operator claim gates dashboard access; signup locked |
 | Next.js analyst dashboard | `frontend/` | Implemented | `theprawnhunter.vercel.app`; Findings, Chat, Telemetry views |
 | Chrome extension (FOFA scraper) | `extension/` | Implemented | Manifest V3; 49-country scan; `/ingest/extension/credentials` |
-| RLS + redacted evidence view | `database/rls_policies.sql` | Implemented | `evidence_redacted` view; `discovered_credentials_public` view; all authenticated-only |
+| RLS + redacted evidence view | `database/rls_policies.sql` (reference snapshot; migrations are authoritative) | Implemented | `evidence_redacted` view; `discovered_credentials_public` view; all authenticated-only |
 | MTProto client pooling | `app/services/bot_manager_srv.py` | Implemented | `dict[token → TelegramClient]`, max 50, disconnect on shutdown |
 
 ---

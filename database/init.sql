@@ -1,7 +1,8 @@
 -- ============================================================
--- Telegram Hunter — Database Schema (canonical, single source of truth)
--- Safe to re-run on a fresh DB: all statements use IF NOT EXISTS guards.
--- Do NOT add migrations/ patches alongside this file — amend here instead.
+-- Telegram Hunter — Bootstrap schema snapshot (reference only)
+-- The sole schema-change stream is supabase/migrations/.
+-- This snapshot may not include later migration-managed objects; do not use it
+-- as an alternate migration stream or apply it over an existing database.
 -- ============================================================
 
 

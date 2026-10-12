@@ -8,7 +8,8 @@ Supabase's free tier pauses inactive projects after 7 days. The `keepalive_log` 
 
 ## Schema
 
-Defined in `database/init.sql`:
+The table appears in `database/init.sql`, which is a reference snapshot only.
+`supabase/migrations/` is the sole schema-change stream.
 
 ```sql
 CREATE TABLE IF NOT EXISTS keepalive_log (
@@ -18,7 +19,11 @@ CREATE TABLE IF NOT EXISTS keepalive_log (
 );
 ```
 
-Grants required for the anon role (see `database/migrations/001_keepalive_grant.sql`):
+The historical one-time grant patch is preserved at
+`docs/history/legacy_migrations/001_keepalive_grant.sql` for reference only.
+It is not part of the current migration stream and must not be replayed
+directly. Any new grant or policy change must be reviewed as a timestamped
+migration under `supabase/migrations/`.
 
 ```sql
 GRANT INSERT, DELETE ON keepalive_log TO anon;
@@ -40,7 +45,7 @@ Workflow steps:
 1. `curl -X POST` an insert with `status: 'ok'` payload — expect HTTP 201.
 2. `curl -X DELETE` any rows older than 7 days — expect HTTP 204.
 
-If the INSERT returns 403 or 401, the grants haven't been applied. Re-run `database/migrations/001_keepalive_grant.sql` in the Supabase SQL editor.
+If the INSERT returns 403 or 401, verify the deployed grants and policies. If a schema change is needed, add and review a migration under `supabase/migrations/`; do not replay the archived patch directly.
 
 ---
 

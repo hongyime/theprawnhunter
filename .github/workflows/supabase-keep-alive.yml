@@ -37,7 +37,7 @@ jobs:
           cat /tmp/insert.json
 
           if [[ "$HTTP_INSERT" != "201" ]]; then
-            echo "::error::INSERT failed (HTTP $HTTP_INSERT) — run database/migrations/001_keepalive_grant.sql in Supabase SQL editor if 403."
+            echo "::error::INSERT failed (HTTP $HTTP_INSERT) — verify the deployed keepalive grants; any schema change must go through supabase/migrations/."
             exit 1
           fi
 

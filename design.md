@@ -250,7 +250,7 @@ For each session:
 - **mv** `PRD.md` → `docs/PRD.md` (moved; refresh handoff to 03_DOCUMENT)
 - **mv** `SUPABASE_KEEPALIVE_SETUP.md` → rewrite → `docs/SUPABASE_KEEPALIVE.md`
 - **mv** `plan.html`, `competitive-upgrade-plan.html`, `competitive-upgrade-plan-CORRECTED.html` → `docs/history/`
-- **mv** `database/migrations/*.sql` (8 files) → `docs/history/legacy_migrations/`
+- **done** Archive the eight legacy patches in `docs/history/legacy_migrations/`; `supabase/migrations/` is the sole active migration stream.
 - **mod** `.gitignore` (FS-001, FS-002, STRUCT-002)
 - `git rm --cached .claude/scheduled_tasks.lock` (FS-001)
 - `git rm --cached .claude/settings.local.json` (FS-002)

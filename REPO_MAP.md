@@ -10,7 +10,7 @@
 - Not analyzed: contents of binary assets (`.png`, `.svg`); frontend `package-lock.json` (9 092 lines, lockfile); `.playwright-mcp/page-2026-04-24T02-45-32-072Z.yml` (recorded browser transcript); the four HTML report artifacts (`plan.html`, `competitive-upgrade-plan.html`, `competitive-upgrade-plan-CORRECTED.html`, `frontend/app/icon.png`); no submodules or vendored directories are present.
 
 ## 2. Provenance-derived description
-The repository holds a self-hosted OSINT stack that continually queries public data providers for Telegram Bot API tokens, verifies each candidate through the `getMe` HTTPS endpoint (`app/workers/tasks/validation_tasks.py`), scrapes accessible chat history through Telethon MTProto sessions (`app/services/scraper_srv.py`), and delivers findings into a private supergroup organised into per-credential forum topics (`app/services/broadcaster_srv.py`). Discovered tokens, message bodies, media metadata and audit events are persisted to a managed PostgreSQL instance addressed through the Supabase Python client (`app/core/database.py`, `database/init.sql`). Ten Docker Compose services back the stack — a Redis broker, a FastAPI HTTP layer, four Celery worker queues, a Celery beat scheduler, a python-telegram-bot admin listener, a Flower monitor, and a Next.js dashboard (`docker-compose.yml`). A Manifest V3 Chrome extension (`extension/manifest.json`) provides an out-of-band ingestion path that either POSTs to `/ingest/extension/credentials` or writes directly to Supabase under an extension-secret RLS policy.
+The repository holds a self-hosted OSINT stack that continually queries public data providers for Telegram Bot API tokens, verifies each candidate through the `getMe` HTTPS endpoint (`app/workers/tasks/validation_tasks.py`), scrapes accessible chat history through Telethon MTProto sessions (`app/services/scraper_srv.py`), and delivers findings into a private supergroup organised into per-credential forum topics (`app/services/broadcaster_srv.py`). Discovered tokens, message bodies, media metadata and audit events are persisted to a managed PostgreSQL instance addressed through the Supabase Python client (`app/core/database.py`). `supabase/migrations/` is the sole schema-change stream; `database/init.sql` and `database/rls_policies.sql` are reference snapshots. Ten Docker Compose services back the stack — a Redis broker, a FastAPI HTTP layer, four Celery worker queues, a Celery beat scheduler, a python-telegram-bot admin listener, a Flower monitor, and a Next.js dashboard (`docker-compose.yml`). A Manifest V3 Chrome extension (`extension/manifest.json`) provides an out-of-band ingestion path that either POSTs to `/ingest/extension/credentials` or writes directly to Supabase under an extension-secret RLS policy.
 
 ## 3. Quick facts
 | Field | Value |
@@ -21,7 +21,7 @@ The repository holds a self-hosted OSINT stack that continually queries public d
 | Tracked files | 286 |
 | Total lines (tracked) | 57 433 |
 | Deployment artifact | Docker Compose stack (10 services) built from `Dockerfile` + `frontend/Dockerfile` (`docker-compose.yml`, `docker-compose.prod.yml`) |
-| Persistence | Supabase-hosted PostgreSQL accessed via `supabase==2.28.3` client (`app/core/database.py`); schema in `database/init.sql`; 21 dated migrations under `supabase/migrations/`; 8 patch migrations under `database/migrations/` |
+| Persistence | Supabase-hosted PostgreSQL accessed via `supabase==2.28.3` client (`app/core/database.py`); sole migration authority is `supabase/migrations/` (28 dated SQL files); `database/init.sql` and `database/rls_policies.sql` are snapshots; legacy patches are archived under `docs/history/legacy_migrations/` |
 | Test framework(s) | `pytest` 8.3.5 + `pytest-asyncio` 0.24 for Python (`pyproject.toml` `[tool.pytest.ini_options]`); `vitest` 2 + Testing Library for the frontend (`frontend/package.json`) |
 | CI | GitHub Actions: `.github/workflows/ci.yml`, `.github/workflows/bandit.yml`, `.github/workflows/semgrep.yml`, `.github/workflows/trufflehog.yml`, `.github/workflows/supabase-keep-alive.yml`, `.github/workflows/labeler.yml`, `.github/workflows/greetings.yml` |
 | License | Apache-2.0 (`LICENSE:1`, `NOTICE`) |
@@ -126,7 +126,7 @@ Directory tree (top-level, depth 2 shown), sorted by path:
 ├── frontend/                     Next.js 16 dashboard + Vitest suite
 ├── imports/                      README only; CSV drop-in target at runtime
 ├── scripts/                      15 operational and validation scripts
-├── supabase/                     Config + 21 dated migrations
+├── supabase/                     Config + 28 dated migrations (sole authority)
 └── tests/                        59 test files (unit + integration + load + top-level)
 ```
 
@@ -164,13 +164,14 @@ Selected files by directory (all 286 tracked files are on disk; grouped listing 
 - `app/workers/tasks/_scanner/__init__.py`, `base.py`, `queries.py`
 
 `database/`
-- `database/init.sql`, `database/rls_policies.sql`
+- `database/init.sql`, `database/rls_policies.sql` (reference snapshots)
 - `database/operations/retention_cleanup.sql`
-- `database/migrations/001_keepalive_grant.sql`, `2026-05-27-add-confidence-score.sql`, `2026-07-15-canonicalize-confidence-score-generated.sql`, `2026-07-17-create-rpc-atomic-patch.sql`, `2026-07-17-create-telemetry-indicators.sql`, `2026-08-02-scrape-broadcast-reliability.sql`, `2026-08-27-public-view-confidence-score.sql`, `2026-08-28-monitor-stats.sql`, `database/migrations/README.md`
+
+Archived legacy patches are in `docs/history/legacy_migrations/` and are not an active migration source.
 
 `supabase/`
 - `supabase/.gitignore`, `supabase/config.toml`
-- `supabase/migrations/20260802000001_scrape_broadcast_reliability.sql`, `20260803000001_broadcasted_at.sql`, `20260803000010_message_fts.sql`, `20260803000011_media_hashes.sql`, `20260803000012_honeypot.sql`, `20260804000001_system_state.sql`, `20260805000001_account_membership_admin.sql`, `20260805000002_sender_user_id.sql`, `20260806000001_honeypot_redirect.sql`, `20260828000001_monitor_stats.sql`, `20260829000001_multi_touch_redirects.sql`, `20260903000001_supabase_optimization.sql`, `20260903000003_collection_yield_score.sql`, `20260903000004_rls_hardening.sql`, `20260903000005_discovered_credentials_public_authenticated.sql`, `20260904000001_disable_legacy_retention_jobs.sql`, `20260904000002_insight_queue.sql`, `20260904000003_entities_engagement.sql`, `20260904000004_finding_alert_policies.sql`, `20260904000005_monitor_findings_feedback.sql`, `20260906000001_dashboard_operator_authorization.sql`
+- `supabase/migrations/` — 28 chronological SQL migrations and its authority README
 
 `docs/`
 - `docs/HONEYPOT.md`, `docs/cloudflare_waf_rules.md`, `docs/production_runbook.md`, `docs/telegram_probe_matrix.example.json`
@@ -335,9 +336,9 @@ Outbound integrations reached from code: Telegram Bot API (`https://api.telegram
 
 Tables declared in `database/init.sql`: `discovered_credentials`, `exfiltrated_messages`, `monitor_stats`, `telemetry_indicators`, `telegram_accounts`, `audit_logs`, `keepalive_log`. Triggers `trg_monitor_stats_credentials_delta` / `trg_monitor_stats_messages_delta` maintain the singleton `monitor_stats` row. Function `get_monitor_stats()` is `SECURITY DEFINER`, granted to `service_role`, revoked from `PUBLIC`. `discovered_credentials.confidence_score` and `chat_member_count` are `GENERATED ALWAYS AS STORED` from the `meta` JSONB column.
 
-Additional objects introduced by the 21 dated `supabase/migrations/` files include: broadcast reliability columns (`20260802000001`), `broadcasted_at` (`20260803000001`), message FTS index (`20260803000010`), `media_hashes` (`20260803000011`), `honeypot_updates` (`20260803000012`), `system_state` (`20260804000001`), `account_membership_admin` (`20260805000001`), `sender_user_id` (`20260805000002`), `honeypot_redirect_log` (`20260806000001`), `monitor_stats` (`20260828000001`), multi-touch redirect tables (`20260829000001`), `collection_yield_score` (`20260903000003`), RLS hardening (`20260903000004`), `discovered_credentials_public` view (`20260903000005`), retention job disable (`20260904000001`), insight queue (`20260904000002`), entities + engagement (`20260904000003`), finding alert policies (`20260904000004`), monitor findings feedback (`20260904000005`), dashboard operator claim (`20260906000001`).
+Additional objects introduced by the 28 dated `supabase/migrations/` files include: broadcast reliability columns (`20260802000001`), `broadcasted_at` (`20260803000001`), message FTS index (`20260803000010`), `media_hashes` (`20260803000011`), `honeypot_updates` (`20260803000012`), `system_state` (`20260804000001`), `account_membership_admin` (`20260805000001`), `sender_user_id` (`20260805000002`), `honeypot_redirect_log` (`20260806000001`), `monitor_stats` (`20260828000001`), multi-touch redirect tables (`20260829000001`), `collection_yield_score` (`20260903000003`), RLS hardening (`20260903000004`), `discovered_credentials_public` view (`20260903000005`), retention job disable (`20260904000001`), insight queue (`20260904000002`), entities + engagement (`20260904000003`), finding alert policies (`20260904000004`), monitor findings feedback (`20260904000005`), dashboard operator claim (`20260906000001`), later broadcast/media/audit hardening, operator access restrictions, and honeypot hardening (`20260906000003` through `20261012000001`).
 
-RLS policies (`database/rls_policies.sql`): service-role bypasses; anon can never `SELECT` `discovered_credentials` (frontend reads a `discovered_credentials_public` view); Chrome extension `INSERT`/`UPDATE` gated by `x-extension-secret` header matched against `current_setting('app.extension_write_secret')`.
+`database/rls_policies.sql` is a policy snapshot/reference; the authoritative policy changes are in `supabase/migrations/`. The snapshot documents service-role bypasses, authenticated access to `discovered_credentials_public`, and the Chrome extension `x-extension-secret` policy. Verify current policy state from the migrations before use.
 
 Environment variable table (names only; defaults per `app/core/config.py` and `.env.template`):
 

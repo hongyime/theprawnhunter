@@ -229,7 +229,7 @@ Tasks are grouped by execution session (A → E). Sessions are separated by an a
 
 ## Session D — Structural Moves & Historical Archive
 
-Every move uses `git mv`. Protected files (migrations in `database/migrations/`) are relocated only — never deleted — per safety rule.
+Every move uses `git mv`. Archived legacy SQL under `docs/history/legacy_migrations/` is historical reference only; new schema changes belong only in `supabase/migrations/`.
 
 - [ ] **T31 — Preserve pre-cycle root doc snapshot** (already done in Phase 0 for `bugfix.md`/`design.md`/`tasks.md`/AUDIT.md, expand for the rest)
       Finding: STRUCT-001
@@ -273,12 +273,12 @@ Every move uses `git mv`. Protected files (migrations in `database/migrations/`)
       Acceptance: moved.
       Rollback: reverse.
 
-- [ ] **T37 — Move `database/migrations/*.sql` → `docs/history/legacy_migrations/`** (**PROTECTED FILES — mv only, never delete**)
+- [x] **T37 — Archive legacy migration patches under `docs/history/legacy_migrations/`** (**completed before this plan update**)
       Finding: STRUCT-007
-      Files: `database/migrations/*.sql` (8 files) + `database/migrations/README.md` → `docs/history/legacy_migrations/`
-      Change: `git mv` per file, ensuring each transfer preserves history. Verify with `git log --follow` post-move.
-      Acceptance: 8 files + README present in new dir; `git log --follow` on each shows continuity; `database/migrations/` dir empty (kept for future — do not `rmdir`).
-      Rollback: reverse `git mv` per file.
+      Files: eight historical SQL patches and README in `docs/history/legacy_migrations/`
+      Change: legacy patches are retained for provenance and are not part of the active migration stream.
+      Acceptance: archive contains the eight patches and README; `supabase/migrations/` is the sole migration authority.
+      Rollback: not applicable; do not restore a second active migration directory.
 
 - [ ] **T38 — `.gitignore` and untrack local tooling state**
       Finding: FS-001, FS-002, STRUCT-002, DEAD-006
