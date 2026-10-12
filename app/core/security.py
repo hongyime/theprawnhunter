@@ -60,7 +60,13 @@ class SecurityService:
 
     def decrypt(self, token: str) -> str:
         """Decrypts a token string; tries the primary key first, then any
-        legacy keys. Raises InvalidToken if no key in the chain works."""
+        legacy keys. Raises InvalidToken if no key in the chain works.
+
+        SEC-001 operator override: when ``settings.PLAINTEXT_TOKEN_MODE`` is
+        True, tokens are stored unencrypted and are returned unchanged (mirrors
+        the encrypt() bypass)."""
+        if getattr(settings, "PLAINTEXT_TOKEN_MODE", False):
+            return token
         return self.fernet.decrypt(token.encode()).decode()
 
     def rotate(self, token: str) -> str:

@@ -209,13 +209,20 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
 
     if existing.data:
         is_already_broadcasted = bool(existing.data[0].get("is_broadcasted"))
+        if is_already_broadcasted:
+            logger.info(
+                f"[Honeypot] Message {msg_data['telegram_msg_id']} already recorded and broadcasted — skipping duplicate dispatch"
+            )
+            return msg_data
+        # Recorded but never broadcasted (e.g. earlier dispatch failed or the
+        # broadcast task was lost): fall through and (re)dispatch below. The
+        # redis nx dedup key still prevents double-sends within 300s.
         logger.info(
-            f"[Honeypot] Message {msg_data['telegram_msg_id']} already recorded (is_broadcasted={is_already_broadcasted}) — skipping duplicate dispatch"
+            f"[Honeypot] Message {msg_data['telegram_msg_id']} recorded but not broadcasted — redispatching"
         )
-        return msg_data
-
-    # Fresh insert: preserves is_broadcasted=False
-    db.table("exfiltrated_messages").insert(msg_data).execute()
+    else:
+        # Fresh insert: preserves is_broadcasted=False
+        db.table("exfiltrated_messages").insert(msg_data).execute()
 
     # Trigger targeted honeypot message broadcast if enabled
     if getattr(settings, "HONEYPOT_BROADCAST_TO_TOPIC", True):
