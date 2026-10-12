@@ -18,11 +18,11 @@ Windows** (bash `.sh` / PowerShell `.ps1`).
 
 ```bash
 # macOS / Linux
-./scripts/volumes.sh backup                 # -> ./volume-backups/*.tar.gz
+./scripts/deploy/volumes.sh backup          # -> ./volume-backups/*.tar.gz
 ```
 ```powershell
 # Windows
-.\scripts\volumes.ps1 backup                # -> .\volume-backups\*.tar.gz
+.\scripts\deploy\volumes.ps1 backup                # -> .\volume-backups\*.tar.gz
 ```
 
 Then copy **two things** to the new machine — **securely**, both contain secrets:
@@ -42,11 +42,11 @@ git clone <repo-url> theprawnhunter && cd theprawnhunter
 #   put the copied volume-backups/ in the repo root
 
 # macOS / Linux
-./scripts/bootstrap.sh ./volume-backups
+./scripts/deploy/bootstrap.sh ./volume-backups
 ```
 ```powershell
 # Windows
-.\scripts\bootstrap.ps1 .\volume-backups
+.\scripts\deploy\bootstrap.ps1 .\volume-backups
 ```
 
 `bootstrap` does everything:
@@ -62,7 +62,7 @@ git clone <repo-url> theprawnhunter && cd theprawnhunter
 Omit the backup dir — then add accounts with `/starthunter` in Telegram:
 
 ```bash
-./scripts/bootstrap.sh          #   .\scripts\bootstrap.ps1
+./scripts/deploy/bootstrap.sh   #   .\scripts\deploy\bootstrap.ps1
 ```
 
 ---
@@ -70,7 +70,7 @@ Omit the backup dir — then add accounts with `/starthunter` in Telegram:
 ## Just volumes, no full setup
 
 ```bash
-./scripts/volumes.sh restore ./volume-backups     # .\scripts\volumes.ps1 restore .\volume-backups
+./scripts/deploy/volumes.sh restore ./volume-backups     # .\scripts\deploy\volumes.ps1 restore .\volume-backups
 ```
 
 ---

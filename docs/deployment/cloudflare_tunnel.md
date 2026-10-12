@@ -67,7 +67,7 @@ Identical on macOS, Linux, and Windows. To stop just the tunnel:
 
 ## Option B — `cloudflared` on the host (legacy / Windows)
 
-[`scripts/setup_cloudflare_tunnel.ps1`](../../scripts/setup_cloudflare_tunnel.ps1)
+[`scripts/deploy/setup_cloudflare_tunnel.ps1`](../../scripts/deploy/setup_cloudflare_tunnel.ps1)
 sets up a **locally-managed** tunnel and installs `cloudflared` as a **Windows
 service**. It is Windows-only and points the tunnel at `http://localhost:8011`
 (the host-published API port). Use it only if you specifically want the tunnel

@@ -136,7 +136,7 @@ Complete env-var table appears in `REPO_MAP.md` §10 (same commit). Highlights t
 | Flower | `app/workers/flower_app.py:14` | `celery -A app.workers.flower_app flower --port=5555` |
 | Frontend | `frontend/app/page.tsx:1` via `node server.js` | Next.js standalone runtime |
 | CSV import sweep | `docker-entrypoint.sh:20-30` | container entrypoint pre-marks `.csv` → `.pending` |
-| Validators | `scripts/validate_deployment.py:189`, `scripts/validate_startup.py:135` | manual `python scripts/...` |
+| Validators | `scripts/deploy/validate_deployment.py:189`, `scripts/deploy/validate_startup.py:135` | manual `python scripts/...` |
 | Extension worker | `extension/background.js:1` | `chrome.action` popup / `chrome.alarms` |
 
 ---
@@ -181,7 +181,7 @@ Complete env-var table appears in `REPO_MAP.md` §10 (same commit). Highlights t
 | C2 operator clustering | `flow.cluster_c2_operators`, `/monitor/operators` | Ranks hosted-service tenants and Shodan orgs. |
 | GitHub Events firehose | `app/workers/tasks/firehose_tasks.py`, `firehose.poll_github_events` beat entry (every 30 s) | ETag-aware public event polling, real-time leak detection. |
 | Pivot fan-out | `app/workers/tasks/pivot_tasks.py` (`pivot.search_github_user`, `search_bot_username`, `search_webhook_host`) | Fires after every successful `getMe`. |
-| Fernet key rotation | `app/core/security.py` (`SecurityService.rotate`), `scripts/rotate_credentials.py` | Full `MultiFernet` chain with re-encryption script. Present in `README.md` under "Advanced Features" but not in `PRD.md`. |
+| Fernet key rotation | `app/core/security.py` (`SecurityService.rotate`), `scripts/ops/one_off/rotate_credentials.py` | Full `MultiFernet` chain with re-encryption script. Present in `README.md` under "Advanced Features" but not in `PRD.md`. |
 | CI security workflows | `.github/workflows/bandit.yml`, `semgrep.yml`, `trufflehog.yml` | Weekly + push-triggered SARIF upload to Code Scanning. |
 | DB retention triggers `trg_monitor_stats_*` | `database/init.sql:150-200` | Real-time singleton maintenance — implicit in code. |
 | Redacted evidence view (`evidence_redacted`) | `database/rls_policies.sql` | HMAC-pseudonymised, token-masked. Not surfaced in README. |
@@ -253,7 +253,7 @@ Grouped by category (SEC · DATA · CONC · INTR · LOGIC · PERF · REL · FE �
 
 | ID | SEV | CONF | FILE:LINE | ISSUE | FIX | EFFORT |
 |---|---|---|---|---|---|---|
-| SEC-001 | P0 | CONFIRMED | `database/rls_policies.sql:54-98`, `extension/background.js:*`, live DB sample | 478 / 1 000 sampled rows (47.8 %) store plaintext bot tokens in `discovered_credentials.bot_token`; all are `status=revoked`; the extension direct-write path with `x-extension-secret` writes raw tokens and self-heal only runs during exfiltration, which never happens for tokens that never go active | Route all extension writes through `POST /ingest/extension/credentials` (already server-side encrypts) and remove the anon INSERT/UPDATE policy on `discovered_credentials`; then run `scripts/rotate_credentials.py --encrypt-plaintext` (or equivalent one-off script) against the 478 plaintext rows | L |
+| SEC-001 | P0 | CONFIRMED | `database/rls_policies.sql:54-98`, `extension/background.js:*`, live DB sample | 478 / 1 000 sampled rows (47.8 %) store plaintext bot tokens in `discovered_credentials.bot_token`; all are `status=revoked`; the extension direct-write path with `x-extension-secret` writes raw tokens and self-heal only runs during exfiltration, which never happens for tokens that never go active | Route all extension writes through `POST /ingest/extension/credentials` (already server-side encrypts) and remove the anon INSERT/UPDATE policy on `discovered_credentials`; then run `scripts/ops/one_off/rotate_credentials.py --encrypt-plaintext` (or equivalent one-off script) against the 478 plaintext rows | L |
 | SEC-002 | P1 | CONFIRMED | `app/api/routers/honeypot.py:151-160` | `GET /honeypot/status` compares `x_monitor_key != settings.MONITOR_API_KEY` in-line — not constant-time, inconsistent with `require_monitor_key` elsewhere | Replace inline check with `dependencies=[Depends(require_monitor_key)]` on the route decorator | S |
 | SEC-003 | P1 | CONFIRMED | `docker-compose.yml:frontend`, `frontend/vercel.json`, `tasks.md:P0-005` | Vercel + local Docker `frontend` images are running old SHA (per `tasks.md:P0-005`); RLS hardening on `discovered_credentials_public` GRANTs only `authenticated`, but the running frontend bundle still expects anon reads — currently unauthenticated access may be permitted until redeploy | Rebuild and redeploy the frontend container and Vercel project to a HEAD-current commit; confirm anon `SELECT discovered_credentials_public` returns 403 | M |
 | SEC-004 | P2 | CONFIRMED | `app/services/scanners.py:54,215,329,430,537,684,796`, `app/services/scanners_extension.py:52,167,226,385`, `app/workers/tasks/flow_tasks.py:1643,1847` | 13 sites disable TLS verification (`httpx.AsyncClient(verify=False)`). Scanner OSINT probes are intentional (random IPs, self-signed), but `flow_tasks.py:1643,1847` are webhook probes — TLS validity is signal-relevant intel | Add an explicit `# nosec` comment plus a `TLS_VERIFY_WEBHOOK_PROBES=True` opt-in for the two `flow_tasks.py` sites so operators can enforce verify by default and record cert-mismatch as intel | M |

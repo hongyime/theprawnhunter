@@ -8,8 +8,8 @@
     "doc": "docs"
   },
   "scripts": {
-    "check": "node --check scripts/run_fofa_scan.mjs",
-    "fofa:scan": "node scripts/run_fofa_scan.mjs",
+    "check": "node --check scripts/dev/run_fofa_scan.mjs",
+    "fofa:scan": "node scripts/dev/run_fofa_scan.mjs",
     "test": "npm run check"
   },
   "repository": {

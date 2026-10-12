@@ -28,7 +28,7 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\theprawnhunter\scripts\startup.bat</Command>
+      <Command>C:\theprawnhunter\scripts\deploy\startup.bat</Command>
     </Exec>
   </Actions>
 </Task>

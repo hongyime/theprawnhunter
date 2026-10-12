@@ -669,7 +669,7 @@ async function uploadToSupabase() {
     broadcastState();
 }
 
-// Expose for CDP automation (scripts/run_fofa_scan.mjs)
+// Expose for CDP automation (scripts/dev/run_fofa_scan.mjs)
 globalThis.startScan = startScan;
 globalThis.stopScan = stopScan;
 globalThis.resumeScan = resumeScan;

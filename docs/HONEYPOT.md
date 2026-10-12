@@ -302,7 +302,7 @@ docker exec theprawnhunter_worker-core celery -A app.workers.celery_app call flo
 - [`app/api/routers/honeypot.py`](../app/api/routers/honeypot.py) — API endpoints
 - [`app/services/_scraper/strategies.py`](../app/services/_scraper/strategies.py) — Webhook takeover logic
 - [`app/workers/tasks/flow_tasks.py`](../app/workers/tasks/flow_tasks.py) — Redirect sweep tasks
-- [`scripts/setup_cloudflare_tunnel.ps1`](../scripts/setup_cloudflare_tunnel.ps1) — Tunnel setup
+- [`scripts/deploy/setup_cloudflare_tunnel.ps1`](../scripts/deploy/setup_cloudflare_tunnel.ps1) — Tunnel setup
 - [`docs/cloudflare_waf_rules.md`](cloudflare_waf_rules.md) — WAF configuration
 - [`supabase/migrations/20260803000012_honeypot.sql`](../supabase/migrations/20260803000012_honeypot.sql) — Table schema
 - [`supabase/migrations/20260806000001_honeypot_redirect.sql`](../supabase/migrations/20260806000001_honeypot_redirect.sql) — Redirect tracking

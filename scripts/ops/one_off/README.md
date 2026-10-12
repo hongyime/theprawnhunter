@@ -1,9 +1,17 @@
-# Archived one-off operator scripts
+# One-off operator scripts
 
-These scripts were moved out of the active `scripts/` directory because they are
-manual recovery and inspection tools, not part of the normal deployment flow.
-They are retained for reference and may require operator review before use.
+These scripts are manual recovery, credential-maintenance, and inspection tools;
+they are not part of the normal deployment flow.
 
-The three media backfills are dry-run by default. Pass `--apply` only when a
-database update or Telegram broadcast is intended. `get_account_names.py` is a
-read-only local account/session inspection utility.
+Use the single media-backfill CLI for all three historical modes:
+
+```bash
+python scripts/ops/backfill_media.py all --dry-run
+python scripts/ops/backfill_media.py since --since 2026-07-20T00:00:00Z --dry-run
+python scripts/ops/backfill_media.py telethon --dry-run
+```
+
+Every mode defaults to dry-run. `--apply` explicitly enables its database
+updates; in `telethon` mode it can send media to Telegram. The old filenames in
+this directory remain compatibility wrappers to the corresponding CLI modes.
+`get_account_names.py` is a read-only local account/session inspection utility.

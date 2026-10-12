@@ -26,7 +26,7 @@ first, then override `REDIS_VOLUME_NAME`, `SESSIONS_VOLUME_NAME`,
 Use one approved admin SQL path on this machine:
 
 - Set `DATABASE_URL` to a Supabase Postgres connection string, then run:
-  `python scripts/schema_drift_check.py`
+  `python scripts/ops/schema_drift_check.py`
 - Or authenticate/link the Supabase CLI and run the same SQL through the CLI.
 - Or use an authenticated Supabase MCP SQL tool.
 
@@ -38,7 +38,7 @@ supabase --version
 supabase db --help
 supabase db advisors --help
 supabase db advisors --linked
-python scripts/schema_drift_check.py
+python scripts/ops/schema_drift_check.py
 ```
 
 The drift check fails on missing required tables, columns, or indexes and
@@ -49,13 +49,13 @@ reports optional broadcast/scrape hardening columns separately.
 Run the standard gate before deployment:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/release_gate.ps1 -SkipLive
+powershell -ExecutionPolicy Bypass -File scripts/deploy/release_gate.ps1 -SkipLive
 ```
 
 When the stack is already running and `MONITOR_API_KEY` is configured:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/release_gate.ps1
+powershell -ExecutionPolicy Bypass -File scripts/deploy/release_gate.ps1
 ```
 
 The gate runs focused runtime tests, `docker compose config --quiet`, Docker
@@ -66,8 +66,8 @@ build, and the live operational API report unless skipped.
 ```powershell
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 docker compose ps
-python scripts/ops_report.py
-python scripts/schema_drift_check.py
+python scripts/ops/ops_report.py
+python scripts/ops/schema_drift_check.py
 ```
 
 Post-restart log scan:
@@ -82,7 +82,7 @@ docker compose logs --since 15m | Select-String -Pattern `
 Queues, canary, and recent failure reasons:
 
 ```powershell
-python scripts/ops_report.py
+python scripts/ops/ops_report.py
 ```
 
 Pending broadcast triage:
@@ -137,8 +137,8 @@ the topic history.
 Telegram behavior probe:
 
 ```powershell
-python scripts/telegram_behavior_probe.py
-python scripts/telegram_behavior_probe.py --matrix docs/telegram_probe_matrix.example.json
+python scripts/ops/telegram_behavior_probe.py
+python scripts/ops/telegram_behavior_probe.py --matrix docs/telegram_probe_matrix.example.json
 ```
 
 Use only non-production bots/chats for the matrix. Webhook deletion remains
@@ -162,7 +162,7 @@ Use this loop for periodic snapshots:
 while ($true) {
   Get-Date
   docker compose ps
-  python scripts/ops_report.py
+  python scripts/ops/ops_report.py
   Start-Sleep -Seconds 900
 }
 ```
@@ -173,7 +173,7 @@ while ($true) {
 git log --oneline -5
 git revert <bad_commit_sha>
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-python scripts/ops_report.py
+python scripts/ops/ops_report.py
 ```
 
 If schema changes were applied, restore from the Supabase backup/snapshot or

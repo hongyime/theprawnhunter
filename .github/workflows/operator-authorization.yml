@@ -5,12 +5,12 @@ on:
     branches: [main]
     paths:
       - "supabase/**"
-      - "scripts/test_operator_authorization.py"
+      - "scripts/dev/test_operator_authorization.py"
       - ".github/workflows/operator-authorization.yml"
   pull_request:
     paths:
       - "supabase/**"
-      - "scripts/test_operator_authorization.py"
+      - "scripts/dev/test_operator_authorization.py"
       - ".github/workflows/operator-authorization.yml"
 
 permissions:
@@ -44,4 +44,4 @@ jobs:
           PGUSER: fixture
           PGPASSWORD: synthetic-ci-only
           PGDATABASE: prawn_hunter_auth_fixture_ci
-        run: python scripts/test_operator_authorization.py
+        run: python scripts/dev/test_operator_authorization.py

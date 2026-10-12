@@ -1,31 +1,40 @@
-"""Guards against deployment validation becoming an unconditional success."""
+"""The deployment validator must import the symbols that the app exposes."""
 
 from __future__ import annotations
 
-import ast
+import importlib.util
 from pathlib import Path
 
-VALIDATOR = Path(__file__).resolve().parents[2] / "scripts" / "validate_deployment.py"
+VALIDATOR = Path(__file__).resolve().parents[2] / "scripts" / "deploy" / "validate_deployment.py"
 
 
-def test_import_checks_execute_real_imports():
-    tree = ast.parse(VALIDATOR.read_text(encoding="utf-8"))
-    functions = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-    }
+def _load_validator():
+    spec = importlib.util.spec_from_file_location("deployment_validator", VALIDATOR)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-    for name in (
-        "test_core_imports",
-        "test_service_imports",
-        "test_task_imports",
-        "test_api_imports",
-        "test_helper_imports",
-    ):
-        imports = (
-            node
-            for node in ast.walk(functions[name])
-            if isinstance(node, ast.Import | ast.ImportFrom)
-        )
-        assert next(imports, None) is not None, f"{name} does not validate any import"
+
+def test_import_probes_load_current_symbols(capsys):
+    validator = _load_validator()
+    checks = (
+        validator.test_core_imports,
+        validator.test_service_imports,
+        validator.test_task_imports,
+        validator.test_api_imports,
+        validator.test_helper_imports,
+    )
+
+    assert all(check() for check in checks)
+    output = capsys.readouterr().out
+    assert "import failed" not in output
+
+
+def test_feature_and_security_probes_use_current_apis(capsys):
+    validator = _load_validator()
+
+    assert validator.test_new_features()
+    assert validator.test_security()
+    output = capsys.readouterr().out
+    assert "failed" not in output.lower()

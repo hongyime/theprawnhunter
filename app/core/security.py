@@ -11,7 +11,7 @@ Rotation runbook:
   2. Move current ENCRYPTION_KEY to ENCRYPTION_KEY_LEGACY (comma-append if legacy already set)
   3. Set ENCRYPTION_KEY to the new key
   4. Restart workers — decryption still works via MultiFernet fallback
-  5. Run scripts/rotate_credentials.py to re-encrypt all stored ciphertext under the new primary
+  5. Run scripts/ops/one_off/rotate_credentials.py to re-encrypt all stored ciphertext under the new primary
   6. When re-encryption is fully done, remove the old key from ENCRYPTION_KEY_LEGACY
 
 Never delete a legacy key while rows encrypted with it still exist —

@@ -240,7 +240,7 @@ Dashboard authorization requires a signed-in UUID, the authenticated JWT role an
 
 Migration `20260912121145_restrict_dashboard_operator_access.sql` restricts the three dashboard tables, checks the existing feedback RPC before privileged writes, and makes the redacted evidence view read-only with an operator filter and security barrier. It preserves the redaction expression and keeps raw-table access revoked. The existing definer view is retained to avoid granting access to private raw fields; the JWT helper uses invoker privileges. No stored records are changed by this migration.
 
-Authorization regression checks run in the `Operator authorization` workflow against synthetic PostgreSQL records without application imports or provider credentials. To run locally, create an empty loopback PostgreSQL database named `prawn_hunter_auth_fixture_<suffix>`, supply standard `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` environment variables, and run `python scripts/test_operator_authorization.py` (`PSQL` optionally selects the client executable). The fixture reproduces the previous bypasses before applying the migration, then exercises real role, RLS, view and RPC allow/deny outcomes. It must never target an application database.
+Authorization regression checks run in the `Operator authorization` workflow against synthetic PostgreSQL records without application imports or provider credentials. To run locally, create an empty loopback PostgreSQL database named `prawn_hunter_auth_fixture_<suffix>`, supply standard `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` environment variables, and run `python scripts/dev/test_operator_authorization.py` (`PSQL` optionally selects the client executable). The fixture reproduces the previous bypasses before applying the migration, then exercises real role, RLS, view and RPC allow/deny outcomes. It must never target an application database.
 
 ### API — health
 
@@ -373,7 +373,10 @@ theprawnhunter/
 ├── extension/               Manifest V3 Chrome extension (FOFA scraper → ingest)
 ├── frontend/                Next.js 16 analyst dashboard (TypeScript, Tailwind CSS 4)
 ├── imports/                 Drop CSV files here for auto-import
-├── scripts/                 Operational scripts (apply_migrations.ps1, decrypt_to_plaintext.py, etc.)
+├── scripts/
+│   ├── dev/                  Development tools and fixtures
+│   ├── deploy/               Bootstrap, release, and startup tooling
+│   └── ops/                  Runtime operations and one-off scripts
 ├── supabase/
 │   ├── config.toml
 │   └── migrations/          25 versioned migrations applied to live Supabase
@@ -390,6 +393,12 @@ theprawnhunter/
 ├── pyproject.toml           Ruff + mypy + pytest configuration
 └── requirements.txt         Pinned Python runtime dependencies
 ```
+
+Scripts are grouped by purpose. Manual recoveries live under `scripts/ops/one_off/`;
+the historical media backfills share `python scripts/ops/backfill_media.py`
+(`all`, `since`, or `telethon`) and default to dry-run. Pass `--apply` only when
+the corresponding database writes or Telegram delivery are intended. Legacy
+script names remain forwarding wrappers during the path transition.
 
 ---
 
@@ -456,7 +465,7 @@ The findings tables were introduced by migrations in `supabase/migrations/`, the
 
 Large `UPDATE` statements on `exfiltrated_messages` hit the 30 s free-tier statement timeout. Use the Management API with 500-row batches:
 ```powershell
-# See scripts/apply_migrations.ps1
+# See scripts/deploy/apply_migrations.ps1
 ```
 
 ### Supabase DB over quota
