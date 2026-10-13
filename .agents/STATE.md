@@ -3,8 +3,8 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** S9.1 complete; Hastebin search and paste failures can be hidden or marked done too early.
-- **Next-step:** Harden Hastebin failure handling for S9.2.
+- **Status:** S9.2 complete; Hastebin failures are logged and unfinished pastes stay queued for another scan.
+- **Next-step:** Add and run Hastebin failure tests for S9.3.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
@@ -40,7 +40,7 @@
   - [x] S8.3 Test Rentry — failure paths covered with REAL code, no fake stand-ins.
   - [x] S8.4 Commit Rentry — commit + push + tick this box + JOURNAL.md line with commit hash.
   - [x] S9.1 Vet Hastebin — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
-  - [ ] S9.2 Harden Hastebin — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [x] S9.2 Harden Hastebin — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [ ] S9.3 Test Hastebin — failure paths covered with REAL code, no fake stand-ins.
   - [ ] S9.4 Commit Hastebin — commit + push + tick this box + JOURNAL.md line with commit hash.
   - [ ] S10.1 Vet Wayback — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
