@@ -359,5 +359,5 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 ## 2026-10-14 — S9.4 Hastebin final commit
 
 - Committed the Hastebin provider, task, and failure tests with the S9.4 tick and notes. The scanner logs search and paste failures, keeps unfinished work for the next scan, backs off on failures, and stops raw requests cleanly after a rate limit. The two fixed searches, Exa's 25-result cap, and Hastebin's 12-hour schedule remain unchanged.
-- Final run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_hastebin_scanner_failures.py` — 19 passed, 0 failed. Syntax compilation and `git diff --check` passed. The code commit hash will be recorded in the next journal note.
+- Final run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_hastebin_scanner_failures.py` — 19 passed, 0 failed. Syntax compilation and `git diff --check` passed. S9.4 code commit: `6e2fa4f`.
 - S9.1 checkpoint: `44286cd`; S9.2 checkpoint: `963db9d`; S9.3 checkpoint: `0ad75ff`.
