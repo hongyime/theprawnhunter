@@ -113,3 +113,8 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - In `app/services/_bot_listener/common.py:54`, changed `_reply_and_delete` to call `update.message.reply_text(text, **kwargs)` instead of recursively calling itself. This lets Telegram commands send their reply and keeps the existing auto-delete scheduling intact.
 - Verified before the change: the existing telemetry tests failed with `RecursionError` at this line. After the change, the two focused tests exercising the real helper passed. A broader two-file run also hit two unrelated existing failures: an admin-message assertion mismatch and a missing `_wipe_conversation` import.
+
+## 2026-10-13 23:20 SGT — backfill retry fix (#2)
+
+- In `app/workers/tasks/audit_tasks.py:813-824`, moved Redis handled-marker writes until after the database update succeeds, and mark only rows returned by that update. If the update raises, the outer error handler returns while the messages remain unmarked and eligible for a retry.
+- Added a focused failure-then-retry regression in `tests/unit/test_general_backfill_safety.py`; all 8 tests in that file pass.

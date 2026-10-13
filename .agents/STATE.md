@@ -1,12 +1,12 @@
 # theprawnhunter — STATE
 
-## Current task (updated 2026-10-13 23:15 SGT)
+## Current task (updated 2026-10-13 23:20 SGT)
 
-- **Job:** Fix #1 complete; next is fix #2 from the latent-bugs audit (.agents/handoffs/2026-10-13-latent-bugs-audit.md).
-- **Status:** Fix #1 verified, implemented, and committed; relevant tests pass. Fix #2 is next.
+- **Job:** Fixes #1 and #2 complete; next is fix #3 from the latent-bugs audit (.agents/handoffs/2026-10-13-latent-bugs-audit.md).
+- **Status:** Fix #2 verified, implemented, and tested; backfill update failures leave messages unmarked for retry.
 - **Order (one at a time, one commit each):**
   1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit `93f2393c79f015f4ff78032546a5435414cadaa3`.
-  2. [ ] Backfill marks handled before DB update (audit_tasks.py:813-834) — mark only after success.
+  2. [x] Backfill marked handled before DB update (audit_tasks.py:813-824) — now marks only rows returned by a successful update; regression test passes.
   3. [ ] Login cleanup helpers never imported (_bot_listener/login.py:112 + 9 sites, :374) — import them.
   4. [ ] Extension deletes results before upload succeeds (extension/background.js:526-529) — delete only after success.
   5. [ ] Scrape batch failures only debug-logged (scraper_srv.py:473-475) — warn + count as failed so they retry.

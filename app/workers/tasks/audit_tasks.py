@@ -808,16 +808,14 @@ async def _backfill_general_messages_async(apply_changes: bool = False):
             logger.info(msg)
             return msg
 
-        # Claim before touching the DB. Redis failure stops the apply; a worker
-        # crash after the claim is fail-closed and cannot create duplicate sends.
-        claimed = _general_backfill_claim_rows(candidates)
-        if not claimed:
-            msg = "Backfill: another run already claimed the eligible messages; no rows were changed."
-            logger.info(msg)
-            return msg
-
-        updated_rows = await _update_general_backfill_batch([row["id"] for row in claimed])
+        updated_rows = await _update_general_backfill_batch([row["id"] for row in candidates])
         reset_count = len(updated_rows)
+
+        # Persist handled markers only for rows the database update actually
+        # changed, so a failed update leaves them eligible for a later run.
+        updated_ids = {row["id"] for row in updated_rows}
+        _general_backfill_claim_rows([row for row in candidates if row["id"] in updated_ids])
+
         msg = f"Backfill applied: requeued {reset_count} messages (batch cap {BATCH_SIZE})."
         logger.info(msg)
 

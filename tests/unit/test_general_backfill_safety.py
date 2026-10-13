@@ -92,6 +92,9 @@ class _FakeQuery:
     def execute(self):
         rows = self.database.rows[self.table_name]
         if self.payload is not None:
+            if self.database.fail_next_update:
+                self.database.fail_next_update = False
+                raise RuntimeError("temporary database failure")
             updated = []
             for row in rows:
                 if self._matches(row):
@@ -127,6 +130,7 @@ class _FakeDB:
             "exfiltrated_messages": messages,
         }
         self.update_calls = []
+        self.fail_next_update = False
 
     def table(self, table_name):
         return _FakeQuery(self, table_name)
@@ -243,6 +247,40 @@ async def test_backfill_apply_claims_pair_and_batches_state_reset(monkeypatch):
     repeated = await audit_tasks._backfill_general_messages_async(apply_changes=True)
     assert "no unprocessed" in repeated.lower()
     assert len(database.update_calls) == 1
+    assert delayed == [True]
+
+
+@pytest.mark.asyncio
+async def test_backfill_update_failure_leaves_messages_unmarked_for_retry(monkeypatch):
+    credential_id = "cred-eligible"
+    credentials = [{"id": credential_id, "status": "active", "meta": {"topic_id": 42}}]
+    messages = [
+        {
+            "id": "message-1001",
+            "credential_id": credential_id,
+            "telegram_msg_id": 1001,
+            "is_broadcasted": True,
+            "broadcast_claimed_at": None,
+        }
+    ]
+    database, redis_client = _wire_backfill_fakes(monkeypatch, credentials, messages)
+    database.fail_next_update = True
+    monkeypatch.setenv("BACKFILL_BATCH_SIZE", "2")
+    delayed = []
+    monkeypatch.setattr(flow_tasks, "broadcast_pending", SimpleNamespace(delay=lambda: delayed.append(True)))
+
+    failed = await audit_tasks._backfill_general_messages_async(apply_changes=True)
+
+    assert "failed" in failed.lower()
+    assert redis_client.members == set()
+    assert messages[0]["is_broadcasted"] is True
+    assert delayed == []
+
+    retried = await audit_tasks._backfill_general_messages_async(apply_changes=True)
+
+    assert "requeued 1 messages" in retried
+    assert redis_client.members == {f"{credential_id}:1001"}
+    assert messages[0]["is_broadcasted"] is False
     assert delayed == [True]
 
 
