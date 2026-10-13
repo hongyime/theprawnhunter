@@ -3,12 +3,12 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** S1.2 hardening complete; S1.3 tests next. Scanner edits remain on disk and uncommitted.
+- **Status:** S1.3 tests complete; S1.4 final scanner commit next. Scanner edits remain on disk and uncommitted.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
   - [x] S1.2 Harden GitHub search — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
-  - [ ] S1.3 Test GitHub search — failure paths covered with REAL code, no fake stand-ins.
+  - [x] S1.3 Test GitHub search — failure paths covered with REAL code, no fake stand-ins.
   - [ ] S1.4 Commit GitHub search — commit + push + tick this box + JOURNAL.md line with commit hash.
   - [ ] S2.1 Vet GitHub firehose — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
   - [ ] S2.2 Harden GitHub firehose — every failure logged clearly; no whole-run crash; work stays retryable next cycle.

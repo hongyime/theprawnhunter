@@ -158,3 +158,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - Added a shared Redis timer so code searches from separate workers stay at least 6.1 seconds apart. A rate reply now sets a shared wait. Repo and file fetch groups stop sending new requests as soon as one sees a rate limit, with no more than three already-started requests in that group. Failures still stay in the retry set and are only removed after a search and save succeed. The 10-search run cap and scan schedule are unchanged. S1.1 checkpoint: `4fa330f`. S1.2 checkpoint commit: this entry.
 
+## 2026-10-14 00:20 SGT — S1.3 GitHub search tests
+
+- The focused test file passed: 19 passed, 0 failed. The GitHub tests call the real provider and worker, with only GitHub replies and Redis faked. They cover provider outage, HTTP errors 403/404/422/500/503, 429 and both 403 rate limits, empty results, missing login, shared pacing, and a failed search continuing and running again on the next scan. S1.2 checkpoint: `8c9c888`. S1.3 checkpoint commit: this entry.
+
