@@ -281,3 +281,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - Added `tests/unit/test_github_gist_scanner_failures.py`. The tests call the real Gist provider and worker; only GitHub replies, Redis, result saving, scan logs, and waits are replaced (`:109-410`). They cover provider down, HTTP 401/403/404/422/500, an error inside HTTP 200, a secondary rate limit and a long rate wait, empty results, a failed file while another succeeds, retry on the next scan, retry after result saving fails, raw-file rate limits, a missing token, page size, request spacing, and the shared GitHub token rotation.
 - Command: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_github_gist_scanner_failures.py` — 15 passed, 0 failed. Pytest printed a Starlette warning and a Hypothesis in-memory warning; neither failed a test. `git diff --check` passed. S6.1 checkpoint: `d709a94`; S6.2 checkpoint: `712144d`. The S6.3 checkpoint hash will be recorded in S6.4.
+
+## 2026-10-14 — S6.4 Gist complete
+
+- Pushed the Gist provider, task, failure tests, and final state and journal notes to `main`. The Gist list stays at 100 items on page 1; failed file work stays in Redis until its results save; rate waits use the shared GitHub Search pause; and a failed file does not stop later files. The focused run passed 15 tests with 0 failures. Checkpoints: S6.1 `d709a94`; S6.2 `712144d`; S6.3 `586980c`. The Gist code commit hash will be added after this commit is pushed.
