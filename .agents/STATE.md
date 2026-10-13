@@ -1,5 +1,20 @@
 # theprawnhunter — STATE
 
+## Current task (updated 2026-10-13 23:15 SGT)
+
+- **Job:** Fix #1 complete; next is fix #2 from the latent-bugs audit (.agents/handoffs/2026-10-13-latent-bugs-audit.md).
+- **Status:** Fix #1 verified and implemented; relevant tests pass. Ready to commit and push.
+- **Order (one at a time, one commit each):**
+  1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit hash to be recorded after commit.
+  2. [ ] Backfill marks handled before DB update (audit_tasks.py:813-834) — mark only after success.
+  3. [ ] Login cleanup helpers never imported (_bot_listener/login.py:112 + 9 sites, :374) — import them.
+  4. [ ] Extension deletes results before upload succeeds (extension/background.js:526-529) — delete only after success.
+  5. [ ] Scrape batch failures only debug-logged (scraper_srv.py:473-475) — warn + count as failed so they retry.
+- **Supervision rules (Bryan 2026-10-13):** small steps, one at a time, no wandering; update STATE.md + JOURNAL.md after EACH small step (tick the checkbox above + append a journal line); liveness checks every few minutes (process alive, log growing, deliverable moved); on crash, verify state from scratch and resume from STATE.md checkpoint, never restart from zero. Tests must use REAL helpers, no fake stand-ins.
+- **After all five:** rebuild worker only (+ bot container for fixes 1 and 3), verify healthy, brief log watch for new crashes.
+- **Note:** an earlier gate-state block written at 22:58 SGT was overwritten when the redirect job committed its own STATE.md changes (5a370ed). Re-applied here. Lesson: commit STATE.md promptly; uncommitted shared state can be clobbered by a concurrent job.
+
+
 Last updated: 2026-09-18 (prawn-ui batch)
 
 ## Repo identity

@@ -51,7 +51,7 @@ async def _auto_delete_msg(msg, delay=AUTO_DELETE_SECONDS):
 
 async def _reply_and_delete(update, text, delay=AUTO_DELETE_SECONDS, **kwargs):
     """Reply to a message and schedule auto-deletion."""
-    sent = await _reply_and_delete(update, text, **kwargs)
+    sent = await update.message.reply_text(text, **kwargs)
     asyncio.create_task(_auto_delete_msg(sent, delay))
     return sent
 

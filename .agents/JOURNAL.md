@@ -102,3 +102,14 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Resumed from disk: HEAD 789887a, fix already on disk in app/workers/tasks/flows/honeypot.py + tests/unit/test_honeypot_redirect_bugs.py. Fix verified by reading the diff: Telegram response body kept on non-success, HTTP status saved, error built as "HTTP <status>: <error text>", "unknown" fallback removed from DB update and failure log.
 - Tests re-run by supervisor (repo .venv): 9 passed. Earlier unconfirmed report now confirmed.
 - Next: commit + push, rebuild worker only, 10-minute live-log watch (redirect failures should drop or carry a real reason).
+
+## 2026-10-13 23:15 SGT — 5-fix job starting (gate cleared)
+
+- Gate cleared: redirect error fix landed as 5a370ed. 5-fix Codex run starting now; no other Codex job on this repo.
+- Earlier 22:58 gate-state block was overwritten by the redirect job's own STATE.md commit (5a370ed) — re-applied. Lesson recorded: commit shared state promptly.
+- Supervision (Bryan 2026-10-13): small steps one at a time; STATE.md + JOURNAL.md after EACH step; liveness checks every few minutes; resume from checkpoint on crash, never restart from zero.
+
+## 2026-10-13 23:15 SGT — bot reply helper fix (#1)
+
+- In `app/services/_bot_listener/common.py:54`, changed `_reply_and_delete` to call `update.message.reply_text(text, **kwargs)` instead of recursively calling itself. This lets Telegram commands send their reply and keeps the existing auto-delete scheduling intact.
+- Verified before the change: the existing telemetry tests failed with `RecursionError` at this line. After the change, the two focused tests exercising the real helper passed. A broader two-file run also hit two unrelated existing failures: an admin-message assertion mismatch and a missing `_wipe_conversation` import.
