@@ -284,4 +284,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 ## 2026-10-14 — S6.4 Gist complete
 
-- Pushed the Gist provider, task, failure tests, and final state and journal notes to `main`. The Gist list stays at 100 items on page 1; failed file work stays in Redis until its results save; rate waits use the shared GitHub Search pause; and a failed file does not stop later files. The focused run passed 15 tests with 0 failures. Checkpoints: S6.1 `d709a94`; S6.2 `712144d`; S6.3 `586980c`. The Gist code commit hash will be added after this commit is pushed.
+- Pushed the Gist provider, task, failure tests, and final state and journal notes to `main` as `12f54d3`. The Gist list stays at 100 items on page 1; failed file work stays in Redis until its results save; rate waits use the shared GitHub Search pause; and a failed file does not stop later files. The focused run passed 15 tests with 0 failures. Checkpoints: S6.1 `d709a94`; S6.2 `712144d`; S6.3 `586980c`; S6.4 code `12f54d3`.
