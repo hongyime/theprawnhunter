@@ -215,3 +215,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 ## 2026-10-14 — S3.4 Shodan code pushed
 
 - Committed the Shodan provider and worker changes, the Shodan-only active-check warning option, the 14 new Shodan failure tests, and the current state and journal notes. The 4-hour main scan and 6-hour C2 schedule were left as they were. The code commit hash will be recorded with the final S3.4 tick. S3.1 checkpoint: `e739246`; S3.2 checkpoint: `f22d5b2`; S3.3 checkpoint: `e05506a`.
+
+## 2026-10-14 — S3.4 Shodan complete
+
+- Pushed the Shodan code, tests, and state notes to `main` as `506defc`. The final focused tests passed 29 with 0 failures. The S3.4 completion tick is committed with this journal entry. Checkpoints: S3.1 `e739246`; S3.2 `f22d5b2`; S3.3 `e05506a`; S3.4 code `506defc`.
