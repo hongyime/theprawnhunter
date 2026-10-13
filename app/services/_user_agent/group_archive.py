@@ -1,8 +1,6 @@
 """User-agent group and archive operations."""
 
 from .common import *
-from .session_lifecycle import UserAgentSessionUnavailableError
-
 
 class UserAgentGroupArchive:
     async def invite_bot_to_group(self, bot_username: str, group_id: int | str) -> bool:
@@ -119,9 +117,7 @@ class UserAgentGroupArchive:
     async def find_topic_id(self, group_id: int | str, topic_name: str) -> int | None:
         async with self.lock:
             if not await self.start():
-                raise UserAgentSessionUnavailableError(
-                    "No usable Telegram user session is available to resolve forum topics."
-                )
+                raise RuntimeError("No usable Telegram user session is available to resolve forum topics.")
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)
@@ -153,9 +149,7 @@ class UserAgentGroupArchive:
         """Return a forum topic's title, or ``None`` when the topic is absent."""
         async with self.lock:
             if not await self.start():
-                raise UserAgentSessionUnavailableError(
-                    "No usable Telegram user session is available to inspect forum topics."
-                )
+                raise RuntimeError("No usable Telegram user session is available to inspect forum topics.")
             try:
                 target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
                 entity = await self.client.get_entity(target)

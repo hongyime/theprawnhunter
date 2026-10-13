@@ -33,31 +33,9 @@ class StrictQuery:
         self.filters.append((column, value))
         return self
 
-    @property
-    def not_(self):
-        return self
-
     def gte(self, column, value):
         self.filters_started = True
         self.filters.append((column, value))
-        return self
-
-    def lt(self, column, value):
-        self.filters_started = True
-        self.filters.append((column, value))
-        return self
-
-    def is_(self, column, value):
-        self.filters_started = True
-        self.filters.append((f"is:{column}", value))
-        return self
-
-    def in_(self, column, values):
-        self.filters_started = True
-        self.filters.append((f"in:{column}", values))
-        return self
-
-    def order(self, *_args, **_kwargs):
         return self
 
     def or_(self, value):
@@ -124,27 +102,16 @@ async def test_honeypot_sweep_requeues_pending_evidence(monkeypatch):
     from app.workers.tasks import flow_tasks
 
     pending_message = {"credential_id": "cred-1", "telegram_msg_id": -101}
-    queries = []
-
-    class FakeDb:
-        def table(self, table_name):
-            query = StrictQuery(table_name)
-            queries.append(query)
-            return query
-
-    responses = iter([
-        SimpleNamespace(data=[]),
-        SimpleNamespace(data=[]),
-        SimpleNamespace(data=[]),
-        SimpleNamespace(data=[pending_message]),
-    ])
-
-    async def fake_async_execute(query):
-        assert query.table_name in {"honeypot_updates", "exfiltrated_messages"}
-        return next(responses)
-
-    monkeypatch.setattr(flow_tasks, "db", FakeDb())
-    monkeypatch.setattr(flow_tasks, "async_execute", fake_async_execute)
+    monkeypatch.setattr(flow_tasks, "db", MagicMock())
+    monkeypatch.setattr(
+        flow_tasks,
+        "async_execute",
+        AsyncMock(side_effect=[
+            SimpleNamespace(data=[]),
+            SimpleNamespace(data=[]),
+            SimpleNamespace(data=[pending_message]),
+        ]),
+    )
     monkeypatch.setattr(flow_tasks.settings, "HONEYPOT_REDIRECT_MODE", True)
     monkeypatch.setattr(flow_tasks.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
     send_task = MagicMock()
@@ -153,11 +120,6 @@ async def test_honeypot_sweep_requeues_pending_evidence(monkeypatch):
     result = await flow_tasks._honeypot_redirect_sweep_logic()
 
     assert result == {"status": "ok", "dispatched": 0, "skipped": 0, "pending": 0}
-    assert len(queries) == 4
-    for query in queries[2:]:
-        retry_filter = next(value for key, value in query.filters if key == "or")
-        assert retry_filter.startswith("and(or(next_retry_at.is.null,next_retry_at.lte.")
-        assert ",or(broadcast_claimed_at.is.null,broadcast_claimed_at.lt." in retry_filter
     send_task.assert_called_once_with(
         "flow.broadcast_honeypot_message",
         kwargs={"credential_id": "cred-1", "telegram_msg_id": -101},

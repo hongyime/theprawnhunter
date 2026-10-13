@@ -302,65 +302,6 @@ async def test_session_unavailable_does_not_consume_broadcast_attempt_budget(mon
     assert second_delay == 6 * 60 * 60
 
 
-@pytest.mark.asyncio
-async def test_topic_failed_broadcast_retry_delay_doubles(monkeypatch):
-    from app.workers.tasks import flow_tasks
-
-    fake_db = _FakeDb()
-    payloads = []
-
-    async def fake_async_execute(query):
-        payloads.append(dict(query.payload))
-        return SimpleNamespace(data=[query.payload])
-
-    monkeypatch.setenv("MAX_BROADCAST_ATTEMPTS", "8")
-    monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", str(24 * 60 * 60))
-    monkeypatch.setenv("BROADCAST_RETRY_JITTER_RATIO", "0")
-    monkeypatch.setattr(flow_tasks, "db", fake_db)
-    monkeypatch.setattr(flow_tasks, "async_execute", fake_async_execute)
-    monkeypatch.setattr(flow_tasks.AuditLogger, "log", lambda *args, **kwargs: None)
-
-    error = BroadcastSendError(
-        "topic_failed",
-        "Could not resolve topic because no user session is available.",
-        retryable=True,
-    )
-    await flow_tasks._mark_broadcast_failure(
-        {"id": "msg-topic", "credential_id": "cred-1", "broadcast_attempts": 0},
-        error,
-        claim_token="claim-topic-1",
-    )
-
-    first_payload = payloads[0]
-    first_delay = (
-        datetime.fromisoformat(first_payload["next_retry_at"])
-        - datetime.fromisoformat(first_payload["broadcast_error"]["failed_at"])
-    ).total_seconds()
-    assert first_payload["broadcast_attempts"] == 1
-    assert first_payload["broadcast_error"]["reason"] == "topic_failed"
-    assert first_delay == 15 * 60
-
-    await flow_tasks._mark_broadcast_failure(
-        {
-            "id": "msg-topic",
-            "credential_id": "cred-1",
-            "broadcast_attempts": first_payload["broadcast_attempts"],
-            "broadcast_error": first_payload["broadcast_error"],
-        },
-        error,
-        claim_token="claim-topic-2",
-    )
-
-    second_payload = payloads[1]
-    second_delay = (
-        datetime.fromisoformat(second_payload["next_retry_at"])
-        - datetime.fromisoformat(second_payload["broadcast_error"]["failed_at"])
-    ).total_seconds()
-    assert second_payload["broadcast_attempts"] == 2
-    assert second_payload["broadcast_error"]["reason"] == "topic_failed"
-    assert second_delay == 30 * 60
-
-
 @pytest.mark.parametrize(
     ("previous_attempts", "expected_attempts", "terminal"),
     [(6, 7, False), (7, 8, True)],

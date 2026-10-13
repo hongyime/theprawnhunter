@@ -114,18 +114,12 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
             )
     except Exception as topic_err:
         logger.error(f"[HoneypotBroadcast] Could not ensure topic: {topic_err}")
-        from app.services.broadcaster_srv import BroadcastSendError
-
-        if not await _mark_broadcast_failure(
-            msg,
-            BroadcastSendError(
-                "topic_failed",
-                f"Could not resolve topic '{topic_name}': {topic_err}",
-                retryable=True,
-            ),
-            claim_token=claim_time,
-        ):
-            return {"status": "fenced_out"}
+        await async_execute(
+            db.table("exfiltrated_messages")
+            .update({"broadcast_claimed_at": None})
+            .eq("id", msg["id"])
+            .eq("broadcast_claimed_at", claim_time)
+        )
         return {"status": "topic_failed", "error": str(topic_err)}
 
     if attachment_only:
@@ -518,19 +512,14 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         dispatched += 1
 
     # Durable retry for deferred honeypot broadcasts and pending evidence files.
-    broadcast_now = datetime.now(UTC)
-    stale_broadcast_cutoff = (broadcast_now - timedelta(minutes=5)).isoformat()
-    broadcast_retry_cutoff = broadcast_now.isoformat()
+    stale_broadcast_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     broadcast_queries = (
         db.table("exfiltrated_messages")
         .select("credential_id, telegram_msg_id")
         .eq("is_broadcasted", False)
         .eq("file_meta->>source", "bot_api")
         .lt("telegram_msg_id", 0)
-        .or_(
-            f"and(or(next_retry_at.is.null,next_retry_at.lte.{broadcast_retry_cutoff}),"
-            f"or(broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{stale_broadcast_cutoff}))"
-        )
+        .or_(f"broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{stale_broadcast_cutoff}")
         .limit(20),
         db.table("exfiltrated_messages")
         .select("credential_id, telegram_msg_id")
@@ -538,10 +527,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         .eq("file_meta->>source", "bot_api")
         .eq("file_meta->>honeypot_evidence_file_status", "pending")
         .lt("telegram_msg_id", 0)
-        .or_(
-            f"and(or(next_retry_at.is.null,next_retry_at.lte.{broadcast_retry_cutoff}),"
-            f"or(broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{stale_broadcast_cutoff}))"
-        )
+        .or_(f"broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{stale_broadcast_cutoff}")
         .limit(20),
     )
     broadcast_retry_count = 0
