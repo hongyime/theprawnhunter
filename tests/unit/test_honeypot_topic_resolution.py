@@ -65,14 +65,10 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
         SimpleNamespace(data=[{"id": message["id"]}]),
         SimpleNamespace(data=[{"meta": {**message["discovered_credentials"]["meta"], "keep": "value"}}]),
         SimpleNamespace(data=[{"id": credential_id}]),
-        SimpleNamespace(data=[{"id": message["id"]}]),
-        SimpleNamespace(data=[]),
-        SimpleNamespace(data=[{"id": message["id"]}]),
     ])
     broadcaster = SimpleNamespace(
         ensure_topic=AsyncMock(return_value=correct_topic_id),
         send_message=AsyncMock(return_value=9002),
-        send_document=AsyncMock(return_value=9003),
     )
 
     monkeypatch.setattr(flow_tasks, "db", fake_db)
@@ -91,14 +87,8 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
         preferred_topic_id=stale_topic_id,
     )
     broadcaster.send_message.assert_awaited_once_with(-100123, correct_topic_id, message)
-    broadcaster.send_document.assert_awaited_once_with(
-        -100123,
-        correct_topic_id,
-        broadcaster.send_document.await_args.args[2],
-        "honeypot-evidence-101.json",
-    )
-    assert fake_db.queries[3].table_name == "discovered_credentials"
-    assert fake_db.queries[3].update_payload == {
+    assert fake_db.queries[-1].table_name == "discovered_credentials"
+    assert fake_db.queries[-1].update_payload == {
         "meta": {
             "bot_username": "ExampleBot",
             "bot_id": 123456,

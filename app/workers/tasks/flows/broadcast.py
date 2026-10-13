@@ -127,7 +127,6 @@ async def _apply_broadcast_claimed_update(
         .update(payload)
         .eq("id", msg_id)
         .eq("broadcast_claimed_at", claim_token)
-        .select("id")
     )
     return bool(response.data)
 
@@ -155,7 +154,6 @@ async def _update_message_broadcast_success(
     msg_id: str,
     broadcast_message_id: int | None = None,
     claim_token: str | None = None,
-    additional_payload: dict[str, Any] | None = None,
 ) -> bool:
     from datetime import datetime
 
@@ -165,8 +163,6 @@ async def _update_message_broadcast_success(
         "broadcast_claimed_at": None,
         "broadcasted_at": now_iso,
     }
-    if additional_payload:
-        payload.update(additional_payload)
     if broadcast_message_id is not None:
         # INTR-001: persist so retries recognise a prior successful send
         # and skip the duplicate `sendMessage` call.

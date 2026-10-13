@@ -463,60 +463,6 @@ class BroadcasterService:
             retryable=True,
         )
 
-    async def send_document(
-        self,
-        group_id: int | str,
-        thread_id: int,
-        document: bytes,
-        filename: str,
-    ) -> int | None:
-        """Send a document to a topic, rotating through the broadcaster bots."""
-        last_failure: BroadcastSendError | None = None
-        for _ in range(len(self._pool)):
-            identity = next(self._cycle)
-            await self._wait_for_rate_limit()
-            if identity["type"] != "bot":
-                continue
-
-            token = identity["id"]
-            if token in self._failed_tokens:
-                continue
-
-            bot = self._get_bot_instance(token)
-            try:
-                sent = await bot.send_document(
-                    chat_id=group_id,
-                    message_thread_id=thread_id,
-                    document=document,
-                    filename=filename,
-                    disable_content_type_detection=False,
-                )
-                return getattr(sent, "message_id", None)
-            except Forbidden as exc:
-                self._failed_tokens.add(token)
-                last_failure = _classify_broadcast_exception(exc)
-                logger.warning(f"⚠️ Bot {token[:10]}... kicked while sending document. Rotating...")
-            except RetryAfter as exc:
-                self._flood_wait_hits += 1
-                last_failure = _classify_broadcast_exception(exc)
-                logger.warning(f"⚠️ Bot {token[:10]}... flood-waited while sending document. Rotating...")
-            except (TimedOut, NetworkError, TimeoutError) as exc:
-                last_failure = _classify_broadcast_exception(exc)
-                logger.warning(f"⚠️ Bot document send transient failure: {last_failure.reason}: {exc}")
-            except TelegramError as exc:
-                last_failure = _classify_broadcast_exception(exc)
-                if last_failure.reason == "topic_missing" or not last_failure.retryable:
-                    raise last_failure from exc
-                logger.error(f"❌ Bot document send failed: {exc}")
-
-        if last_failure:
-            raise last_failure
-        raise BroadcastSendError(
-            "all_identities_failed",
-            "All identities failed to send document",
-            retryable=True,
-        )
-
     def _acquire_system_log_slot(self) -> bool:
         min_interval = float(getattr(settings, "TELEGRAM_LOG_MIN_INTERVAL_SECONDS", 2.0) or 0)
         if min_interval <= 0:
