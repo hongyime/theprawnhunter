@@ -420,6 +420,6 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 ## 2026-10-14 — S11.4 Telegram search final commit
 
-- Committing the Telegram search task, its search-only service change, the focused tests, and these checklist notes together. Search failures now name the search and next step, one ordinary failure does not stop later searches, session problems stop cleanly, and FloodWait waits fully before this run stops.
+- Committed the Telegram search task, its search-only service change, the focused tests, and the checklist notes together. Search failures now name the search and next step, one ordinary failure does not stop later searches, session problems stop cleanly, and FloodWait waits fully before this run stops.
 - Final focused test run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_telegram_search_scanner.py` — 4 passed, 0 failed. One Starlette deprecation warning did not fail a test. `git diff --check` passed.
-- S11.1 checkpoint: `ad07289`; S11.2 checkpoint: `6fdd5d2`; S11.3 checkpoint: `d565627`. The S11.4 code commit hash will be written after the push.
+- S11.1 checkpoint: `ad07289`; S11.2 checkpoint: `6fdd5d2`; S11.3 checkpoint: `d565627`; S11.4 code commit: `ad62920`. The push was verified with `git log --oneline -2` and `git status --porcelain`; only the pre-existing `.agents/handoffs/` folder remains untracked.
