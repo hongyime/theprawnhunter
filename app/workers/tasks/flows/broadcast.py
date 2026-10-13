@@ -22,13 +22,16 @@ def _queue_revoked_topic_close(cred_id: str, reason: str) -> None:
         logger.warning(f"[TopicClose] Could not queue revoked-topic close for {cred_id}: {exc}")
 
 
-def _broadcast_retry_delay_seconds(reason: str, retryable: bool, retry_after_seconds: int | None) -> int:
+def _broadcast_retry_delay_seconds(
+    reason: str,
+    retryable: bool,
+    retry_after_seconds: int | None,
+    attempt_number: int = 1,
+) -> int:
     session_unavailable = reason == MEDIA_ARCHIVE_SESSION_UNAVAILABLE_REASON
     if session_unavailable:
         # User sessions need a real cooldown before media can be downloaded.
         base_delay = 3 * 60 * 60
-    elif retry_after_seconds:
-        base_delay = max(60, int(retry_after_seconds) + 30)
     elif not retryable:
         base_delay = 24 * 3600
     elif reason == "timeout":
@@ -44,19 +47,23 @@ def _broadcast_retry_delay_seconds(reason: str, retryable: bool, retry_after_sec
 
     max_delay = max(60, int(os.getenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", str(24 * 3600))))
     delay = min(base_delay, max_delay)
-    if not retryable:
-        return delay
+    remaining_doublings = max(0, int(attempt_number) - 1)
+    while remaining_doublings and delay < max_delay:
+        delay = min(delay * 2, max_delay)
+        remaining_doublings -= 1
 
-    jitter_ratio = max(0.0, min(float(os.getenv("BROADCAST_RETRY_JITTER_RATIO", "0.20")), 0.50))
-    jitter = int(delay * jitter_ratio)
-    if jitter <= 0:
-        return delay
-    jittered_delay = max(60, delay + random.randint(-jitter, jitter))
-    # The retry-delay setting is an upper bound. Keep that guarantee for the
-    # patient session-cooldown retry after adding jitter.
-    if session_unavailable:
-        return min(max_delay, jittered_delay)
-    return jittered_delay
+    if retryable:
+        jitter_ratio = max(0.0, min(float(os.getenv("BROADCAST_RETRY_JITTER_RATIO", "0.20")), 0.50))
+        jitter = int(delay * jitter_ratio)
+        if jitter > 0:
+            delay = max(60, min(max_delay, delay + random.randint(-jitter, jitter)))
+
+    # Telegram's RetryAfter value is a lower bound, even when it exceeds our
+    # configured cap. The cap still bounds the exponential backoff itself.
+    if retry_after_seconds is not None:
+        telegram_minimum = max(60, int(retry_after_seconds) + 30)
+        delay = max(delay, telegram_minimum)
+    return delay
 
 _BROADCAST_RELIABILITY_COLUMNS_AVAILABLE: bool | None = None
 
@@ -271,6 +278,16 @@ async def _mark_broadcast_failure(
     now = datetime.now(UTC)
     previous_attempts = int(msg.get("broadcast_attempts") or 0)
     session_unavailable = reason == MEDIA_ARCHIVE_SESSION_UNAVAILABLE_REASON
+    previous_error = msg.get("broadcast_error")
+    previous_session_cooldown_waits = 0
+    if isinstance(previous_error, dict):
+        try:
+            previous_session_cooldown_waits = max(
+                0, int(previous_error.get("session_cooldown_waits") or 0)
+            )
+        except (TypeError, ValueError):
+            pass
+    session_cooldown_waits = previous_session_cooldown_waits + int(session_unavailable)
     # Session cooldowns are not failed delivery attempts. Preserve the normal
     # failure count so this transient condition cannot exhaust the retry budget.
     attempts = previous_attempts if session_unavailable else previous_attempts + 1
@@ -291,6 +308,7 @@ async def _mark_broadcast_failure(
                 "retryable": False,
                 "failed_at": now.isoformat(),
                 "terminal_at_attempts": attempts,
+                "session_cooldown_waits": session_cooldown_waits,
             },
             "broadcast_attempts": attempts,
             "next_retry_at": None,
@@ -336,7 +354,13 @@ async def _mark_broadcast_failure(
         )
         return True
 
-    delay_seconds = _broadcast_retry_delay_seconds(reason, retryable, retry_after_seconds)
+    retry_step = session_cooldown_waits if session_unavailable else attempts
+    delay_seconds = _broadcast_retry_delay_seconds(
+        reason,
+        retryable,
+        retry_after_seconds,
+        attempt_number=retry_step,
+    )
     next_retry_at = (now + timedelta(seconds=delay_seconds)).isoformat()
     payload = {
         "broadcast_claimed_at": None,
@@ -345,6 +369,7 @@ async def _mark_broadcast_failure(
             "detail": str(detail)[:500],
             "retryable": retryable,
             "failed_at": now.isoformat(),
+            "session_cooldown_waits": session_cooldown_waits,
         },
         "broadcast_attempts": attempts,
         "next_retry_at": next_retry_at,

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -153,21 +154,64 @@ def test_broadcast_retry_delay_has_cap_and_jitter(monkeypatch):
         "flood_wait",
         retryable=True,
         retry_after_seconds=None,
+        attempt_number=5,
     )
 
-    assert delay == 660
+    assert delay == 600
+
+
+def test_broadcast_retry_delay_doubles_per_failed_try(monkeypatch):
+    from app.workers.tasks import flow_tasks
+
+    monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", str(24 * 60 * 60))
+    monkeypatch.setenv("BROADCAST_RETRY_JITTER_RATIO", "0")
+
+    delays = [
+        flow_tasks._broadcast_retry_delay_seconds(
+            "flood_wait",
+            retryable=True,
+            retry_after_seconds=None,
+            attempt_number=attempt,
+        )
+        for attempt in range(1, 5)
+    ]
+
+    assert delays == [30 * 60, 60 * 60, 2 * 60 * 60, 4 * 60 * 60]
+
+
+def test_telegram_retry_after_is_always_a_minimum(monkeypatch):
+    from app.workers.tasks import flow_tasks
+
+    monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", "600")
+    monkeypatch.setenv("BROADCAST_RETRY_JITTER_RATIO", "0")
+
+    delay = flow_tasks._broadcast_retry_delay_seconds(
+        "timeout",
+        retryable=True,
+        retry_after_seconds=1200,
+        attempt_number=1,
+    )
+
+    assert delay == 1230
 
 
 def test_session_unavailable_gets_patient_delay_only_within_existing_cap(monkeypatch):
     from app.workers.tasks import flow_tasks
 
-    monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", "14400")
+    monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", str(24 * 60 * 60))
     monkeypatch.setenv("BROADCAST_RETRY_JITTER_RATIO", "0")
 
     session_delay = flow_tasks._broadcast_retry_delay_seconds(
         "media_archive_session_unavailable",
         retryable=True,
         retry_after_seconds=None,
+        attempt_number=1,
+    )
+    next_session_delay = flow_tasks._broadcast_retry_delay_seconds(
+        "media_archive_session_unavailable",
+        retryable=True,
+        retry_after_seconds=None,
+        attempt_number=2,
     )
     timeout_delay = flow_tasks._broadcast_retry_delay_seconds(
         "timeout",
@@ -176,6 +220,7 @@ def test_session_unavailable_gets_patient_delay_only_within_existing_cap(monkeyp
     )
 
     assert session_delay == 3 * 60 * 60
+    assert next_session_delay == 6 * 60 * 60
     assert timeout_delay == 5 * 60
 
     monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", "600")
@@ -185,6 +230,7 @@ def test_session_unavailable_gets_patient_delay_only_within_existing_cap(monkeyp
         "media_archive_session_unavailable",
         retryable=True,
         retry_after_seconds=None,
+        attempt_number=5,
     )
     assert capped_session_delay == 600
 
@@ -194,13 +240,14 @@ async def test_session_unavailable_does_not_consume_broadcast_attempt_budget(mon
     from app.workers.tasks import flow_tasks
 
     fake_db = _FakeDb()
-    captured = {}
+    payloads = []
 
     async def fake_async_execute(query):
-        captured["payload"] = query.payload
+        payloads.append(dict(query.payload))
         return SimpleNamespace(data=[query.payload])
 
     monkeypatch.setenv("MAX_BROADCAST_ATTEMPTS", "8")
+    monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", str(24 * 60 * 60))
     monkeypatch.setenv("BROADCAST_RETRY_JITTER_RATIO", "0")
     monkeypatch.setattr(flow_tasks, "db", fake_db)
     monkeypatch.setattr(flow_tasks, "async_execute", fake_async_execute)
@@ -216,15 +263,53 @@ async def test_session_unavailable_does_not_consume_broadcast_attempt_budget(mon
         claim_token="claim-session",
     )
 
-    payload = captured["payload"]
-    assert payload["broadcast_attempts"] == 7
-    assert payload["broadcast_error"]["reason"] == "media_archive_session_unavailable"
-    assert "broadcast_status" not in payload
-    assert payload["next_retry_at"]
+    first_payload = payloads[0]
+    assert first_payload["broadcast_attempts"] == 7
+    assert first_payload["broadcast_error"]["reason"] == "media_archive_session_unavailable"
+    assert first_payload["broadcast_error"]["session_cooldown_waits"] == 1
+    assert "broadcast_status" not in first_payload
+    assert first_payload["next_retry_at"]
+    first_delay = (
+        datetime.fromisoformat(first_payload["next_retry_at"])
+        - datetime.fromisoformat(first_payload["broadcast_error"]["failed_at"])
+    ).total_seconds()
+    assert first_delay == 3 * 60 * 60
+
+    # A new worker reads the previous JSON details from the row to resume the
+    # session cooldown sequence after restarting.
+    await flow_tasks._mark_broadcast_failure(
+        {
+            "id": "msg-session",
+            "credential_id": "cred-1",
+            "broadcast_attempts": first_payload["broadcast_attempts"],
+            "broadcast_error": first_payload["broadcast_error"],
+        },
+        BroadcastSendError(
+            "media_archive_session_unavailable",
+            "No usable user session.",
+            retryable=True,
+        ),
+        claim_token="claim-session-restarted",
+    )
+
+    second_payload = payloads[1]
+    assert second_payload["broadcast_attempts"] == 7
+    assert second_payload["broadcast_error"]["session_cooldown_waits"] == 2
+    second_delay = (
+        datetime.fromisoformat(second_payload["next_retry_at"])
+        - datetime.fromisoformat(second_payload["broadcast_error"]["failed_at"])
+    ).total_seconds()
+    assert second_delay == 6 * 60 * 60
 
 
+@pytest.mark.parametrize(
+    ("previous_attempts", "expected_attempts", "terminal"),
+    [(6, 7, False), (7, 8, True)],
+)
 @pytest.mark.asyncio
-async def test_other_broadcast_failure_still_exhausts_on_attempt_eight(monkeypatch):
+async def test_other_broadcast_failure_uses_exact_eight_attempt_limit(
+    monkeypatch, previous_attempts, expected_attempts, terminal
+):
     from app.workers.tasks import flow_tasks
 
     fake_db = _FakeDb()
@@ -235,21 +320,36 @@ async def test_other_broadcast_failure_still_exhausts_on_attempt_eight(monkeypat
         return SimpleNamespace(data=[query.payload])
 
     monkeypatch.setenv("MAX_BROADCAST_ATTEMPTS", "8")
+    monkeypatch.setenv("BROADCAST_RETRY_MAX_DELAY_SECONDS", str(24 * 60 * 60))
+    monkeypatch.setenv("BROADCAST_RETRY_JITTER_RATIO", "0")
     monkeypatch.setattr(flow_tasks, "db", fake_db)
     monkeypatch.setattr(flow_tasks, "async_execute", fake_async_execute)
     monkeypatch.setattr(flow_tasks.AuditLogger, "log", lambda *args, **kwargs: None)
 
     await flow_tasks._mark_broadcast_failure(
-        {"id": "msg-timeout", "credential_id": "cred-1", "broadcast_attempts": 7},
+        {
+            "id": "msg-timeout",
+            "credential_id": "cred-1",
+            "broadcast_attempts": previous_attempts,
+        },
         BroadcastSendError("timeout", "send exceeded timeout", retryable=True),
         claim_token="claim-timeout",
     )
 
     payload = captured["payload"]
-    assert payload["broadcast_attempts"] == 8
-    assert payload["broadcast_status"] == "permanent_failed"
-    assert payload["is_broadcasted"] is True
-    assert payload["next_retry_at"] is None
+    assert payload["broadcast_attempts"] == expected_attempts
+    if terminal:
+        assert payload["broadcast_status"] == "permanent_failed"
+        assert payload["is_broadcasted"] is True
+        assert payload["next_retry_at"] is None
+    else:
+        assert "broadcast_status" not in payload
+        assert payload["next_retry_at"]
+        delay = (
+            datetime.fromisoformat(payload["next_retry_at"])
+            - datetime.fromisoformat(payload["broadcast_error"]["failed_at"])
+        ).total_seconds()
+        assert delay == 5 * 60 * 2 ** (expected_attempts - 1)
 
 
 @pytest.mark.asyncio
