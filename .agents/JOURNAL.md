@@ -123,3 +123,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - In `app/services/_bot_listener/login.py:4`, imported `_wipe_conversation` and `schedule_deletion` from their existing owner, `app/services/_bot_listener/commands.py` (definitions at lines 341 and 330). Login referenced `_wipe_conversation` in the cleanup, cancel, and timeout paths, and `schedule_deletion` for delayed final-login notices, without either name being bound in `login.py`; `common.py` does not export them. The focused test reproduced `NameError: name '_wipe_conversation' is not defined` at the first cleanup call.
 - Updated `tests/unit/test_bot_listener_security.py` so the failing login path exercises the real wipe helper, and added a real-helper check for delayed deletion using a fake Telegram API boundary. `.venv/bin/pytest -q tests/unit/test_bot_listener_security.py` passes (3 tests).
+
+## 2026-10-13 23:33 SGT — extension result retention (#4)
+
+- In `extension/background.js:136-154` and `:519-594`, storage-full cleanup and result-cap pruning now attempt the API upload first and remove old results only when the response satisfies the existing `res.ok` success check. Missing API settings, HTTP errors, exhausted retries, and timeouts leave results available for another upload attempt; the 300-result target and 50-result storage retry target are unchanged.

