@@ -450,4 +450,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - Committed and pushed the Netlas provider, scan task, focused tests, and checklist notes together. The changes report failures with their search and next step, continue after ordinary failures, wait the requested time after a rate limit, keep failed searches for the next scan, and enforce request and result caps. No other scanner code or F1/F2 boxes were changed.
 - Focused tests: 17 passed, 0 failed. No real Netlas request or key was used. `git diff --check` passed.
-- S12.1 checkpoint: `55884a9`; S12.2 checkpoint: `bc38737`; S12.3 checkpoint: `ef68cff`. The S12.4 code commit hash will be added after the push.
+- S12.1 checkpoint: `55884a9`; S12.2 checkpoint: `bc38737`; S12.3 checkpoint: `ef68cff`; S12.4 code commit: `7836c18`. The push was checked with `git log --oneline -2` and `git status --porcelain`; only the pre-existing `.agents/handoffs/` folder remains untracked.
