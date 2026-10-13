@@ -3,8 +3,8 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** S6.4 complete; Gist code and tests are pushed, and all 15 focused tests pass.
-- **Next-step:** Stop here; the supervisor starts scanner 7.
+- **Status:** S7.1 complete; Exa review found provider failures can look like clean empty searches.
+- **Next-step:** Complete S7.2: harden Exa failure logs, retry handling, and rate limits.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
@@ -31,7 +31,7 @@
   - [x] S6.2 Harden Gist — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [x] S6.3 Test Gist — failure paths covered with REAL code, no fake stand-ins.
   - [x] S6.4 Commit Gist — commit + push + tick this box + JOURNAL.md line with commit hash.
-  - [ ] S7.1 Vet Exa — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [x] S7.1 Vet Exa — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
   - [ ] S7.2 Harden Exa — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [ ] S7.3 Test Exa — failure paths covered with REAL code, no fake stand-ins.
   - [ ] S7.4 Commit Exa — commit + push + tick this box + JOURNAL.md line with commit hash.
