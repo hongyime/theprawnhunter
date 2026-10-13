@@ -3,7 +3,7 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** S1.3 tests complete; S1.4 final scanner commit next. Scanner edits remain on disk and uncommitted.
+- **Status:** S1.4 code and tests complete; final scanner commit next. The S1.4 checkbox tick follows after that push.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
