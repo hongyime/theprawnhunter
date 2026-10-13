@@ -1,13 +1,13 @@
 # theprawnhunter — STATE
 
-## Current task (updated 2026-10-13 23:27 SGT)
+## Current task (updated 2026-10-13 23:28 SGT)
 
 - **Job:** Fixes #1, #2, and #3 complete; next is fix #4 from the latent-bugs audit (.agents/handoffs/2026-10-13-latent-bugs-audit.md).
 - **Status:** Fix #3 verified, implemented, and tested; login imports the real cleanup and deletion helpers from `_bot_listener/commands.py`.
 - **Order (one at a time, one commit each):**
   1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit `93f2393c79f015f4ff78032546a5435414cadaa3`.
   2. [x] Backfill marked handled before DB update (audit_tasks.py:813-824) — now marks only rows returned by a successful update; regression test passes; commit `0ce213c29843e45757aa7a58fe93bc4fe0ac2ec9`.
-  3. [x] Login cleanup helpers never imported (_bot_listener/login.py) — imported `_wipe_conversation` and `schedule_deletion` from `_bot_listener/commands.py`; real-helper login tests pass.
+  3. [x] Login cleanup helpers never imported (_bot_listener/login.py) — imported `_wipe_conversation` and `schedule_deletion` from `_bot_listener/commands.py`; real-helper login tests pass; commit `cb8ed1c0f235e0f0545c5119f77e37e5124d5956`.
   4. [ ] Extension deletes results before upload succeeds (extension/background.js:526-529) — delete only after success.
   5. [ ] Scrape batch failures only debug-logged (scraper_srv.py:473-475) — warn + count as failed so they retry.
 - **Supervision rules (Bryan 2026-10-13):** small steps, one at a time, no wandering; update STATE.md + JOURNAL.md after EACH small step (tick the checkbox above + append a journal line); liveness checks every few minutes (process alive, log growing, deliverable moved); on crash, verify state from scratch and resume from STATE.md checkpoint, never restart from zero. Tests must use REAL helpers, no fake stand-ins.
