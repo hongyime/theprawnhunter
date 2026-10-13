@@ -61,6 +61,22 @@ def test_supabase_fake_rejects_select_after_filter():
 
 
 @pytest.mark.asyncio
+async def test_real_evidence_claim_check_uses_datetime(monkeypatch):
+    from app.workers.tasks.flows import honeypot as honeypot_tasks
+
+    monkeypatch.setattr(honeypot_tasks, "db", StrictFakeDb())
+    monkeypatch.setattr(
+        honeypot_tasks,
+        "async_execute",
+        AsyncMock(return_value=SimpleNamespace(data=[{"id": "message-1"}])),
+    )
+
+    valid = await honeypot_tasks._is_honeypot_evidence_claim_valid("message-1", "claim-token")
+
+    assert valid is True
+
+
+@pytest.mark.asyncio
 async def test_summary_update_persists_pending_evidence_with_default_rows(monkeypatch):
     from app.workers.tasks.flows import broadcast as broadcast_tasks
 

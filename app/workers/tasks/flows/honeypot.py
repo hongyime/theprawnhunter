@@ -225,7 +225,7 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
 
 async def _is_honeypot_evidence_claim_valid(msg_id: str, claim_token: str) -> bool:
     """Confirm ownership of the pending evidence attachment before sending it."""
-    from datetime import timedelta
+    from datetime import datetime, timedelta
 
     stale_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     response = await async_execute(
