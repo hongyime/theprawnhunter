@@ -1,6 +1,25 @@
 """Scanner task implementations for exa."""
 
 from ..common import *
+from app.infrastructure.scanners.providers.exa import (
+    ExaKeyFailure,
+    ExaQuotaFailure,
+    ExaRateLimitFailure,
+    ExaSearchFailure,
+)
+
+
+EXA_RETRY_QUEUE = "scanner:exa:pending_queries"
+EXA_DEFAULT_QUERIES = [
+    '"api.telegram.org/bot"',
+    '"TELEGRAM_BOT_TOKEN"',
+    '"bot_token" "telegram"',
+]
+
+
+def _decode_exa_query(value) -> str:
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
 
 @app.task(name="scanner.scan_exa", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
 def scan_exa(query: str = None):
@@ -11,48 +30,108 @@ def scan_exa(query: str = None):
     """
     return _run_sync(_scan_exa_async(query))
 
+
 async def _scan_exa_async(query: str = None):
     if redis_client.get("system:paused"):
         return "System Paused"
 
-    # Guard: skip if Exa key is broken (401/403)
-    EXA_COOLDOWN_KEY = "cooldown:scanner:exa_api_broken"  # noqa: N806 — function-scoped constant
-    EXA_COOLDOWN_TTL = int(os.getenv("EXA_BROKEN_COOLDOWN_SECS", 82800))  # noqa: N806 — function-scoped constant  # 23h default
-    if redis_client.get(EXA_COOLDOWN_KEY):
-        ttl = redis_client.ttl(EXA_COOLDOWN_KEY)
-        logger.info(f"⏭️ [Exa] API key on cooldown ({ttl}s remaining) — skipping scan.")
-        return "Exa API key on cooldown — skipped."
+    new_queries = [query] if query else EXA_DEFAULT_QUERIES
+    queue_error = None
+    try:
+        pending_queries = [_decode_exa_query(value) for value in redis_client.lrange(EXA_RETRY_QUEUE, 0, -1)]
+    except Exception as error:
+        pending_queries = []
+        queue_error = error
+        logger.error(
+            "[Exa] Could not read saved searches before this scan: %s. Running current searches and asking Celery to retry.",
+            error,
+        )
 
-    queries = [query] if query else [
-        '"api.telegram.org/bot"',
-        '"TELEGRAM_BOT_TOKEN"',
-        '"bot_token" "telegram"',
-    ]
+    queries = list(dict.fromkeys(pending_queries + new_queries))
+    logger.info("🔍 [Exa] Starting paste-site scan (%s searches)...", len(queries))
 
-    logger.info(f"🔍 [Exa] Starting paste-site scan ({len(queries)} queries)...")
-    await _send_log_async(f"🔍 [Exa] Scanning paste sites via Exa ({len(queries)} queries)...")
-
-    total_saved = 0
-    errors = []
-
-    for q in queries:
+    async def send_status(message: str):
         try:
-            results = await exa_srv.search(q)
-            logger.info(f"    ✅ [Exa] Query '{q[:50]}' returned {len(results)} matches.")
+            await _send_log_async(message)
+        except Exception as error:
+            logger.error("[Exa] Could not send scan status: %s. The scan will continue.", error)
+
+    async def retain_queries(searches: list[str]):
+        nonlocal queue_error
+        for search in searches:
+            try:
+                saved = {_decode_exa_query(value) for value in redis_client.lrange(EXA_RETRY_QUEUE, 0, -1)}
+                if search not in saved:
+                    redis_client.rpush(EXA_RETRY_QUEUE, search)
+            except Exception as error:
+                queue_error = queue_error or error
+                logger.error(
+                    "[Exa] Could not keep search %r for the next scan: %s. Celery will retry this task.",
+                    search,
+                    error,
+                )
+
+    async def clear_completed(search: str):
+        nonlocal queue_error
+        try:
+            redis_client.lrem(EXA_RETRY_QUEUE, 0, search)
+        except Exception as error:
+            queue_error = queue_error or error
+            logger.error(
+                "[Exa] Search %r completed, but its saved retry entry could not be cleared: %s. Celery will retry this task.",
+                search,
+                error,
+            )
+
+    await send_status(f"🔍 [Exa] Scanning paste sites via Exa ({len(queries)} searches)...")
+    total_saved = 0
+    failed_searches = 0
+
+    for index, search in enumerate(queries):
+        try:
+            results = await exa_srv.search(search, raise_on_error=True)
+            if results:
+                logger.info("[Exa] Search %r returned %s token matches.", search, len(results))
+            else:
+                logger.info("[Exa] Search %r completed with no token matches.", search)
             saved = await _save_credentials_async(results, "exa")
             total_saved += saved
-        except Exception as e:
-            err_str = str(e)
-            logger.error(f"    ❌ [Exa] Query failed: {err_str}")
-            errors.append(err_str)
-            if "401" in err_str or "403" in err_str or "auth" in err_str.lower():
-                redis_client.set(EXA_COOLDOWN_KEY, "1", ex=EXA_COOLDOWN_TTL)
-                msg = f"⚠️ [Exa] Auth error — API key invalid or quota exhausted. Cooldown set for {EXA_COOLDOWN_TTL//3600}h. Check dashboard.exa.ai."
-                logger.warning(msg)
-                await _send_log_async(msg)
-                break
-        await asyncio.sleep(2)
+            await clear_completed(search)
+        except (ExaKeyFailure, ExaQuotaFailure, ExaRateLimitFailure) as error:
+            failed_searches += 1
+            remaining = queries[index:]
+            await retain_queries(remaining)
+            reason = "no usable key" if isinstance(error, ExaKeyFailure) else "provider limit reached"
+            message = (
+                f"⚠️ [Exa] Search {search!r} stopped: {error}. Kept {len(remaining)} search(es) "
+                f"for the next scan and stopped this run cleanly ({reason})."
+            )
+            logger.warning(message)
+            await send_status(message)
+            break
+        except ExaSearchFailure as error:
+            failed_searches += 1
+            await retain_queries([search])
+            message = f"❌ [Exa] Search {search!r} failed: {error}. Kept it for the next scan; continuing with other searches."
+            logger.error(message)
+            await send_status(message)
+        except Exception as error:
+            failed_searches += 1
+            await retain_queries([search])
+            message = f"❌ [Exa] Search {search!r} failed: {error}. Kept it for the next scan; continuing with other searches."
+            logger.exception(message)
+            await send_status(message)
+
+        if index < len(queries) - 1:
+            await asyncio.sleep(2)
+
+    if queue_error:
+        raise RuntimeError(
+            "Exa could not update its saved searches. Celery will retry this scan."
+        ) from queue_error
 
     msg = f"Exa scan finished. Saved {total_saved} new credentials."
-    await _send_log_async(f"🏁 [Exa] Finished. Saved {total_saved} new credentials.")
+    if failed_searches:
+        msg += f" Kept {failed_searches} failed search(es) for the next scan."
+    await send_status(f"🏁 [Exa] {msg}")
     return msg
