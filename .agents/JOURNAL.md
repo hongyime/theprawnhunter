@@ -149,3 +149,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 ## Login cleanup import audit — completed
 
 - Confirmed `login.py` already imports `schedule_deletion` from `.commands`; commit `cb8ed1c` introduced the import. The reported issue is already fixed, so no code change, tests, or commit were made.
+## 2026-10-14 00:11 SGT — S1.1 GitHub search vet
+
+- Read the GitHub worker, provider, and shared helpers. Network failures and HTTP errors become named search errors (`app/infrastructure/scanners/providers/github.py:222-239,381-397`); rate replies are detected and given a wait (`:182-220`); empty results count as success (`:280-281`). The worker logs failed searches, keeps them in Redis, carries on after ordinary errors, and stops after a rate limit (`app/workers/tasks/scanners/providers/github.py:108-163`). Missing login is clearly reported (`:93-99`; provider `:253-258`). It asks for 100 results and runs no more than 10 searches with at least 6.1 seconds between them (`:51,58-64,83,162-163`; provider `:267`). The weak points are that separate runs share no rate timer, and repo/file fetches can keep sending queued requests after a rate reply (`app/infrastructure/scanners/providers/github.py:116-128,285-288,364-375`). GitHub's current docs set code search to 10 requests per minute and 100 results per page; S1.2 will fix the two weak points. S1.1 checkpoint commit: this entry's commit.
+
