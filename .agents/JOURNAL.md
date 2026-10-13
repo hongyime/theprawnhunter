@@ -127,3 +127,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 ## 2026-10-13 23:33 SGT — extension result retention (#4)
 
 - In `extension/background.js:136-154` and `:519-594`, storage-full cleanup and result-cap pruning now attempt the API upload first and remove old results only when the response satisfies the existing `res.ok` success check. Missing API settings, HTTP errors, exhausted retries, and timeouts leave results available for another upload attempt; the 300-result target and 50-result storage retry target are unchanged.
+
+## 2026-10-13 23:38 SGT — scraper batch failure reporting (#5)
+
+- In `app/services/scraper_srv.py:473-490`, a failed Telethon `GetMessages` batch now emits a warning with chat, batch number, ID range, and exception type, then propagates the exception. The existing `MessageIdReader` catches and classifies it as a failed attempt; the existing classifier determines whether it is retryable. The surrounding error log redacts the bot token. Existing tests do not exercise this batch helper; syntax check is used per task instructions. No container rebuild was run; the supervisor handles it.

@@ -470,11 +470,23 @@ class ScraperService:
                                 "chat_id": chat_id,
                             }
                         )
-                except Exception as _swallowed:
-                    logger.debug(f"[suppressed batch] {_swallowed}")
-                    pass
+                except Exception as batch_error:
+                    logger.warning(
+                        "⚠️ [Scraper] GetMessages batch %s failed for chat %s "
+                        "(IDs %s-%s; %s).",
+                        i // chunk_size + 1,
+                        chat_id,
+                        batch[0],
+                        batch[-1],
+                        type(batch_error).__name__,
+                    )
+                    # Let MessageIdReader classify this scan as failed/retryable.
+                    raise
         except Exception as e:
-            logger.error(f"❌ [Scraper] Bruteforce Telethon error: {e}")
+            safe_error = str(e)
+            if bot_token:
+                safe_error = safe_error.replace(bot_token, "[REDACTED]")
+            logger.error(f"❌ [Scraper] Bruteforce Telethon error: {safe_error}")
             raise
         return msgs
 
