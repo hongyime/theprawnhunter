@@ -3,8 +3,8 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** S2.4 complete; GitHub firehose code and tests are committed and pushed.
-- **Next-step:** Stop here; the supervisor starts scanner 3.
+- **Status:** S3.1 complete; Shodan vet found hidden failures, missing search details in provider logs, and no clear missing-key warning.
+- **Next-step:** Harden only Shodan in S3.2.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
@@ -15,7 +15,7 @@
   - [x] S2.2 Harden GitHub firehose — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [x] S2.3 Test GitHub firehose — failure paths covered with REAL code, no fake stand-ins.
   - [x] S2.4 Commit GitHub firehose — commit + push + tick this box + JOURNAL.md line with commit hash.
-  - [ ] S3.1 Vet Shodan — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [x] S3.1 Vet Shodan — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
   - [ ] S3.2 Harden Shodan — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [ ] S3.3 Test Shodan — failure paths covered with REAL code, no fake stand-ins.
   - [ ] S3.4 Commit Shodan — commit + push + tick this box + JOURNAL.md line with commit hash.
