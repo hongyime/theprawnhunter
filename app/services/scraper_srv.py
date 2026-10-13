@@ -122,8 +122,42 @@ class ScraperService:
             classifier=self.classifier,
         )
 
+    async def _takeover_webhook_before_early_exit(
+        self, bot_token: str, credential_id: str | None
+    ) -> StrategyAttempt | None:
+        """Re-take an approved foreign webhook before a scrape short-circuits."""
+        if (
+            self.is_monitor_bot(bot_token)
+            or not credential_id
+            or not settings.HONEYPOT_MODE
+            or not settings.HONEYPOT_WEBHOOK_URL
+            or not settings.HONEYPOT_SECRET
+            or not self.webhook_state_service.is_credential_allowed(credential_id)
+        ):
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                decision = await self.webhook_state_service.prepare_polling(
+                    bot_token,
+                    client,
+                    strategy="webhook_takeover_preflight",
+                    credential_id=credential_id,
+                    takeover_only=True,
+                )
+            return decision.attempt
+        except Exception as exc:
+            logger.warning(
+                f"[Webhook] Early-exit takeover check failed for {credential_id[:8]}...: {exc}"
+            )
+            return None
+
     async def scrape_history(
-        self, bot_token: str, chat_id: int, limit: int = 3000
+        self,
+        bot_token: str,
+        chat_id: int,
+        limit: int = 3000,
+        credential_id: str | None = None,
     ) -> ScrapeResult:
         """
         Attempts to scrape chat history.
@@ -162,6 +196,11 @@ class ScraperService:
                     ScrapeReason.TOO_MANY_BOTS,
                     ScrapeReason.USER_AGENT_INVITE_FAILED,
                 ) and not preflight_attempt.retryable:
+                    webhook_attempt = await self._takeover_webhook_before_early_exit(
+                        bot_token, credential_id
+                    )
+                    if webhook_attempt and webhook_attempt.success:
+                        attempts.append(webhook_attempt)
                     return self.classifier.result_from_attempts(
                         [],
                         attempts,
@@ -182,6 +221,11 @@ class ScraperService:
             logger.info(
                 f"✨ [Scraper] Telethon normal dump success: {len(scraped_messages)} messages."
             )
+            webhook_attempt = await self._takeover_webhook_before_early_exit(
+                bot_token, credential_id
+            )
+            if webhook_attempt and webhook_attempt.success:
+                attempts.append(webhook_attempt)
             return self.classifier.result_from_attempts(
                 scraped_messages,
                 attempts,
@@ -190,7 +234,9 @@ class ScraperService:
 
         # Get 'Anchor' ID from Bot API (Strategy 3) to enable Strategy 2
         anchor_id = 0
-        api_outcome = await self.bot_api_update_reader.read(bot_token, limit=100)
+        api_outcome = await self.bot_api_update_reader.read(
+            bot_token, limit=100, credential_id=credential_id
+        )
         if api_outcome.attempt:
             attempts.append(api_outcome.attempt)
         for message in api_outcome.messages:

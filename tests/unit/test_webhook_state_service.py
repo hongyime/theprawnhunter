@@ -125,6 +125,34 @@ async def test_unapproved_foreign_webhook_is_not_repointed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_takeover_only_repoints_approved_webhook_without_delete_fallback(monkeypatch):
+    from app.services._scraper import strategies
+
+    monkeypatch.setattr(strategies.settings, "HONEYPOT_MODE", True)
+    monkeypatch.setattr(
+        strategies.settings, "HONEYPOT_WEBHOOK_URL", "https://ours.example/honeypot"
+    )
+    monkeypatch.setattr(strategies.settings, "HONEYPOT_SECRET", "secret-password")
+    monkeypatch.setattr(strategies.settings, "HONEYPOT_ALLOWLIST", "AUTO")
+
+    client = _FakeClient([
+        _Resp(payload={"ok": True, "result": {"url": "https://scammer.example/hook"}}),
+        _Resp(payload={"ok": True, "result": True}),
+    ])
+    decision = await WebhookStateService(allow_delete=True).prepare_polling(
+        "123:ABC",
+        client,
+        credential_id="credential-1",
+        takeover_only=True,
+    )
+
+    assert decision.can_poll is True
+    assert decision.attempt.evidence["honeypot_repointed"] is True
+    assert len(client.post_calls) == 1
+    assert client.post_calls[0][0][0].endswith("/setWebhook")
+
+
+@pytest.mark.asyncio
 async def test_webhook_present_delete_allowed_retries_polling():
     client = _FakeClient([
         _Resp(payload={"ok": True, "result": {"url": "https://example.test/hook"}}),

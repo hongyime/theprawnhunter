@@ -73,6 +73,20 @@ class WebhookStateService:
         self.allow_delete = allow_delete
         self.classifier = classifier or ScrapeResultClassifier()
 
+    @staticmethod
+    def is_credential_allowed(credential_id: str | None) -> bool:
+        if not credential_id:
+            return False
+
+        allowlist_raw = (settings.HONEYPOT_ALLOWLIST or "").strip()
+        if not allowlist_raw:
+            return False
+        return allowlist_raw.upper() == "AUTO" or credential_id in {
+            credential.strip()
+            for credential in allowlist_raw.split(",")
+            if credential.strip()
+        }
+
     async def _set_honeypot_webhook(
         self,
         bot_token: str,
@@ -89,15 +103,7 @@ class WebhookStateService:
         ):
             return False
 
-        allowlist_raw = (settings.HONEYPOT_ALLOWLIST or "").strip()
-        allowed = False
-        if allowlist_raw:
-            allowed = allowlist_raw.upper() == "AUTO" or credential_id in {
-                credential.strip()
-                for credential in allowlist_raw.split(",")
-                if credential.strip()
-            }
-        if not allowed:
+        if not self.is_credential_allowed(credential_id):
             return False
 
         base_url = f"https://api.telegram.org/bot{bot_token}"
@@ -145,6 +151,7 @@ class WebhookStateService:
         *,
         strategy: str = "bot_api_updates",
         credential_id: str | None = None,
+        takeover_only: bool = False,
     ) -> WebhookDecision:
         if not credential_id:
             import hashlib
@@ -278,6 +285,21 @@ class WebhookStateService:
                         "honeypot_repointed": True,
                         "honeypot_active": True,
                     },
+                ),
+            )
+
+        # Early scrape exits use this method only to perform an approved
+        # honeypot re-takeover. They must not fall through to the separate
+        # deleteWebhook policy when the honeypot gate is not satisfied.
+        if takeover_only:
+            return WebhookDecision(
+                can_poll=False,
+                webhook_url=webhook_url,
+                attempt=StrategyAttempt(
+                    name=strategy,
+                    reason=ScrapeReason.WEBHOOK_CONFLICT,
+                    retryable=False,
+                    evidence={**evidence, "takeover_only": True},
                 ),
             )
 

