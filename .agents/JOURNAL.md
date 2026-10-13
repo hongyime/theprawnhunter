@@ -258,3 +258,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 ## 2026-10-14 — S5.3 GrepApp tests
 
 - Added `tests/unit/test_grepapp_scanner_failures.py`. The tests call the real GrepApp provider and worker, replacing only HTTP replies, Redis, saving, status messages, and waits. They cover provider outage and a later scan, HTTP 401/403/404/422/500, an error inside HTTP 200, rate limiting and long wait requests, empty results, a page request that fails then recovers so later pages run, the five-page limit, one-second spacing, and the 100-hit limit. GrepApp has one fixed search, so there are no separate searches to test independently. Command: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_grepapp_scanner_failures.py` — 13 passed, 0 failed. Pytest showed one existing Starlette warning. Checkpoints: S5.1 `0dd4bb0`; S5.2 `9047c45`. The S5.3 checkpoint hash will be recorded in S5.4.
+
+## 2026-10-14 — S5.4 GrepApp code commit
+
+- The GrepApp provider now checks replies, reports failures with the search and next step, waits before retries, and limits pages and results. Added real-worker tests for outage, HTTP errors, rate limits, empty results, later-scan recovery, page and result limits, and continued paging after a temporary error. The focused run passed 13 tests with 0 failures. The code commit hash will be recorded with the S5.4 completion tick. Checkpoints: S5.1 `0dd4bb0`; S5.2 `9047c45`; S5.3 `6cd722b`.

@@ -3,8 +3,8 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** S5.3 complete; all 13 GrepApp failure tests pass.
-- **Next-step:** S5.4 — commit and push GrepApp code and tests.
+- **Status:** S5.4 ready; GrepApp code and tests are complete, and all 13 focused tests pass.
+- **Next-step:** Commit GrepApp code, tests, and notes; push and verify.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
