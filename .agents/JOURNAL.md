@@ -194,4 +194,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 ## 2026-10-14 — S2.4 GitHub firehose complete
 
-- Committed the firehose task, its failure-path tests, and the final S2.4 state and journal notes to `main`, then pushed to `origin main`. The final focused run passed 10 tests with 0 failures. The 30-second schedule was left unchanged. S2.4 code commit hash will be added after push. Stop here for the supervisor to start scanner 3.
+- Committed the firehose task, its failure-path tests, and the final S2.4 state and journal notes to `main`, then pushed to `origin main`. The final focused run passed 10 tests with 0 failures. The 30-second schedule was left unchanged. S2.4 code commit: `b1e9a61`. Stop here for the supervisor to start scanner 3.
