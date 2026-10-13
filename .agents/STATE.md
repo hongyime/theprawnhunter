@@ -3,9 +3,9 @@
 ## Current task (updated 2026-10-13 23:15 SGT)
 
 - **Job:** Fix #1 complete; next is fix #2 from the latent-bugs audit (.agents/handoffs/2026-10-13-latent-bugs-audit.md).
-- **Status:** Fix #1 verified and implemented; relevant tests pass. Ready to commit and push.
+- **Status:** Fix #1 verified, implemented, and committed; relevant tests pass. Fix #2 is next.
 - **Order (one at a time, one commit each):**
-  1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit hash to be recorded after commit.
+  1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit `93f2393c79f015f4ff78032546a5435414cadaa3`.
   2. [ ] Backfill marks handled before DB update (audit_tasks.py:813-834) — mark only after success.
   3. [ ] Login cleanup helpers never imported (_bot_listener/login.py:112 + 9 sites, :374) — import them.
   4. [ ] Extension deletes results before upload succeeds (extension/background.js:526-529) — delete only after success.
