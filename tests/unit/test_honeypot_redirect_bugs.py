@@ -130,9 +130,8 @@ def test_redirect_one_writes_redirect_1_sent_at_on_success():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
-    """When sendMessage returns a non-OK response, redirected_at must NOT be
-    written and the Redis dedup key must NOT be set."""
+async def test_redirect_one_failure_preserves_telegram_error(monkeypatch, caplog):
+    """A non-success Telegram reply is stored and logged with its real reason."""
     db_updates: list[dict] = []
     redis_sets: list[str] = []
 
@@ -184,12 +183,15 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
 
     # --- httpx stub: simulate failed send (ok=False) ---
     class FakeResponse:
-        status_code = 200
+        status_code = 400
 
         def json(self):
             return {"ok": False, "description": "Bad Request: chat not found"}
 
     class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -227,6 +229,22 @@ async def test_redirect_one_failure_does_not_mark_redirected(monkeypatch):
         )
 
     assert result["status"] == "failed"
+    expected_error = "HTTP 400: Bad Request: chat not found"
+    error_payloads = [
+        update["payload"]
+        for update in db_updates
+        if "redirect_error" in update.get("payload", {})
+    ]
+    assert error_payloads
+    assert error_payloads[-1]["redirect_error"] == expected_error
+    failure_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "[Redirect] FAILED" in record.getMessage()
+    ]
+    assert failure_logs
+    assert any(expected_error in message for message in failure_logs)
+    assert all("unknown" not in message.lower() for message in failure_logs)
 
     # BUG-5 / INTR-002: redirected_at must NOT be written to a real timestamp
     # on failure. It MAY be set to None (release-pending-claim, INTR-002).

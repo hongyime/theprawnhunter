@@ -96,3 +96,9 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - 2026-09-28 20:34:43 +08:00 [PRAWN-E14/claude/stop] branch=main head=efee9c2 dirty=0
 - 2026-09-28 20:34:43 +08:00 [PRAWN-E14/claude/stop] branch=main head=efee9c2 dirty=0
 - 2026-09-28 22:08:20 +08:00 [PRAWN-E14/claude/stop] branch=main head=2d5becb dirty=0
+
+## 2026-10-13 23:12 SGT — redirect error fix resumed (supervisor checkpoint)
+
+- Resumed from disk: HEAD 789887a, fix already on disk in app/workers/tasks/flows/honeypot.py + tests/unit/test_honeypot_redirect_bugs.py. Fix verified by reading the diff: Telegram response body kept on non-success, HTTP status saved, error built as "HTTP <status>: <error text>", "unknown" fallback removed from DB update and failure log.
+- Tests re-run by supervisor (repo .venv): 9 passed. Earlier unconfirmed report now confirmed.
+- Next: commit + push, rebuild worker only, 10-minute live-log watch (redirect failures should drop or carry a real reason).

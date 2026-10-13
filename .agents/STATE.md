@@ -79,3 +79,7 @@ Publish the reviewed portability and privacy maintenance from the current defaul
 - Dirty files: 0
 - Resume hint: Read .agents/STATE.md, then the latest file in .agents/handoffs/ if present.
 <!-- MOLT_AUTO_END -->
+
+## Checkpoint 2026-10-13 23:12 SGT — redirect error fix (resumed)
+
+- Fix verified on disk; 9/9 tests pass (supervisor-run). Next: commit, push, rebuild worker, 10-min log watch.

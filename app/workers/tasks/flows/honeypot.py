@@ -809,6 +809,7 @@ async def _honeypot_redirect_one_logic(
         return {"status": "fenced_out", "credential_id": credential_id}
 
     # Send the message via Bot API
+    http_status = None
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.post(
@@ -819,11 +820,30 @@ async def _honeypot_redirect_one_logic(
                     "disable_web_page_preview": False,
                 },
             )
-            resp = r.json() if r.status_code == 200 else {}
+            http_status = r.status_code
+            try:
+                response_body = r.json()
+            except ValueError:
+                response_body = {"error": str(getattr(r, "text", "")).strip()}
+            resp = (
+                response_body
+                if isinstance(response_body, dict)
+                else {"error": str(response_body)}
+            )
             sent_ok = r.status_code == 200 and resp.get("ok")
     except Exception as e:
         sent_ok = False
         resp = {"error": str(e)[:200]}
+
+    redirect_error = None
+    if not sent_ok:
+        error_text = str(
+            resp.get("description")
+            or resp.get("error")
+            or "Telegram returned no error details"
+        )
+        status_prefix = f"HTTP {http_status}: " if http_status is not None else ""
+        redirect_error = f"{status_prefix}{error_text}"[:200]
 
     # BUG-4 FIX: Write redirect_1_sent_at on first successful send
     # BUG-5 FIX: Only mark redirected_at / dedup on successful delivery
@@ -844,7 +864,7 @@ async def _honeypot_redirect_one_logic(
             update_payload = {
                 "redirected_at": None,
                 "redirect_claimed_at": None,
-                "redirect_error": str(resp.get("description") or resp.get("error", "unknown"))[:200],
+                "redirect_error": redirect_error,
                 "sender_user_id": user_id,
             }
         query = (
@@ -880,7 +900,7 @@ async def _honeypot_redirect_one_logic(
     else:
         logger.warning(
             f"🔀 [Redirect] FAILED cred:{credential_id[:8]}...: "
-            f"{resp.get('description', resp.get('error', 'unknown'))}"
+            f"{redirect_error}"
         )
 
     return {
