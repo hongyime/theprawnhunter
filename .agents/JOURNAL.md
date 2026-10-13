@@ -383,3 +383,9 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Covered CDX outage and later retry; HTTP 401, 404, 422, and 500; 403 and 429 waits and clean stop; no-result search; missing, empty, loading, and error snapshots; a failed snapshot followed by a good one; task save failure and retry; the result/request cap; and the list return used by the username pivot.
 - The first run had one failed assertion because it expected a successful snapshot to be written to the log. The assertion was corrected to check the saved result instead. Final run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_wayback_scanner_failures.py` — 21 passed, 0 failed. Pytest showed one Starlette deprecation warning and two Hypothesis memory warnings; none failed a test. Python syntax compilation and `git diff --check` passed.
 - S10.1 checkpoint: `8b0d282`; S10.2 checkpoint: `714c011`; the S10.3 checkpoint hash will be recorded in S10.4.
+
+## 2026-10-14 — S10.4 Wayback final commit
+
+- Committed the Wayback provider, task, and `tests/unit/test_wayback_scanner_failures.py` with the S10.4 tick. Failures now name the search or snapshot and the next step; unfinished snapshots stay saved until handled; rate limits wait or stop cleanly; and each run stays within the 500-result and 500-archive-request caps. The existing username pivot still gets a list from the service by default.
+- Final focused run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_wayback_scanner_failures.py` — 21 passed, 0 failed. Syntax compilation and `git diff --check` passed. One Starlette deprecation warning and two Hypothesis memory warnings did not fail tests. No schedule, login, database, or other scanner code changed.
+- S10.1 checkpoint: `8b0d282`; S10.2 checkpoint: `714c011`; S10.3 checkpoint: `dbec70b`; the final code commit hash will be added after the push.
