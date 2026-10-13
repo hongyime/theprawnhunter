@@ -2,6 +2,8 @@
 
 from .common import *
 
+MEDIA_ARCHIVE_SESSION_UNAVAILABLE_REASON = "media_archive_session_unavailable"
+
 def _queue_revoked_topic_close(cred_id: str, reason: str) -> None:
     if not getattr(settings, "AUTO_CLOSE_REVOKED_TOPICS", True):
         return
@@ -21,7 +23,11 @@ def _queue_revoked_topic_close(cred_id: str, reason: str) -> None:
 
 
 def _broadcast_retry_delay_seconds(reason: str, retryable: bool, retry_after_seconds: int | None) -> int:
-    if retry_after_seconds:
+    session_unavailable = reason == MEDIA_ARCHIVE_SESSION_UNAVAILABLE_REASON
+    if session_unavailable:
+        # User sessions need a real cooldown before media can be downloaded.
+        base_delay = 3 * 60 * 60
+    elif retry_after_seconds:
         base_delay = max(60, int(retry_after_seconds) + 30)
     elif not retryable:
         base_delay = 24 * 3600
@@ -45,7 +51,12 @@ def _broadcast_retry_delay_seconds(reason: str, retryable: bool, retry_after_sec
     jitter = int(delay * jitter_ratio)
     if jitter <= 0:
         return delay
-    return max(60, delay + random.randint(-jitter, jitter))
+    jittered_delay = max(60, delay + random.randint(-jitter, jitter))
+    # The retry-delay setting is an upper bound. Keep that guarantee for the
+    # patient session-cooldown retry after adding jitter.
+    if session_unavailable:
+        return min(max_delay, jittered_delay)
+    return jittered_delay
 
 _BROADCAST_RELIABILITY_COLUMNS_AVAILABLE: bool | None = None
 
@@ -258,14 +269,18 @@ async def _mark_broadcast_failure(
     detail = getattr(exc, "detail", str(exc)) or reason
     retry_after_seconds = getattr(exc, "retry_after_seconds", None)
     now = datetime.now(UTC)
-    attempts = int(msg.get("broadcast_attempts") or 0) + 1
+    previous_attempts = int(msg.get("broadcast_attempts") or 0)
+    session_unavailable = reason == MEDIA_ARCHIVE_SESSION_UNAVAILABLE_REASON
+    # Session cooldowns are not failed delivery attempts. Preserve the normal
+    # failure count so this transient condition cannot exhaust the retry budget.
+    attempts = previous_attempts if session_unavailable else previous_attempts + 1
 
     # DATA-003 / REL-003: cap infinite retry. When attempts exceed the budget,
     # move the row to a terminal `permanent_failed` state so the retry pool
     # stops churning on it. Row stays visible for operator triage via
     # broadcast_status='permanent_failed'.
     max_attempts = int(os.getenv("MAX_BROADCAST_ATTEMPTS", 8))
-    if attempts >= max_attempts:
+    if not session_unavailable and attempts >= max_attempts:
         terminal_payload: dict[str, Any] = {
             "is_broadcasted": True,  # exits the retry pool
             "broadcast_claimed_at": None,

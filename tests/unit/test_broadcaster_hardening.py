@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import itertools
 import logging
 import mimetypes
@@ -68,6 +69,22 @@ def test_android_package_mime_type_is_registered():
     assert mimetypes.guess_type("payload.apk", strict=False)[0] == (
         "application/vnd.android.package-archive"
     )
+
+
+def test_broadcast_rate_limit_sleep_reads_env_override(monkeypatch):
+    from app.core import constants
+    from app.services import broadcaster_srv
+
+    try:
+        with monkeypatch.context() as env:
+            env.setenv("BROADCAST_RATE_LIMIT_SLEEP_S", "3.75")
+            importlib.reload(constants)
+
+            service = broadcaster_srv.BroadcasterService()
+
+            assert service._min_delay == 3.75
+    finally:
+        importlib.reload(constants)
 
 
 @pytest.mark.asyncio

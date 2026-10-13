@@ -1,4 +1,6 @@
-# Application-wide constants — replaces magic numbers scattered across modules.
+"""Application-wide constants — replaces magic numbers scattered across modules."""
+
+import os
 
 # Bot listener distributed lock TTL (seconds)
 LOCK_TTL_SECONDS = 120
@@ -14,9 +16,9 @@ CLAIM_TIMEOUT_MINUTES = 15
 WORKER_HEARTBEAT_TIMEOUT_SECONDS = 45 * 60
 
 # Rate limit sleep between broadcast sends (seconds).
-# Telegram allows ~30 msg/s per bot globally. With multi-bot rotation we can
-# push 1 msg/s safely. 1.5s gives headroom for retries and API latency.
-BROADCAST_RATE_LIMIT_SLEEP = 1.5
+# The default keeps a 200-message batch under the 15-minute claim window while
+# giving Telegram more room than the previous 1.5s pause.
+BROADCAST_RATE_LIMIT_SLEEP = float(os.getenv("BROADCAST_RATE_LIMIT_SLEEP_S", "2.5"))
 
 # Maximum entries kept in scanner error buffers
 MAX_ERRORS_BUFFER = 100
