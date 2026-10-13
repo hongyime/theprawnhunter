@@ -3,9 +3,9 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** DNS FIXED 2026-10-14 ~07:19 SGT (Tailscale DNS management off, resolv.conf now 8.8.8.8 / 1.1.1.1, Bryan approved). Checkpoint 5a753d5 pushed. Scanners 1-10 done and pushed. Scanner 11 (Telegram search) RUNNING now.
+- **Status:** S11.1 Telegram search check complete. Some errors can look like empty results. Next: S11.2 hardening.
 - **Blocked (2026-10-14 ~03:42 SGT):** 3410 cannot resolve hostnames. Tailscale DNS 100.100.100.100 does not answer (Python resolver: Name or service not known). IP connectivity works (ping 8.8.8.8 0% loss; curl to GitHub by direct IP returns 200). Codex cannot reach its backend and pushes cannot reach GitHub until name resolution recovers. Supervisor did NOT change any network/DNS settings (read-only diagnosis only — fixing DNS on the production machine needs Bryan's call). Resume: when name resolution works again, relaunch scanner 11 with /tmp/codex-scanner-11-telegram-prompt.md, then scanner 12, then supervisor does F1 rebuild + F2 log watch.
-- **Next-step:** Scanner 11 running (S11.1–S11.4). Supervisor watches liveness, then starts scanner 12.
+- **Next-step:** S11.2 Telegram search hardening.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
@@ -48,7 +48,7 @@
   - [x] S10.2 Harden Wayback — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [x] S10.3 Test Wayback — failure paths covered with REAL code, no fake stand-ins.
   - [x] S10.4 Commit Wayback — commit + push + tick this box + JOURNAL.md line with commit hash.
-  - [ ] S11.1 Vet Telegram search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [x] S11.1 Vet Telegram search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
   - [ ] S11.2 Harden Telegram search — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [ ] S11.3 Test Telegram search — failure paths covered with REAL code, no fake stand-ins.
   - [ ] S11.4 Commit Telegram search — commit + push + tick this box + JOURNAL.md line with commit hash.
