@@ -131,3 +131,10 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 ## 2026-10-13 23:38 SGT — scraper batch failure reporting (#5)
 
 - In `app/services/scraper_srv.py:307-324` and `:473-490`, a failed Telethon `GetMessages` batch now emits a warning with chat, batch number, ID range, and exception type, then propagates the exception. The existing `MessageIdReader` classifies it as a failed attempt; when its existing rules say the error is retryable, the overall partial scrape stays retryable while keeping messages already collected. The surrounding error log redacts the bot token. Existing tests do not exercise this batch helper; syntax check is used per task instructions. No container rebuild was run; the supervisor handles it.
+
+## 2026-10-13 ~23:50 SGT - rebuild after all 5 fixes (supervisor)
+
+- Rebuilt ONLY worker + bot with base compose (`docker compose --profile full up -d --build --no-deps worker bot`) - base compose (NOT prod overlay) because the running worker had --concurrency=2 (base default; .env sets no override; prod overlay would have changed it to 6).
+- Both containers recreated, healthy, RestartCount 0. beat/api/redis/cloudflared untouched.
+- 6-min log scan: zero tracebacks / RecursionError / NameError / ImportError / CRITICAL in worker or bot. Worker tasks processing (broadcasts succeeding); bot polling with watchdog.
+- Known operational note (not a crash): all 4 Telegram user sessions on cooldown until ~2026-10-14 06:01 UTC; broadcaster falls back to trusting saved topic IDs and sends succeed.
