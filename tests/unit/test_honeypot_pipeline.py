@@ -55,6 +55,7 @@ async def test_broadcast_completion_is_fenced_to_claim_token(monkeypatch):
     class Query:
         def __init__(self):
             self.calls = []
+            self.filters_started = False
             queries.append(self)
 
         def update(self, payload):
@@ -63,9 +64,12 @@ async def test_broadcast_completion_is_fenced_to_claim_token(monkeypatch):
 
         def eq(self, column, value):
             self.calls.append(("eq", column, value))
+            self.filters_started = True
             return self
 
         def select(self, columns):
+            if self.filters_started:
+                raise AssertionError("select() must be called before filters")
             self.calls.append(("select", columns))
             return self
 
@@ -92,7 +96,12 @@ async def test_broadcast_completion_is_fenced_to_claim_token(monkeypatch):
     )
     for query in queries:
         assert ("eq", "broadcast_claimed_at", "claim-a" if query is queries[0] else "claim-b") in query.calls
-        assert ("select", "id") in query.calls
+        assert not any(call[0] == "select" for call in query.calls)
+
+    invalid_query = Query()
+    invalid_query.eq("id", "msg-1")
+    with pytest.raises(AssertionError, match=r"select\(\) must be called before filters"):
+        invalid_query.select("id")
 
 
 def test_extract_honeypot_message_photo_caption():
@@ -176,8 +185,10 @@ async def test_forward_honeypot_message_upserts_and_triggers_broadcast():
     mock_table = MagicMock()
     mock_table.select.return_value = mock_select
     mock_table.insert.return_value = mock_insert
+    mock_redis = types.SimpleNamespace(client=types.SimpleNamespace(set=MagicMock(return_value=True)))
 
     with patch("app.services.honeypot_srv.db.table", return_value=mock_table), \
+         patch("app.core.redis_srv.redis_srv", mock_redis), \
          patch("app.workers.celery_app.app.send_task") as mock_send_task:
         result = await forward_honeypot_message(payload, "cred-uuid-5")
 

@@ -1,8 +1,10 @@
 import asyncio
+import itertools
 import logging
 import mimetypes
 import sys
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from telegram.error import BadRequest, Forbidden, TimedOut
@@ -66,6 +68,33 @@ def test_android_package_mime_type_is_registered():
     assert mimetypes.guess_type("payload.apk", strict=False)[0] == (
         "application/vnd.android.package-archive"
     )
+
+
+@pytest.mark.asyncio
+async def test_send_document_targets_the_requested_topic():
+    from app.services.broadcaster_srv import BroadcasterService
+
+    service = BroadcasterService.__new__(BroadcasterService)
+    service._pool = [{"type": "bot", "id": "123:ABC"}]
+    service._cycle = itertools.cycle(service._pool)
+    service._failed_tokens = set()
+    service._flood_wait_hits = 0
+    service._wait_for_rate_limit = AsyncMock()
+    bot = _FakeBot()
+    service._get_bot_instance = lambda _token: bot
+
+    result = await service.send_document(-100123, 456, b'{"evidence": true}', "evidence.json")
+
+    assert result is None
+    assert bot.document_calls == [
+        {
+            "chat_id": -100123,
+            "message_thread_id": 456,
+            "document": b'{"evidence": true}',
+            "filename": "evidence.json",
+            "disable_content_type_detection": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio

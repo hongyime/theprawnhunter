@@ -33,8 +33,11 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
         def __init__(self, table_name):
             self.table_name = table_name
             self.update_payload = None
+            self.filters_started = False
 
         def select(self, *_args, **_kwargs):
+            if self.filters_started:
+                raise AssertionError("select() must be called before filters")
             return self
 
         def update(self, payload):
@@ -42,9 +45,11 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
             return self
 
         def eq(self, *_args, **_kwargs):
+            self.filters_started = True
             return self
 
         def or_(self, *_args, **_kwargs):
+            self.filters_started = True
             return self
 
         def limit(self, *_args, **_kwargs):
@@ -65,10 +70,14 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
         SimpleNamespace(data=[{"id": message["id"]}]),
         SimpleNamespace(data=[{"meta": {**message["discovered_credentials"]["meta"], "keep": "value"}}]),
         SimpleNamespace(data=[{"id": credential_id}]),
+        SimpleNamespace(data=[{"id": message["id"]}]),
+        SimpleNamespace(data=[]),
+        SimpleNamespace(data=[{"id": message["id"]}]),
     ])
     broadcaster = SimpleNamespace(
         ensure_topic=AsyncMock(return_value=correct_topic_id),
         send_message=AsyncMock(return_value=9002),
+        send_document=AsyncMock(return_value=9003),
     )
 
     monkeypatch.setattr(flow_tasks, "db", fake_db)
@@ -76,6 +85,7 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
     monkeypatch.setattr(flow_tasks, "get_broadcaster", lambda: broadcaster)
     monkeypatch.setattr(flow_tasks.settings, "MONITOR_GROUP_ID", -100123)
     monkeypatch.setattr(flow_tasks, "_is_broadcast_claim_valid", AsyncMock(return_value=True))
+    monkeypatch.setattr(flow_tasks, "_is_honeypot_evidence_claim_valid", AsyncMock(return_value=True))
     monkeypatch.setattr(flow_tasks, "_update_message_broadcast_success", AsyncMock(return_value=True))
 
     result = await flow_tasks._broadcast_single_honeypot_message(credential_id, telegram_msg_id)
@@ -87,8 +97,14 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
         preferred_topic_id=stale_topic_id,
     )
     broadcaster.send_message.assert_awaited_once_with(-100123, correct_topic_id, message)
-    assert fake_db.queries[-1].table_name == "discovered_credentials"
-    assert fake_db.queries[-1].update_payload == {
+    broadcaster.send_document.assert_awaited_once_with(
+        -100123,
+        correct_topic_id,
+        broadcaster.send_document.await_args.args[2],
+        "honeypot-evidence-101.json",
+    )
+    assert fake_db.queries[3].table_name == "discovered_credentials"
+    assert fake_db.queries[3].update_payload == {
         "meta": {
             "bot_username": "ExampleBot",
             "bot_id": 123456,
