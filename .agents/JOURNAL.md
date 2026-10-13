@@ -445,3 +445,9 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Added real-code tests for the Netlas task and provider. The tests fake Redis, the Netlas client replies, the log sender, and the save queue; they use a fake API key and send no real request. Coverage includes a connection failure and retry on the next scan, waiting the full rate-limit time before the next search, rejected and missing keys, empty results, and the request and result caps.
 - Ran `.venv/bin/pytest -p no:cacheprovider tests/unit/test_netlas_scanner.py tests/unit/test_scanner_provider_requests.py::test_netlas_scan_calls_search_with_only_the_query` — 10 passed, 0 failed. Ran the Netlas-specific cases from `tests/unit/test_scanner_preservation.py` — 7 passed, 0 failed. Total: 17 passed, 0 failed. The runs reported Starlette deprecation and Hypothesis cache warnings.
 - S12.1 checkpoint: `55884a9`; S12.2 checkpoint: `bc38737`. This S12.3 checkpoint hash will be recorded in S12.4.
+
+## 2026-10-14 — S12.4 Netlas final commit
+
+- Committed and pushed the Netlas provider, scan task, focused tests, and checklist notes together. The changes report failures with their search and next step, continue after ordinary failures, wait the requested time after a rate limit, keep failed searches for the next scan, and enforce request and result caps. No other scanner code or F1/F2 boxes were changed.
+- Focused tests: 17 passed, 0 failed. No real Netlas request or key was used. `git diff --check` passed.
+- S12.1 checkpoint: `55884a9`; S12.2 checkpoint: `bc38737`; S12.3 checkpoint: `ef68cff`. The S12.4 code commit hash will be added after the push.

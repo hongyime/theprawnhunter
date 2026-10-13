@@ -2,6 +2,31 @@
 
 from ..common import *
 
+
+class NetlasProviderError(Exception):
+    """A Netlas request failed and should be reported by its scanner task."""
+
+
+class NetlasMissingApiKey(NetlasProviderError):
+    """No Netlas account key is configured."""
+
+
+class NetlasRejectedApiKey(NetlasProviderError):
+    """Netlas rejected the configured account key."""
+
+
+class NetlasRateLimitError(NetlasProviderError):
+    """Netlas asked the scanner to wait before making another request."""
+
+    def __init__(self, retry_after: int):
+        self.retry_after = max(0, int(retry_after or 0))
+        super().__init__(f"Netlas rate limit reached; wait {self.retry_after} seconds")
+
+
+class NetlasDailyLimitReached(NetlasProviderError):
+    """All configured Netlas accounts have used their daily request allowance."""
+
+
 class NetlasService:
     """
     Netlas.io — internet-wide host/response search engine.
@@ -16,6 +41,8 @@ class NetlasService:
 
     # Daily limits per account (conservative — leave headroom)
     DAILY_LIMITS = {1: 45, 2: 90}   # slightly under 50/100 to be safe
+    MAX_REQUESTS_PER_RUN = 45
+    RESULTS_PER_REQUEST = 20
     REDIS_KEY_PREFIX = "netlas:daily_requests"
 
     def __init__(self):
@@ -24,6 +51,10 @@ class NetlasService:
             self.keys.append((1, settings.NETLAS_API_KEY_1))
         if settings.NETLAS_API_KEY_2:
             self.keys.append((2, settings.NETLAS_API_KEY_2))
+
+    @property
+    def has_api_keys(self) -> bool:
+        return bool(self.keys)
 
     def _redis(self):
         import redis as redis_lib
@@ -55,32 +86,84 @@ class NetlasService:
         """
         Run a single Netlas response search query.
         Returns list of {token, chat_id, meta} dicts.
-        Respects daily limits — returns [] if both accounts exhausted.
+        Respects daily limits. Raises a clear error when no key, quota, or
+        usable response is available so the task does not treat failure as an
+        empty result.
         """
         from app.services.scanners import CHAT_ID_PATTERN, TOKEN_PATTERN, _is_valid_token
 
         if not self.keys:
-            logger.warning("    [Netlas] No API keys configured (NETLAS_API_KEY_1 / _2)")
-            return []
+            raise NetlasMissingApiKey(
+                "No Netlas API key is configured (NETLAS_API_KEY_1 / _2)"
+            )
 
         try:
             r = self._redis()
             account = self._pick_account(r)
-            if account is None:
-                logger.warning("    [Netlas] Daily request limit reached for all accounts — skipping")
-                return []
+        except Exception as e:
+            raise NetlasProviderError(
+                f"Could not read Netlas account usage: {type(e).__name__}: {e}"
+            ) from e
 
-            account_num, api_key = account
+        if account is None:
+            raise NetlasDailyLimitReached(
+                "Daily request limit reached for all configured Netlas accounts"
+            )
 
-            # Run in thread — netlas SDK is synchronous
-            def _do_search():
-                import netlas
-                conn = netlas.Netlas(api_key=api_key)
-                # page=0 returns first page of results (default page size is 20)
-                return conn.query(query=query, datatype="response", page=0)
+        account_num, api_key = account
 
-            data = await asyncio.to_thread(_do_search)
+        # Run in a thread — the Netlas SDK is synchronous. Disable its hidden
+        # retry so the task honors Retry-After before making another request.
+        def _do_search():
+            import netlas
+            from netlas.exception import APIError, ThrottlingError
+
+            conn = netlas.Netlas(api_key=api_key)
+            try:
+                return conn.query(
+                    query=query,
+                    datatype="response",
+                    page=0,
+                    throttling=False,
+                    retry=0,
+                )
+            except ThrottlingError as e:
+                raise NetlasRateLimitError(e.retry_after) from e
+            except APIError as e:
+                details = [
+                    str(value).strip()
+                    for value in (
+                        getattr(e, "type", ""),
+                        getattr(e, "title", ""),
+                        getattr(e, "detail", ""),
+                        getattr(e, "value", ""),
+                    )
+                    if value
+                ]
+                message = ": ".join(dict.fromkeys(details)) or repr(e)
+                lowered = message.lower()
+                rejected_key_words = (
+                    "unauthorized",
+                    "authentication",
+                    "access denied",
+                    "invalid api key",
+                    "api key is invalid",
+                    "api_key_invalid",
+                    "invalid credential",
+                    "invalid token",
+                    "forbidden",
+                    "401",
+                    "403",
+                )
+                if any(word in lowered for word in rejected_key_words):
+                    raise NetlasRejectedApiKey(message) from e
+                raise NetlasProviderError(f"Netlas API error: {message}") from e
+
+        try:
+            # Count every request attempt so failed calls cannot let later runs
+            # pass the daily allowance by repeating requests that did not work.
             self._increment_usage(r, account_num)
+            data = await asyncio.to_thread(_do_search)
 
             used_now = self._get_usage(r, account_num)
             limit = self.DAILY_LIMITS[account_num]
@@ -90,7 +173,8 @@ class NetlasService:
             )
 
             results: list[dict[str, Any]] = []
-            for item in (data or {}).get("items", []):
+            items = (data or {}).get("items", [])
+            for item in items[: self.RESULTS_PER_REQUEST]:
                 d = item.get("data", {})
                 http = d.get("http", {})
                 body = http.get("body", "") or ""
@@ -119,9 +203,12 @@ class NetlasService:
 
             return results
 
+        except NetlasProviderError:
+            raise
         except Exception as e:
-            logger.error(f"    [Netlas] Error: {e}")
-            return []
+            raise NetlasProviderError(
+                f"Netlas request failed: {type(e).__name__}: {e}"
+            ) from e
 
     async def get_usage_summary(self) -> dict:
         """Return current daily usage for both accounts."""

@@ -86,40 +86,51 @@ def _install_github_api(monkeypatch, provider, response_for):
 
 @pytest.mark.asyncio
 async def test_netlas_scan_calls_search_with_only_the_query(monkeypatch):
+    import netlas as netlas_sdk
+
+    from app.infrastructure.scanners.providers.netlas import NetlasService
     from app.workers.tasks.scanners.providers import netlas as netlas_task
 
     search_calls = []
+    redis_values = {}
 
     class RedisClient:
-        @staticmethod
-        def get(_key):
-            return None
+        def get(self, key):
+            return redis_values.get(key)
 
-    class NetlasService:
-        @staticmethod
-        async def get_usage_summary():
-            return {"account_1": {"used": 0, "limit": 45, "remaining": 1}}
+        def incr(self, key):
+            redis_values[key] = int(redis_values.get(key, 0)) + 1
+            return redis_values[key]
 
         @staticmethod
-        async def search(query):
-            search_calls.append(query)
-            return []
+        def expire(_key, _seconds):
+            return True
+
+    class NetlasClient:
+        def __init__(self, *, api_key):
+            assert api_key == "fake-netlas-key"
+
+        def query(self, *, query, datatype, page, throttling, retry):
+            search_calls.append((query, datatype, page, throttling, retry))
+            return {"items": []}
+
+    redis = RedisClient()
+    service = NetlasService()
+    service.keys = [(1, "fake-netlas-key")]
+    monkeypatch.setattr(service, "_redis", lambda: redis)
+    monkeypatch.setattr(netlas_sdk, "Netlas", NetlasClient)
 
     async def no_op(*_args, **_kwargs):
         return None
 
-    async def save_no_op(*_args, **_kwargs):
-        return 0
-
-    monkeypatch.setattr(netlas_task, "redis_client", RedisClient())
-    monkeypatch.setattr(netlas_task, "netlas_srv", NetlasService())
+    monkeypatch.setattr(netlas_task, "redis_client", redis)
+    monkeypatch.setattr(netlas_task, "netlas_srv", service)
     monkeypatch.setattr(netlas_task, "_send_log_async", no_op)
-    monkeypatch.setattr(netlas_task, "_save_credentials_async", save_no_op)
     monkeypatch.setattr(netlas_task.asyncio, "sleep", no_op)
 
     await netlas_task._scan_netlas_async("http.body:telegram")
 
-    assert search_calls == ["http.body:telegram"]
+    assert search_calls == [("http.body:telegram", "response", 0, False, 0)]
 
 
 @pytest.mark.asyncio
