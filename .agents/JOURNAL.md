@@ -439,3 +439,9 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Added limits of 45 requests and 900 extracted results per run, with at most 20 Netlas response items read per request. The current default list has 38 searches, so the request cap leaves it intact. Usage-check failures are logged and stop the scan safely when the budget cannot be checked.
 - Changed only the Netlas provider and Netlas scan task. `git diff --check` passed; tests are the next box.
 - S12.1 checkpoint: `55884a9`. This S12.2 checkpoint hash will be recorded in S12.3.
+
+## 2026-10-14 — S12.3 Netlas tests
+
+- Added real-code tests for the Netlas task and provider. The tests fake Redis, the Netlas client replies, the log sender, and the save queue; they use a fake API key and send no real request. Coverage includes a connection failure and retry on the next scan, waiting the full rate-limit time before the next search, rejected and missing keys, empty results, and the request and result caps.
+- Ran `.venv/bin/pytest -p no:cacheprovider tests/unit/test_netlas_scanner.py tests/unit/test_scanner_provider_requests.py::test_netlas_scan_calls_search_with_only_the_query` — 10 passed, 0 failed. Ran the Netlas-specific cases from `tests/unit/test_scanner_preservation.py` — 7 passed, 0 failed. Total: 17 passed, 0 failed. The runs reported Starlette deprecation and Hypothesis cache warnings.
+- S12.1 checkpoint: `55884a9`; S12.2 checkpoint: `bc38737`. This S12.3 checkpoint hash will be recorded in S12.4.
