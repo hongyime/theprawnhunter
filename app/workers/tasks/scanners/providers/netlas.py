@@ -46,7 +46,7 @@ async def _scan_netlas_async(query: str = None):
 
         try:
             logger.info(f"    🔎 [Netlas] Query: {q[:70]}...")
-            results = await netlas_srv.search(q, size=20)
+            results = await netlas_srv.search(q)
             logger.info(f"    ✅ [Netlas] Returned {len(results)} results")
             saved = await _save_credentials_async(results, "netlas")
             total_saved += saved
