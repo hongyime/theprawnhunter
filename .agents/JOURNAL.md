@@ -190,4 +190,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - Added `tests/unit/test_firehose_tasks.py`. The tests call the real firehose poll, event, commit, and result-save code. Only GitHub replies, Redis, the validation queue, and the system-log send are replaced. They cover provider down, events and commit HTTP errors, event and commit rate limits, the hourly cap, empty events, one commit failing while another finishes, retrying the failed commit, missing login, and retry after a result-queue failure.
 - The first run had 9 passed and 1 failed: it found that the event helper could not see the token checks imported inside the poll. Passed those real imports into the helper and fixed the failure. Final run: `.venv/bin/pytest tests/unit/test_firehose_tasks.py` — 10 passed, 0 failed. Pytest also printed cache and Starlette warnings; no test failed because of them.
-- S2.3 checkpoint commit hash will be added after push.
+- S2.3 checkpoint commit: `26f2db7`.
