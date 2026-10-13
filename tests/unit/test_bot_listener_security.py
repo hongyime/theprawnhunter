@@ -1,9 +1,12 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.services import bot_listener
+from app.services._bot_listener import commands as bot_listener_commands
+from app.services._bot_listener import login as bot_listener_login
 
 
 class _FakeMessage:
@@ -72,21 +75,46 @@ async def test_handle_phone_disconnects_and_removes_temp_session_when_code_reque
         client.session_base = session_base
         return client
 
-    async def no_op_wipe(*_args):
-        return None
-
     monkeypatch.setattr(bot_listener, "TelegramClient", make_client)
-    monkeypatch.setattr(bot_listener, "_wipe_conversation", no_op_wipe)
+
+    deleted_messages = []
+
+    async def delete_message(*, chat_id, message_id):
+        deleted_messages.append((chat_id, message_id))
 
     message = _FakeMessage(text="+15551234567")
     update = SimpleNamespace(
         effective_chat=SimpleNamespace(id=123, type="private"),
         message=message,
     )
-    context = SimpleNamespace(user_data={"bot_messages": []})
+    context = SimpleNamespace(
+        user_data={"bot_messages": []},
+        bot=SimpleNamespace(delete_message=delete_message),
+    )
 
     result = await bot_listener.handle_phone(update, context)
 
     assert result == bot_listener.ConversationHandler.END
     assert client.disconnect_count == 1
     assert all(not path.exists() for path in created_paths)
+    await asyncio.sleep(1.05)
+    assert deleted_messages == [(123, 1), (123, 101)]
+
+
+@pytest.mark.asyncio
+async def test_login_uses_real_commands_schedule_deletion_helper():
+    assert bot_listener_login._wipe_conversation is bot_listener_commands._wipe_conversation
+    assert bot_listener_login.schedule_deletion is bot_listener_commands.schedule_deletion
+
+    deleted_messages = []
+    deleted = asyncio.Event()
+
+    async def delete_message(*, chat_id, message_id):
+        deleted_messages.append((chat_id, message_id))
+        deleted.set()
+
+    context = SimpleNamespace(bot=SimpleNamespace(delete_message=delete_message))
+    await bot_listener_login.schedule_deletion(context, 123, 456, delay=0)
+    await asyncio.wait_for(deleted.wait(), timeout=1)
+
+    assert deleted_messages == [(123, 456)]

@@ -118,3 +118,8 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - In `app/workers/tasks/audit_tasks.py:813-824`, moved Redis handled-marker writes until after the database update succeeds, and mark only rows returned by that update. If the update raises, the outer error handler returns while the messages remain unmarked and eligible for a retry.
 - Added a focused failure-then-retry regression in `tests/unit/test_general_backfill_safety.py`; all 8 tests in that file pass.
+
+## 2026-10-13 23:27 SGT — login cleanup imports (#3)
+
+- In `app/services/_bot_listener/login.py:4`, imported `_wipe_conversation` and `schedule_deletion` from their existing owner, `app/services/_bot_listener/commands.py` (definitions at lines 341 and 330). Login referenced `_wipe_conversation` in the cleanup, cancel, and timeout paths, and `schedule_deletion` for delayed final-login notices, without either name being bound in `login.py`; `common.py` does not export them. The focused test reproduced `NameError: name '_wipe_conversation' is not defined` at the first cleanup call.
+- Updated `tests/unit/test_bot_listener_security.py` so the failing login path exercises the real wipe helper, and added a real-helper check for delayed deletion using a fake Telegram API boundary. `.venv/bin/pytest -q tests/unit/test_bot_listener_security.py` passes (3 tests).
