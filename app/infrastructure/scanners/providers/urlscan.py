@@ -23,12 +23,12 @@ class UrlScanService:
             }
 
             # URLScan query format: search in page content
-            api_query = f'page.body:"{query}" OR page.url:*{query}*'
+            api_query = f'page.url:*{query}*'
             if country_code:
                 api_query = f'({api_query}) AND page.country:"{country_code}"'
                 logger.info(f"    [URLScan] Adding country filter: {country_code}")
 
-            params = {'q': api_query, 'size': 500}
+            params = {'q': api_query, 'size': 100}
             logger.info(f"    [URLScan] Searching: {api_query[:50]}...")
 
             async def do_urlscan():

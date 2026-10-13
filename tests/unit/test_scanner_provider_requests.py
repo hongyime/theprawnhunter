@@ -37,3 +37,46 @@ async def test_netlas_scan_calls_search_with_only_the_query(monkeypatch):
     await netlas_task._scan_netlas_async("http.body:telegram")
 
     assert search_calls == ["http.body:telegram"]
+
+
+@pytest.mark.asyncio
+async def test_urlscan_request_uses_supported_query_and_page_size(monkeypatch):
+    from app.infrastructure.scanners.providers import urlscan as urlscan_provider
+
+    request = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"results": []}
+
+    class Client:
+        @staticmethod
+        async def get(_url, *, headers, params):
+            request.update(headers=headers, params=params)
+            return Response()
+
+    class ClientContext:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(
+        urlscan_provider,
+        "get_async_http_client",
+        lambda **_kwargs: ClientContext(),
+    )
+    service = urlscan_provider.UrlScanService()
+    service.api_key = "test-key"
+
+    await service.search("bot_token")
+
+    assert request["params"] == {"q": "page.url:*bot_token*", "size": 100}
