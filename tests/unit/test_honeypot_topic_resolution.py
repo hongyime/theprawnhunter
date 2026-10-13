@@ -115,6 +115,99 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_honeypot_broadcast_uses_saved_topic_when_user_sessions_unavailable(monkeypatch):
+    from app.services import broadcaster_srv
+    from app.workers.tasks import flow_tasks
+
+    credential_id = "cred-1"
+    telegram_msg_id = -101
+    saved_topic_id = 9001
+    message = {
+        "id": "message-1",
+        "credential_id": credential_id,
+        "telegram_msg_id": telegram_msg_id,
+        "is_broadcasted": False,
+        "file_meta": {"source": "bot_api"},
+        "discovered_credentials": {
+            "meta": {
+                "bot_username": "ExampleBot",
+                "bot_id": 123456,
+                "topic_id": saved_topic_id,
+            }
+        },
+    }
+
+    class Query:
+        def __init__(self, table_name):
+            self.table_name = table_name
+            self.operation = None
+            self.payload = None
+
+        def select(self, *_args, **_kwargs):
+            self.operation = "select"
+            return self
+
+        def update(self, payload):
+            self.operation = "update"
+            self.payload = payload
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def or_(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+    class FakeDb:
+        def table(self, table_name):
+            return Query(table_name)
+
+    async def fake_async_execute(query):
+        if query.table_name == "exfiltrated_messages" and query.operation == "select":
+            return SimpleNamespace(data=[message])
+        if query.table_name == "honeypot_updates":
+            return SimpleNamespace(data=[])
+        return SimpleNamespace(data=[{"id": message["id"]}])
+
+    service = broadcaster_srv.BroadcasterService.__new__(broadcaster_srv.BroadcasterService)
+    service.send_message = AsyncMock(return_value=9002)
+    service.send_document = AsyncMock(return_value=9003)
+    find_topic = AsyncMock()
+
+    monkeypatch.setattr(flow_tasks, "db", FakeDb())
+    monkeypatch.setattr(flow_tasks, "async_execute", fake_async_execute)
+    monkeypatch.setattr(flow_tasks, "get_broadcaster", lambda: service)
+    monkeypatch.setattr(flow_tasks.settings, "MONITOR_GROUP_ID", -100123)
+    monkeypatch.setattr(flow_tasks, "_is_broadcast_claim_valid", AsyncMock(return_value=True))
+    monkeypatch.setattr(flow_tasks, "_is_honeypot_evidence_claim_valid", AsyncMock(return_value=True))
+    monkeypatch.setattr(flow_tasks, "_update_message_broadcast_success", AsyncMock(return_value=True))
+    monkeypatch.setattr(flow_tasks, "_honeypot_evidence_document", lambda *_args: (b"{}", "evidence.json"))
+
+    with patch.object(
+        broadcaster_srv.user_agent,
+        "start",
+        new_callable=AsyncMock,
+        return_value=False,
+    ) as start_session, patch.object(
+        broadcaster_srv.user_agent,
+        "find_topic_id",
+        find_topic,
+    ):
+        result = await flow_tasks._broadcast_single_honeypot_message(
+            credential_id,
+            telegram_msg_id,
+        )
+
+    assert result == {"status": "sent", "broadcast_message_id": 9002}
+    assert start_session.await_count == 1
+    find_topic.assert_not_awaited()
+    service.send_message.assert_awaited_once_with(-100123, saved_topic_id, message)
+
+
+@pytest.mark.asyncio
 async def test_ensure_topic_keeps_a_valid_saved_topic(monkeypatch):
     from app.services import broadcaster_srv
 

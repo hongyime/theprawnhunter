@@ -2,6 +2,11 @@
 
 from .common import *
 
+
+class UserAgentSessionUnavailableError(RuntimeError):
+    """Raised when an operation needs a user session but none is usable."""
+
+
 class UserAgentSessionLifecycle:
     def __init__(self):
         self.api_id = settings.TELEGRAM_API_ID

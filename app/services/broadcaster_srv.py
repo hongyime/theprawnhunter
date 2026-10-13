@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 from app.infrastructure.database import execute_async as _execute_async_shared
-from app.services.user_agent_srv import user_agent
+from app.services.user_agent_srv import UserAgentSessionUnavailableError, user_agent
 
 logger = logging.getLogger("broadcaster")
 
@@ -658,6 +658,15 @@ class BroadcasterService:
             if preferred_id:
                 try:
                     preferred_title = await user_agent.get_topic_title(group_id, preferred_id)
+                except UserAgentSessionUnavailableError as exc:
+                    logger.warning(
+                        "[Broadcaster] Could not verify saved topic %s for '%s' because "
+                        "no user session is available; trusting the saved topic ID: %s",
+                        preferred_id,
+                        topic_name,
+                        exc,
+                    )
+                    return preferred_id
                 except Exception as exc:
                     raise RuntimeError(
                         f"Could not verify saved topic {preferred_id} for '{topic_name}': {exc}"
