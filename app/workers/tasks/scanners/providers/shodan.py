@@ -1,6 +1,121 @@
 """Scanner task implementations for shodan."""
 
+import json
+
 from ..common import *
+
+SHODAN_RETRY_QUERY_KEY = "scanner:shodan:retry_queries"
+
+
+def _shodan_retry_query_value(query: str, country_code: str = None) -> str:
+    return json.dumps(
+        {"query": query, "country_code": country_code},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _load_shodan_retry_queries() -> list[tuple[str, str | None]]:
+    try:
+        values = redis_client.smembers(SHODAN_RETRY_QUERY_KEY)
+    except Exception as error:
+        logger.error(
+            "[Shodan] Could not read saved retry searches (%s); continuing with this run's search list",
+            type(error).__name__,
+        )
+        return []
+
+    queries = []
+    for value in values:
+        try:
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            item = json.loads(value)
+            if isinstance(item, dict) and isinstance(item.get("query"), str) and item["query"]:
+                queries.append((item["query"], item.get("country_code")))
+            else:
+                raise ValueError("saved search has no query")
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            logger.warning(
+                "[Shodan] Could not read a saved retry search (%s); removing the unreadable entry",
+                type(error).__name__,
+            )
+            try:
+                redis_client.srem(SHODAN_RETRY_QUERY_KEY, value)
+            except Exception as remove_error:
+                logger.error(
+                    "[Shodan] Could not remove an unreadable retry entry (%s)",
+                    type(remove_error).__name__,
+                )
+    return queries
+
+
+def _remember_shodan_retry_query(query: str, country_code: str = None):
+    try:
+        redis_client.sadd(SHODAN_RETRY_QUERY_KEY, _shodan_retry_query_value(query, country_code))
+    except Exception as error:
+        logger.error(
+            "[Shodan] Could not save search %r for the next run (%s)",
+            query,
+            type(error).__name__,
+        )
+
+
+def _clear_shodan_retry_query(query: str, country_code: str = None):
+    try:
+        redis_client.srem(SHODAN_RETRY_QUERY_KEY, _shodan_retry_query_value(query, country_code))
+    except Exception as error:
+        logger.error(
+            "[Shodan] Search %r succeeded, but its saved retry entry could not be cleared (%s)",
+            query,
+            type(error).__name__,
+        )
+
+
+async def _send_shodan_log(message: str):
+    try:
+        await _send_log_async(message)
+    except Exception as error:
+        logger.warning(
+            "[Shodan] Could not send the system log (%s); the worker log has the message",
+            type(error).__name__,
+        )
+
+
+def _shodan_key_is_ready() -> bool:
+    if str(getattr(shodan, "api_key", "") or "").strip():
+        return True
+    logger.warning(
+        "[Shodan] API key is missing or empty; no searches were sent. "
+        "Set SHODAN_KEY and the next scheduled scan will try again."
+    )
+    return False
+
+
+def _shodan_error_text(error: Exception) -> str:
+    message = str(error)
+    api_key = str(getattr(shodan, "api_key", "") or "").strip()
+    if api_key:
+        message = message.replace(api_key, "[hidden]")
+    return message or type(error).__name__
+
+
+async def _log_shodan_search_failure(query: str, error: Exception, label: str = "Shodan") -> bool:
+    stop_run = bool(getattr(error, "stop_scan", False))
+    next_step = (
+        "stopping this run to avoid more provider requests"
+        if stop_run
+        else "keeping this search for the next scheduled scan and continuing with the other searches"
+    )
+    message = f"[{label}] Search {query!r} failed: {_shodan_error_text(error)}; {next_step}."
+    logger.error(message)
+    await _send_shodan_log(f"❌ {message}")
+    return stop_run
+
+
+async def _run_shodan_search(query: str, country_code: str = None):
+    return await _cb("shodan").call(shodan.search)(query, country_code=country_code)
+
 
 @app.task(name="scanner.scan_shodan")
 def scan_shodan(query: str = None, country_code: str = None):
@@ -15,8 +130,10 @@ async def _scan_shodan_async(query: str = None, country_code: str = None):
     if country_code == "RANDOM":
         selected_country = random.choice(settings.TARGET_COUNTRIES)
 
+    retry_queries = _load_shodan_retry_queries()
+    work = list(dict.fromkeys(retry_queries + [(q, selected_country) for q in queries]))
     logger.info(
-        f"🌎 [Shodan] Starting Scan | Queries: {len(queries)} | Country: {selected_country or 'Global'}"
+        f"🌎 [Shodan] Starting Scan | Queries: {len(work)} | Country: {selected_country or 'Global'}"
     )
 
     # Check Pause State
@@ -24,35 +141,51 @@ async def _scan_shodan_async(query: str = None, country_code: str = None):
         logger.warning("⏸️ [Shodan] System is PAUSED. Skipping scan.")
         return "System Paused"
 
-    await _send_log_async(
-        f"🌎 [Shodan] Starting scan with {len(queries)} queries (Country: {selected_country})..."
+    if not _shodan_key_is_ready():
+        if query:
+            _remember_shodan_retry_query(query, selected_country)
+        return "Shodan API key missing"
+
+    await _send_shodan_log(
+        f"🌎 [Shodan] Starting scan with {len(work)} queries (Country: {selected_country})..."
     )
 
     total_saved = 0
     errors = []
     result_msg = ""
 
-    for q in queries:
+    for q, query_country in work:
+        stop_run = False
+        query_label = f'{q} country:"{query_country}"' if query_country else q
         try:
-            logger.info(f"    🔎 [Shodan] Executing query: {q}")
-            results = await _cb("shodan").call(shodan.search)(q, country_code=selected_country)
+            logger.info(f"    🔎 [Shodan] Executing query: {query_label}")
+            results = await _run_shodan_search(q, country_code=query_country)
             logger.info(f"    ✅ [Shodan] Query returned {len(results)} raw results.")
+            if not results:
+                logger.info(
+                    "[Shodan] Search %r returned no matches; it will run again on the next scheduled scan",
+                    query_label,
+                )
 
-            # AWAIT the async save
             saved = await _save_credentials_async(results, "shodan")
             total_saved += saved
-
-            await asyncio.sleep(1)  # Rate limit respect
+            _clear_shodan_retry_query(q, query_country)
         except Exception as e:
-            logger.error(f"    ❌ [Shodan] Query failed: {str(e)}")
-            errors.append(str(e))
+            _remember_shodan_retry_query(q, query_country)
+            stop_run = await _log_shodan_search_failure(query_label, e)
+            errors.append(_shodan_error_text(e))
             errors = errors[-MAX_ERRORS_BUFFER:]
+        finally:
+            if not stop_run:
+                await asyncio.sleep(1)  # Keep at least one second between searches.
+        if stop_run:
+            break
     if errors:
         result_msg += f" (Errors: {len(errors)})"
-        await _send_log_async(f"❌ [Shodan] Completed with errors: {errors[0]}...")
+        await _send_shodan_log(f"❌ [Shodan] Completed with errors: {errors[0]}...")
 
     logger.info(f"🏁 [Shodan] Finished | Total Saved: {total_saved} | Errors: {len(errors)}")
-    await _send_log_async(f"🏁 [Shodan] Finished. Saved {total_saved} new credentials.")
+    await _send_shodan_log(f"🏁 [Shodan] Finished. Saved {total_saved} new credentials.")
     return result_msg
 
 @app.task(name="scanner.scan_shodan_c2", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
@@ -67,6 +200,9 @@ def scan_shodan_c2():
 async def _scan_shodan_c2_async():
     if redis_client.get("system:paused"):
         return "System Paused"
+
+    if not _shodan_key_is_ready():
+        return "Shodan API key missing"
 
     # Each query is a focused slice of the compound C2 query.
     # Shodan doesn't support deeply nested OR/AND in a single query reliably,
@@ -107,7 +243,7 @@ async def _scan_shodan_c2_async():
     ]
 
     logger.info(f"🎯 [Shodan-C2] Starting C2 scan with {len(C2_QUERIES)} targeted queries...")
-    await _send_log_async(f"🎯 [Shodan-C2] Starting Telegram C2 infrastructure scan ({len(C2_QUERIES)} queries)...")
+    await _send_shodan_log(f"🎯 [Shodan-C2] Starting Telegram C2 infrastructure scan ({len(C2_QUERIES)} queries)...")
 
     total_saved = 0
     errors = []
@@ -115,20 +251,30 @@ async def _scan_shodan_c2_async():
     for q in C2_QUERIES:
         if not q:
             continue
+        stop_run = False
         try:
             logger.info(f"    🔎 [Shodan-C2] Query: {q[:80]}...")
-            results = await shodan.search(q)
+            results = await _run_shodan_search(q)
             logger.info(f"    ✅ [Shodan-C2] Returned {len(results)} results")
+            if not results:
+                logger.info(
+                    "[Shodan-C2] Search %r returned no matches; it will run again on the next scheduled scan",
+                    q,
+                )
             saved = await _save_credentials_async(results, "shodan_c2")
             total_saved += saved
-            await asyncio.sleep(2)
         except Exception as e:
-            logger.error(f"    ❌ [Shodan-C2] Query failed: {e}")
-            errors.append(str(e))
+            stop_run = await _log_shodan_search_failure(q, e, label="Shodan-C2")
+            errors.append(_shodan_error_text(e))
             errors = errors[-MAX_ERRORS_BUFFER:]
+        finally:
+            if not stop_run:
+                await asyncio.sleep(2)  # Keep at least two seconds between C2 searches.
+        if stop_run:
+            break
 
     result_msg = f"Shodan C2 scan finished. Saved {total_saved} new credentials."
     if errors:
         result_msg += f" (Errors: {len(errors)})"
-    await _send_log_async(f"🏁 [Shodan-C2] Finished. Saved {total_saved} credentials from C2 infrastructure.")
+    await _send_shodan_log(f"🏁 [Shodan-C2] Finished. Saved {total_saved} credentials from C2 infrastructure.")
     return result_msg
