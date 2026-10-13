@@ -1,15 +1,15 @@
 # theprawnhunter — STATE
 
-## Current task (updated 2026-10-13 23:38 SGT)
+## Current task (updated 2026-10-13 23:41 SGT)
 
 - **Job:** rebuild worker (+ bot) containers, verify healthy, brief log watch.
-- **Status:** Fixes #1–#5 verified and implemented. Fix #5 now warns on GetMessages batch failure and lets the existing MessageIdReader classify the scan as failed, with retryability determined by its existing exception rules. The supervisor handles the rebuild; it was not run here.
+- **Status:** Fixes #1–#5 verified and implemented. Fix #5 warns on GetMessages batch failure, records a failed MessageIdReader attempt, and marks a partial scrape retryable when the existing exception rules allow it while retaining collected messages. The supervisor handles the rebuild; it was not run here.
 - **Order (one at a time, one commit each):**
   1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit `93f2393c79f015f4ff78032546a5435414cadaa3`.
   2. [x] Backfill marked handled before DB update (audit_tasks.py:813-824) — now marks only rows returned by a successful update; regression test passes; commit `0ce213c29843e45757aa7a58fe93bc4fe0ac2ec9`.
   3. [x] Login cleanup helpers never imported (_bot_listener/login.py) — imported `_wipe_conversation` and `schedule_deletion` from `_bot_listener/commands.py`; real-helper login tests pass; commit `cb8ed1c0f235e0f0545c5119f77e37e5124d5956`.
   4. [x] Extension deletes results before upload succeeds (extension/background.js:526-529) — pruning now follows successful upload; failed uploads retain results.
-  5. [x] Scrape batch failures only debug-logged (scraper_srv.py:473-490) — warn and propagate the failure to the existing MessageIdReader attempt classifier.
+  5. [x] Scrape batch failures only debug-logged (scraper_srv.py:307-324, 473-490) — warn, record a failed attempt, and keep partial scrape results retryable when appropriate.
 - **Supervision rules (Bryan 2026-10-13):** small steps, one at a time, no wandering; update STATE.md + JOURNAL.md after EACH small step (tick the checkbox above + append a journal line); liveness checks every few minutes (process alive, log growing, deliverable moved); on crash, verify state from scratch and resume from STATE.md checkpoint, never restart from zero. Tests must use REAL helpers, no fake stand-ins.
 - **After all five:** supervisor rebuilds worker (+ bot) containers, verifies healthy, and performs a brief log watch.
 - **Note:** an earlier gate-state block written at 22:58 SGT was overwritten when the redirect job committed its own STATE.md changes (5a370ed). Re-applied here. Lesson: commit STATE.md promptly; uncommitted shared state can be clobbered by a concurrent job.

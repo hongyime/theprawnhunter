@@ -304,11 +304,29 @@ class ScraperService:
             added = unique_append(scraped_messages, unique_ids, forwarding_outcome.messages)
             logger.info(f"✨ [Scraper] Forwarding added {added} messages.")
 
-        return self.classifier.result_from_attempts(
-            scraped_messages,
-            attempts,
-            evidence=evidence,
+        message_id_failure = next(
+            (
+                attempt
+                for attempt in reversed(attempts)
+                if (
+                    attempt.name == "message_id_reader"
+                    and not attempt.success
+                    and attempt.retryable
+                )
+            ),
+            None,
         )
+        # Keep partial results but expose a retryable message-ID scan failure.
+        if scraped_messages and message_id_failure:
+            return ScrapeResult(
+                messages=scraped_messages,
+                reason=message_id_failure.reason,
+                retryable=True,
+                evidence={**evidence, "message_count": len(scraped_messages)},
+                strategy_attempts=attempts,
+            )
+
+        return self.classifier.result_from_attempts(scraped_messages, attempts, evidence=evidence)
 
     async def _create_forum_topic(self, bot_token: str, chat_id: int, name: str) -> int:
         """Helper to create a forum topic using a bot."""
