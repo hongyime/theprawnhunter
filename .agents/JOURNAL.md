@@ -417,3 +417,9 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Added `tests/unit/test_telegram_search_scanner.py`. The tests call the real scanner task and real `search_messages` method. They cover a service outage with later searches continuing, the full FloodWait pause and saved session cooldown, a logged-out session, and an empty reply. Only Telegram replies, Redis, status sending, sleep, and file/lease edges are faked. No real account or session is used.
 - Ran `.venv/bin/pytest -p no:cacheprovider tests/unit/test_telegram_search_scanner.py`: 4 passed, 0 failed. One Starlette deprecation warning did not fail a test. An earlier run had 3 passed and 1 failed because the fake session monitor lacked its `done()` method; the test setup was corrected, then the full file passed.
 - S11.1 checkpoint: `ad07289`; S11.2 checkpoint: `6fdd5d2`. This S11.3 checkpoint hash will be recorded in S11.4.
+
+## 2026-10-14 — S11.4 Telegram search final commit
+
+- Committing the Telegram search task, its search-only service change, the focused tests, and these checklist notes together. Search failures now name the search and next step, one ordinary failure does not stop later searches, session problems stop cleanly, and FloodWait waits fully before this run stops.
+- Final focused test run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_telegram_search_scanner.py` — 4 passed, 0 failed. One Starlette deprecation warning did not fail a test. `git diff --check` passed.
+- S11.1 checkpoint: `ad07289`; S11.2 checkpoint: `6fdd5d2`; S11.3 checkpoint: `d565627`. The S11.4 code commit hash will be written after the push.

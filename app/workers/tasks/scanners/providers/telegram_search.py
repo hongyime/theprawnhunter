@@ -17,9 +17,25 @@ async def _scan_telegram_search_async(query: str = None):
     if redis_client.get("system:paused"):
         return "System Paused"
 
-    # Per-session cooldown gate — don't even start if all sessions are fried
+    # Search errors are raised only for this scanner. Other Telegram session
+    # users keep the service's existing empty-list behavior.
+    from telethon.errors import FloodWaitError
+    from app.services._user_agent.session_lifecycle import UserAgentSessionUnavailableError
     from app.services.scanners import _is_valid_token
     from app.services.user_agent_srv import user_agent
+
+    async def report_failure(message: str, *, warning: bool = False) -> None:
+        if warning:
+            logger.warning(message)
+        else:
+            logger.error(message)
+        try:
+            await _send_log_async(message)
+        except Exception as log_error:
+            logger.error(
+                f"[TelegramSearch] Could not send the search failure log: {log_error}. "
+                f"The worker log has the failure details."
+            )
 
     logger.info("🔍 [TelegramSearch] Starting MTProto global search...")
     await _send_log_async("🔍 [TelegramSearch] Querying Telegram public channels...")
@@ -35,33 +51,71 @@ async def _scan_telegram_search_async(query: str = None):
 
     all_results = []
     try:
-        for q in queries:
+        for query_index, q in enumerate(queries):
             try:
-                messages = await user_agent.search_messages(q, limit=100)
+                messages = await user_agent.search_messages(
+                    q, limit=100, raise_errors=True
+                )
+            except FloodWaitError as e:
+                wait_seconds = max(0, int(e.seconds))
+                await report_failure(
+                    f"🛑 [TelegramSearch] Search {q!r} hit Telegram's FloodWait limit. "
+                    f"Waiting the full {wait_seconds}s, then stopping this run; "
+                    "this search will be tried again on the next scan.",
+                    warning=True,
+                )
+                if wait_seconds:
+                    await asyncio.sleep(wait_seconds)
+                return (
+                    f"TelegramSearch paused after FloodWait for {wait_seconds}s; "
+                    "remaining searches will run on the next scan."
+                )
+            except UserAgentSessionUnavailableError as e:
+                await report_failure(
+                    f"⚠️ [TelegramSearch] Search {q!r} has no usable Telegram session: {e}. "
+                    "Stopping this run; the search list will be tried again on the next scan.",
+                    warning=True,
+                )
+                return "TelegramSearch stopped because no usable Telegram session is available."
             except Exception as e:
-                logger.error(f"    ❌ [TelegramSearch] Query '{q}' failed: {e}")
-                continue
+                await report_failure(
+                    f"❌ [TelegramSearch] Search {q!r} failed: {type(e).__name__}: {e}. "
+                    "Moving to the next search; this search will be tried again on the next scan."
+                )
+                messages = None
 
-            for msg in messages:
-                text = msg.get("text", "")
-                if not text:
-                    continue
-                tokens = token_re.findall(text)
-                for tok in tokens:
-                    if not _is_valid_token(tok):
-                        continue
-                    all_results.append({
-                        "token": tok,
-                        "chat_id": msg.get("chat_id"),
-                        "meta": {
-                            "telegram_chat_name": msg.get("chat_name"),
-                            "telegram_message_id": msg.get("message_id"),
-                            "telegram_date": msg.get("date"),
-                            "telegram_query": q,
-                        }
-                    })
-            # 5s inter-query courtesy delay (search_messages already adds 3s INTER_SLEEP)
-            await asyncio.sleep(5)
+            if messages is not None:
+                if not messages:
+                    logger.info(f"[TelegramSearch] Search {q!r} returned 0 messages.")
+                try:
+                    for msg in messages:
+                        text = msg.get("text", "")
+                        if not text:
+                            continue
+                        tokens = token_re.findall(text)
+                        for tok in tokens:
+                            if not _is_valid_token(tok):
+                                continue
+                            all_results.append({
+                                "token": tok,
+                                "chat_id": msg.get("chat_id"),
+                                "meta": {
+                                    "telegram_chat_name": msg.get("chat_name"),
+                                    "telegram_message_id": msg.get("message_id"),
+                                    "telegram_date": msg.get("date"),
+                                    "telegram_query": q,
+                                }
+                            })
+                except Exception as e:
+                    await report_failure(
+                        f"❌ [TelegramSearch] Could not read results for search {q!r}: "
+                        f"{type(e).__name__}: {e}. Moving to the next search; "
+                        "this search will be tried again on the next scan."
+                    )
+
+            if query_index < len(queries) - 1:
+                # Keep spacing between searches after errors as well as successes.
+                await asyncio.sleep(5)
 
         if all_results:
             saved = await _save_credentials_async(all_results, "telegram_search")

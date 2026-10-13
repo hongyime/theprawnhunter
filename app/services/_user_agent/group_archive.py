@@ -750,7 +750,9 @@ class UserAgentGroupArchive:
                 await self._disconnect()
             return msgs
 
-    async def search_messages(self, query: str, limit: int = 100) -> list[dict]:
+    async def search_messages(
+        self, query: str, limit: int = 100, *, raise_errors: bool = False
+    ) -> list[dict]:
         """
         Telegram global search via MTProto SearchGlobalRequest.
 
@@ -759,7 +761,9 @@ class UserAgentGroupArchive:
         FloodWait -> redis cooldown on the session, no client kept hot.
 
         Returns: list of {"text", "chat_id", "chat_name", "message_id", "date"}.
-        Empty list if FloodWait, no sessions, or search disabled.
+        By default, search errors return an empty list for older callers. The
+        Telegram search scanner can request errors be raised so it can keep
+        failed searches for its next run.
         """
         import os as _os
 
@@ -772,6 +776,11 @@ class UserAgentGroupArchive:
 
         async with self.lock:
             if not await self.start():
+                if raise_errors:
+                    raise UserAgentSessionUnavailableError(
+                        f"No usable Telegram session is available for search {query!r}; "
+                        "sessions may be missing, logged out, on cooldown, or unable to connect."
+                    )
                 return []
             try:
                 # SearchGlobalRequest needs an InputPeer for offset_peer; use empty.
@@ -830,13 +839,30 @@ class UserAgentGroupArchive:
                 logger.info(f"    🔎 [UserAgent] SearchGlobal('{query[:40]}') -> {len(results)} messages")
 
             except FloodWaitError as fwe:
-                logger.warning(f"    🛑 [UserAgent] FloodWait on search: {fwe.seconds}s -- marking session cooldown")
-                from app.core.redis_srv import redis_srv
+                logger.warning(
+                    f"    🛑 [UserAgent] FloodWait on search '{query}': "
+                    f"{fwe.seconds}s -- marking session cooldown"
+                )
                 session_name = self.current_session_name or "unknown"
                 wait = fwe.seconds + 60
-                redis_srv.set_cooldown(f"user_agent:cooldown:{session_name}", wait)
+                try:
+                    from app.core.redis_srv import redis_srv
+                    redis_srv.set_cooldown(f"user_agent:cooldown:{session_name}", wait)
+                except Exception as cooldown_error:
+                    logger.error(
+                        f"    ❌ [UserAgent] Could not save the cooldown after search "
+                        f"'{query}' FloodWait: {cooldown_error}"
+                    )
+                    if not raise_errors:
+                        raise
+                if raise_errors:
+                    raise
             except Exception as e:
-                logger.error(f"    ❌ [UserAgent] search_messages failed: {e}")
+                logger.error(
+                    f"    ❌ [UserAgent] search_messages for '{query}' failed: {e}"
+                )
+                if raise_errors:
+                    raise
             finally:
                 await asyncio.sleep(INTER_SLEEP)
                 await self._disconnect()
