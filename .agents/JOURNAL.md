@@ -345,7 +345,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 ## 2026-10-14 — S9.2 Hastebin hardening
 
 - Changed only the Hastebin provider and task. Hastebin now asks Exa to raise search errors, logs the failed query and next step, continues to the other query after an ordinary failure, and stops more Exa searches for a missing key, empty quota, or rate limit.
-- Raw paste fetches now retry connection and server errors up to three times with waits. HTTP 429 uses `Retry-After` or a short rising wait; a wait over 60 seconds or three continuing rate replies stops raw fetches for this run. The one-second pause remains between paste fetches. Exa still asks for up to 25 results per query with no page loop, and the two Hastebin searches and 12-hour schedule are unchanged.
+- Raw paste fetches now retry connection and server errors up to three times with waits. HTTP 429 uses `Retry-After` or a short rising wait; a wait over 60 seconds or three continuing rate replies stops raw fetches for this run. A rate-limit message inside HTTP 200 also stops raw fetches. The one-second pause remains between paste fetches. Exa still asks for up to 25 results per query with no page loop, and the two Hastebin searches and 12-hour schedule are unchanged.
 - Failed, missing, deleted, empty, error, and loading replies are logged with the paste ID and remain in a Hastebin-only Redis pending set for the next scan. A clean paste without a token is marked read; a paste with tokens is marked read only after the save step succeeds. One paste failure does not stop later pastes, except that a rate limit stops the remaining raw fetches cleanly.
 - `.venv/bin/python -m py_compile` for the two Hastebin files and `git diff --check` passed. S9.1 checkpoint: `44286cd`; S9.2 checkpoint: `963db9d`.
 
@@ -353,5 +353,11 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - Added `tests/unit/test_hastebin_scanner_failures.py`. It calls the real Hastebin task, provider, shared scan runner, and Exa service. Only outside replies, Redis, saving, status logs, and waits are replaced.
 - Covered Exa outage and search continuation; HTTP 401, 403, 404, 410, 422, and 500; empty, loading, missing, and error replies with HTTP 200; raw service outage while a later paste succeeds; rate-limit wait and clean stop; empty search results; missing Exa key; and save failure with the paste left pending.
-- First run: 16 passed, 1 failed because the rate-limit test expected insertion order while the scanner reads the sorted pending list. The test IDs were changed so the limited paste sorts first. Final run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_hastebin_scanner_failures.py` — 17 passed, 0 failed. One Starlette deprecation warning and two Hypothesis memory warnings did not fail tests. Syntax compilation and `git diff --check` passed.
-- S9.1 checkpoint: `44286cd`; S9.2 checkpoint: `963db9d`; S9.3 checkpoint hash will be recorded in S9.4.
+- First run: 16 passed, 1 failed because the rate-limit test expected insertion order while the scanner reads the sorted pending list. The test IDs were changed so the limited paste sorts first. After that fix, 17 passed. Added checks for a rate-limit message inside HTTP 200 and a malformed search URL; final run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_hastebin_scanner_failures.py` — 19 passed, 0 failed. One Starlette deprecation warning and two Hypothesis memory warnings did not fail tests. Syntax compilation and `git diff --check` passed.
+- S9.1 checkpoint: `44286cd`; S9.2 checkpoint: `963db9d`; S9.3 checkpoint: `0ad75ff`.
+
+## 2026-10-14 — S9.4 Hastebin final commit
+
+- Committed the Hastebin provider, task, and failure tests with the S9.4 tick and notes. The scanner logs search and paste failures, keeps unfinished work for the next scan, backs off on failures, and stops raw requests cleanly after a rate limit. The two fixed searches, Exa's 25-result cap, and Hastebin's 12-hour schedule remain unchanged.
+- Final run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_hastebin_scanner_failures.py` — 19 passed, 0 failed. Syntax compilation and `git diff --check` passed. The code commit hash will be recorded in the next journal note.
+- S9.1 checkpoint: `44286cd`; S9.2 checkpoint: `963db9d`; S9.3 checkpoint: `0ad75ff`.
