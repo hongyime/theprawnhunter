@@ -166,3 +166,7 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - Kept the earlier GitHub edits that report provider errors, save failed searches for the next scan, cap and space searches, and report a missing login. Added a shared Redis timer and pause, stopped queued repo/file requests after an error, and saved a supplied search when login is missing. Removed the earlier URLScan response-header fixture edit from the shared test file, and replaced the fake GitHub worker service test with a real provider and worker path. The focused file passes 20 tests with 0 failures. The 4h/6h/12h scan schedule is unchanged. S1.1 checkpoint: `4fa330f`; S1.2: `8c9c888`; S1.3: `b067399`. The S1.4 code commit hash will be added in the completion tick.
 
+## 2026-10-14 00:25 SGT — S1.4 GitHub search complete
+
+- Pushed the GitHub scanner code, STATE.md, and JOURNAL.md as `ca24bc0`. The code commit includes the 20 passing tests. S1.1 checkpoint: `4fa330f`; S1.2: `8c9c888`; S1.3: `b067399`; S1.4 code: `ca24bc0`. This commit records the final S1.4 checkbox tick.
+
