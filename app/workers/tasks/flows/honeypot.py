@@ -42,11 +42,15 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
         return {"status": "not_found", "credential_id": credential_id, "telegram_msg_id": telegram_msg_id}
 
     msg = res.data[0] if isinstance(res.data, list) else res.data
-    if msg.get("is_broadcasted"):
+    file_meta = msg.get("file_meta") if isinstance(msg.get("file_meta"), dict) else {}
+
+    # Preserve the old completed-message short circuit, except when a successful
+    # summary still has a pending evidence attachment to finish.
+    attachment_only = bool(msg.get("is_broadcasted"))
+    if attachment_only and file_meta.get("honeypot_evidence_file_status") != "pending":
         return {"status": "already_broadcasted"}
 
     # Strict source validation: guarantee only bot_api honeypot messages enter this path
-    file_meta = msg.get("file_meta") if isinstance(msg.get("file_meta"), dict) else {}
     if file_meta.get("source") != "bot_api":
         logger.warning(
             f"[HoneypotBroadcast] Refusing to broadcast non-honeypot message {telegram_msg_id} (source={file_meta.get('source')})"
@@ -57,12 +61,24 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
     from datetime import timedelta
     claim_time = datetime.now(UTC).isoformat()
     stale_claim_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
-    claim_res = await async_execute(
+    claim_update = {"broadcast_claimed_at": claim_time}
+    claim_query = (
         db.table("exfiltrated_messages")
-        .update({"broadcast_claimed_at": claim_time})
+        .update(claim_update)
         .eq("id", msg["id"])
-        .eq("is_broadcasted", False)
+    )
+    if attachment_only:
+        claim_query = (
+            claim_query
+            .eq("is_broadcasted", True)
+            .eq("file_meta->>honeypot_evidence_file_status", "pending")
+        )
+    else:
+        claim_query = claim_query.eq("is_broadcasted", False)
+    claim_res = await async_execute(
+        claim_query
         .or_(f"broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{stale_claim_cutoff}")
+        .select("id")
     )
     if not claim_res.data:
         return {"status": "contended"}
@@ -116,22 +132,180 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
         logger.warning(f"[HoneypotBroadcast] Fenced out immediately pre-send for {msg['id']}")
         return {"status": "fenced_out"}
 
-    try:
-        sent_msg_id = await broadcaster.send_message(group_id, thread_id, msg)
-        completed = await _update_message_broadcast_success(
-            msg["id"],
-            broadcast_message_id=sent_msg_id,
-            claim_token=claim_time,
-        )
+    if not attachment_only:
+        try:
+            sent_msg_id = await broadcaster.send_message(group_id, thread_id, msg)
+        except Exception as send_err:
+            logger.error(f"❌ [HoneypotBroadcast] Send failed: {send_err}")
+            if not await _mark_broadcast_failure(msg, send_err, claim_token=claim_time):
+                return {"status": "fenced_out"}
+            return {"status": "failed", "error": str(send_err)}
+
+        try:
+            completed = await _update_message_broadcast_success(
+                msg["id"],
+                broadcast_message_id=sent_msg_id,
+                claim_token=claim_time,
+                additional_payload={
+                    "file_meta": {
+                        **file_meta,
+                        "honeypot_evidence_file_status": "pending",
+                    },
+                },
+            )
+        except Exception as state_err:
+            logger.error(f"❌ [HoneypotBroadcast] Success state update failed: {state_err}")
+            if not await _mark_broadcast_failure(msg, state_err, claim_token=claim_time):
+                return {"status": "fenced_out"}
+            return {"status": "failed", "error": str(state_err)}
         if not completed:
             return {"status": "fenced_out"}
         logger.info(f"✅ [HoneypotBroadcast] Sent message {msg['id']} to topic {thread_id}")
-        return {"status": "sent", "broadcast_message_id": sent_msg_id}
-    except Exception as send_err:
-        logger.error(f"❌ [HoneypotBroadcast] Send failed: {send_err}")
-        if not await _mark_broadcast_failure(msg, send_err, claim_token=claim_time):
-            return {"status": "fenced_out"}
-        return {"status": "failed", "error": str(send_err)}
+
+        # Claim the evidence step after committing the successful summary. A
+        # second worker can safely resume here if this worker exits meanwhile.
+        claim_time = datetime.now(UTC).isoformat()
+        attachment_stale_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+        attachment_claim = await async_execute(
+            db.table("exfiltrated_messages")
+            .update({"broadcast_claimed_at": claim_time})
+            .eq("id", msg["id"])
+            .eq("is_broadcasted", True)
+            .eq("file_meta->>honeypot_evidence_file_status", "pending")
+            .or_(f"broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{attachment_stale_cutoff}")
+            .select("id")
+        )
+        if not attachment_claim.data:
+            return {"status": "sent", "broadcast_message_id": sent_msg_id}
+    else:
+        sent_msg_id = msg.get("broadcast_message_id")
+
+    if not await _is_broadcast_claim_valid(msg["id"], claim_time, lease_minutes=5):
+        logger.warning(f"[HoneypotBroadcast] Fenced out before evidence send for {msg['id']}")
+        return {"status": "fenced_out"}
+
+    try:
+        raw_res = await async_execute(
+            db.table("honeypot_updates")
+            .select("update_id,payload,received_at")
+            .eq("credential_id", credential_id)
+            .eq("update_id", -telegram_msg_id)
+            .limit(1)
+        )
+        raw_rows = raw_res.data or []
+        raw_update = raw_rows[0] if isinstance(raw_rows, list) and raw_rows else raw_rows
+        document, filename = _honeypot_evidence_document(msg, raw_update, meta)
+        await broadcaster.send_document(group_id, thread_id, document, filename)
+    except Exception as document_err:
+        logger.error(f"❌ [HoneypotBroadcast] Evidence file send failed: {document_err}")
+        try:
+            await async_execute(
+                db.table("exfiltrated_messages")
+                .update({"broadcast_claimed_at": None})
+                .eq("id", msg["id"])
+                .eq("broadcast_claimed_at", claim_time)
+            )
+        except Exception:
+            logger.exception(f"[HoneypotBroadcast] Could not release evidence claim for {msg['id']}")
+        return {
+            "status": "evidence_failed",
+            "broadcast_message_id": sent_msg_id,
+            "error": str(document_err),
+        }
+
+    completed = await async_execute(
+        db.table("exfiltrated_messages")
+        .update({
+            "broadcast_claimed_at": None,
+            "file_meta": {
+                **file_meta,
+                "honeypot_evidence_file_status": "sent",
+            },
+        })
+        .eq("id", msg["id"])
+        .eq("is_broadcasted", True)
+        .eq("broadcast_claimed_at", claim_time)
+        .select("id")
+    )
+    if not completed.data:
+        return {"status": "fenced_out"}
+    return {"status": "sent", "broadcast_message_id": sent_msg_id}
+
+
+def _honeypot_evidence_document(
+    msg: dict,
+    raw_record: dict | None,
+    credential_meta: dict,
+) -> tuple[bytes, str]:
+    """Build an untruncated JSON evidence file for one captured Telegram update."""
+    import json
+
+    raw_record = raw_record if isinstance(raw_record, dict) else None
+    raw_update = raw_record.get("payload") if raw_record else None
+    raw_payload = raw_update if isinstance(raw_update, dict) else {}
+    target = next(
+        (
+            raw_payload.get(key)
+            for key in ("message", "channel_post", "edited_message", "edited_channel_post")
+            if isinstance(raw_payload.get(key), dict)
+        ),
+        {},
+    )
+    sender = target.get("from") if isinstance(target.get("from"), dict) else {}
+    if not sender:
+        callback = raw_payload.get("callback_query") or raw_payload.get("inline_query") or {}
+        sender = callback.get("from") if isinstance(callback, dict) and isinstance(callback.get("from"), dict) else {}
+    chat = target.get("chat") if isinstance(target.get("chat"), dict) else {}
+    callback = raw_payload.get("callback_query") if isinstance(raw_payload.get("callback_query"), dict) else {}
+    callback_message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+    callback_chat = callback_message.get("chat") if isinstance(callback_message.get("chat"), dict) else {}
+    inline_query = raw_payload.get("inline_query") if isinstance(raw_payload.get("inline_query"), dict) else {}
+
+    display_parts = [sender.get("first_name"), sender.get("last_name")]
+    display_name = " ".join(part.strip() for part in display_parts if isinstance(part, str) and part.strip())
+    if not display_name:
+        display_name = target.get("author_signature") or msg.get("sender_name") or "Unknown"
+
+    message_text = target.get("text") or target.get("caption")
+    if message_text is None and callback:
+        message_text = f"[Callback Query] {callback.get('data') or ''}"
+    if message_text is None and inline_query:
+        message_text = f"[Inline Query] {inline_query.get('query') or ''}"
+    if message_text is None:
+        message_text = msg.get("content") or ""
+
+    raw_message_id = target.get("message_id") or callback_message.get("message_id")
+    raw_chat_id = chat.get("id") or callback_chat.get("id")
+    update_id = (raw_record or {}).get("update_id") or raw_payload.get("update_id") or -int(msg["telegram_msg_id"])
+    evidence = {
+        "message_text": message_text,
+        "sender": {
+            "telegram_user_id": sender.get("id", msg.get("sender_user_id")),
+            "display_name": display_name,
+            "username": sender.get("username"),
+        },
+        "received_by": {
+            "credential_id": msg.get("credential_id"),
+            "bot_id": credential_meta.get("bot_id"),
+            "bot_username": credential_meta.get("bot_username"),
+            "received_at": (raw_record or {}).get("received_at"),
+        },
+        "message_ids": {
+            "update_id": update_id,
+            "honeypot_telegram_msg_id": msg.get("telegram_msg_id"),
+            "telegram_message_id": raw_message_id or (msg.get("file_meta") or {}).get("message_id"),
+            "chat_id": raw_chat_id or (msg.get("file_meta") or {}).get("chat_id"),
+            "callback_query_id": callback.get("id"),
+            "inline_query_id": inline_query.get("id"),
+        },
+        "raw_telegram_update": raw_update,
+    }
+    if raw_record is None:
+        evidence["raw_copy_note"] = "The raw Telegram update has expired from honeypot_updates retention."
+
+    update_id_str = str(update_id if update_id is not None else "unknown")
+    filename = f"honeypot-evidence-{update_id_str}.json"
+    return json.dumps(evidence, ensure_ascii=False, indent=2).encode("utf-8"), filename
 
 @app.task(name="flow.honeypot_redirect_sweep")
 def honeypot_redirect_sweep():
