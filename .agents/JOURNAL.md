@@ -388,4 +388,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 - Committed the Wayback provider, task, and `tests/unit/test_wayback_scanner_failures.py` with the S10.4 tick. Failures now name the search or snapshot and the next step; unfinished snapshots stay saved until handled; rate limits wait or stop cleanly; and each run stays within the 500-result and 500-archive-request caps. The existing username pivot still gets a list from the service by default.
 - Final focused run: `.venv/bin/pytest -p no:cacheprovider tests/unit/test_wayback_scanner_failures.py` — 21 passed, 0 failed. Syntax compilation and `git diff --check` passed. One Starlette deprecation warning and two Hypothesis memory warnings did not fail tests. No schedule, login, database, or other scanner code changed.
-- S10.1 checkpoint: `8b0d282`; S10.2 checkpoint: `714c011`; S10.3 checkpoint: `dbec70b`; the final code commit hash will be added after the push.
+- S10.1 checkpoint: `8b0d282`; S10.2 checkpoint: `714c011`; S10.3 checkpoint: `dbec70b`; S10.4 code commit: `12df766`.
