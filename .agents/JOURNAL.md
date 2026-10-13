@@ -328,3 +328,8 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Added `tests/unit/test_rentry_scanner_failures.py`. The tests call the real Rentry provider, Exa client, task, and shared scan runner. Only HTTP replies, Redis, result saving, status output, and waits are replaced.
 - Covered Exa outage and missing key; Rentry connection failure; HTTP 401, 403, 404, 410, 422, and 500; error and loading replies with HTTP 200; rate limit waits and a clean stop; empty search results; a failed paste while a later paste succeeds; and a result save failure that keeps the paste for another scan.
 - Ran `.venv/bin/pytest -p no:cacheprovider tests/unit/test_rentry_scanner_failures.py` — 15 passed, 0 failed. The first run had one case-sensitive log assertion failure; the assertion was corrected and the full file was rerun successfully. Pytest reported one Starlette deprecation warning and two Hypothesis in-memory setup warnings; none failed a test. S8.1 checkpoint: `eb4fd58`; S8.2 checkpoint: `9dad0cb`; the S8.3 checkpoint hash will be recorded in S8.4.
+
+## 2026-10-14 — S8.4 Rentry final commit
+
+- Final Rentry changes are limited to the Rentry provider, its task, and `tests/unit/test_rentry_scanner_failures.py`. The scanner now logs failures, keeps unfinished paste IDs in Redis for the next scan, retries network and server errors with waits, and slows or stops raw fetches after rate limits. The 12-hour schedule is unchanged.
+- Ran `.venv/bin/pytest -p no:cacheprovider tests/unit/test_rentry_scanner_failures.py` — 15 passed, 0 failed. `git diff --check` and Python syntax compilation passed. S8.1 checkpoint: `eb4fd58`; S8.2 checkpoint: `9dad0cb`; S8.3 checkpoint: `9640ee8`. The Rentry code commit hash will be recorded with the S8.4 tick.

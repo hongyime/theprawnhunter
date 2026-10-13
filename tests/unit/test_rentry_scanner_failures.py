@@ -1,0 +1,344 @@
+import logging
+
+import httpx
+import pytest
+
+from app.infrastructure.scanners.providers import exa as exa_provider
+from app.infrastructure.scanners.providers import rentry as rentry_provider
+from app.workers.tasks import flow_tasks
+from app.workers.tasks.scanners.providers import rentry as rentry_task
+
+
+FIRST_QUERY = 'site:rentry.co "api.telegram.org/bot"'
+SECOND_QUERY = 'site:rentry.co "TELEGRAM_BOT_TOKEN"'
+TOKEN_ONE = f"12345678:{'Z' * 35}"
+TOKEN_TWO = f"23456789:{'Y' * 35}"
+
+
+class _MemoryRedis:
+    def __init__(self):
+        self.values = {}
+        self.sets = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def exists(self, key):
+        return int(key in self.values)
+
+    def setex(self, key, _ttl, value):
+        self.values[key] = value
+        return True
+
+    def smembers(self, key):
+        return set(self.sets.get(key, set()))
+
+    def sadd(self, key, value):
+        before = len(self.sets.setdefault(key, set()))
+        self.sets[key].add(value)
+        return int(len(self.sets[key]) > before)
+
+    def srem(self, key, value):
+        values = self.sets.setdefault(key, set())
+        existed = value in values
+        values.discard(value)
+        return int(existed)
+
+
+class _Context:
+    def __init__(self, client):
+        self.client = client
+
+    async def __aenter__(self):
+        return self.client
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+class _ExaClient:
+    def __init__(self, responder):
+        self.responder = responder
+        self.calls = []
+
+    async def post(self, url, *, headers, json):
+        self.calls.append(json["query"])
+        return self.responder(json["query"], len(self.calls))
+
+
+class _RawClient:
+    def __init__(self, responder):
+        self.responder = responder
+        self.calls = []
+
+    async def get(self, url):
+        self.calls.append(url)
+        return self.responder(url, self.calls.count(url))
+
+
+def _response(status=200, *, payload=None, text=None, headers=None, url="https://api.exa.ai/search"):
+    request = httpx.Request("GET", url)
+    if payload is not None:
+        return httpx.Response(status, json=payload, headers=headers or {}, request=request)
+    if text is not None:
+        return httpx.Response(status, text=text, headers=headers or {}, request=request)
+    return httpx.Response(status, headers=headers or {}, request=request)
+
+
+def _paste_result(url, token):
+    return {"text": f"bot{token}", "url": url}
+
+
+def _prepare(monkeypatch, exa_responder, raw_responder):
+    redis = _MemoryRedis()
+    exa_client = _ExaClient(exa_responder)
+    raw_client = _RawClient(raw_responder)
+    saved = []
+    statuses = []
+    sleeps = []
+
+    monkeypatch.setattr(exa_provider.settings, "EXA_API_KEY", "test-exa-key", raising=False)
+    monkeypatch.setattr(exa_provider.settings, "EXA_API_KEY_2", "", raising=False)
+    monkeypatch.setattr(exa_provider.settings, "EXA_API_KEY_3", "", raising=False)
+    monkeypatch.setattr(
+        exa_provider,
+        "get_async_http_client",
+        lambda **_kwargs: _Context(exa_client),
+    )
+    monkeypatch.setattr(
+        rentry_provider.httpx,
+        "AsyncClient",
+        lambda **_kwargs: _Context(raw_client),
+    )
+    monkeypatch.setattr(flow_tasks, "redis_client", redis)
+    monkeypatch.setattr(rentry_task, "redis_client", redis)
+
+    async def save_results(results, source_name):
+        saved.extend((source_name, item) for item in results)
+        return len(results)
+
+    async def send_status(message):
+        statuses.append(message)
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(rentry_task, "_save_credentials_async", save_results)
+    monkeypatch.setattr(rentry_task, "_send_log_async", send_status)
+    monkeypatch.setattr(rentry_provider.asyncio, "sleep", sleep)
+    return redis, exa_client, raw_client, saved, statuses, sleeps
+
+
+def _exa_with_pastes(first_results):
+    def respond(query, _attempt):
+        results = first_results if query == FIRST_QUERY else []
+        return _response(payload={"results": results})
+
+    return respond
+
+
+@pytest.mark.asyncio
+async def test_exa_outage_is_logged_and_the_other_search_still_runs(monkeypatch, caplog):
+    def respond(query, attempt):
+        if query == FIRST_QUERY:
+            return _response(503, payload={"error": "search service down"})
+        return _response(payload={"results": []})
+
+    redis, exa, raw, _, _, sleeps = _prepare(monkeypatch, respond, lambda *_: _response(404))
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    result = await rentry_task._scan_rentry_async()
+
+    assert len(exa.calls) == exa_provider.MAX_ATTEMPTS + 1
+    assert exa.calls[-1] == SECOND_QUERY
+    assert raw.calls == []
+    assert redis.sets.get(rentry_provider.RETRY_PASTE_SET, set()) == set()
+    assert "Search" in caplog.text and FIRST_QUERY in caplog.text
+    assert "checking the other Rentry search now" in caplog.text
+    assert "returned no matches" in caplog.text
+    assert result.endswith("Saved 0 new credentials.")
+    assert 2 in sleeps and 4 in sleeps and 8 in sleeps
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "message", "expected_fetches"),
+    [
+        (401, "", "Rentry denied access", 1),
+        (403, "", "Rentry denied access", 1),
+        (404, "", "missing or deleted", 1),
+        (410, "", "missing or deleted", 1),
+        (422, "", "raw fetch did not return a successful reply", 1),
+        (500, "", "after 4 requests", 4),
+        (200, '{"error":"upstream failed"}', "contains an error", 1),
+        (200, "Loading", "still loading", 1),
+    ],
+)
+@pytest.mark.asyncio
+async def test_failed_paste_replies_are_logged_and_kept_for_next_scan(
+    monkeypatch, caplog, status, body, message, expected_fetches
+):
+    paste_id = "missing-paste"
+    result_url = f"https://rentry.co/{paste_id}"
+
+    def raw_reply(_url, _attempt):
+        return _response(status, text=body, url=f"https://rentry.co/api/raw/{paste_id}")
+
+    redis, _, raw, _, _, _ = _prepare(
+        monkeypatch,
+        _exa_with_pastes([_paste_result(result_url, TOKEN_ONE)]),
+        raw_reply,
+    )
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    await rentry_task._scan_rentry_async()
+
+    assert len(raw.calls) == expected_fetches
+    assert paste_id in redis.sets[rentry_provider.RETRY_PASTE_SET]
+    assert f"rentry:seen:{paste_id}" not in redis.values
+    assert paste_id in caplog.text
+    assert message in caplog.text
+    assert "next scan" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_raw_service_down_keeps_failed_paste_and_reads_the_next_one(monkeypatch, caplog):
+    first_id = "paste-down"
+    second_id = "paste-up"
+
+    def raw_reply(url, _attempt):
+        if first_id in url:
+            raise httpx.ConnectError("Rentry cannot be reached")
+        return _response(200, text=TOKEN_TWO, url=url)
+
+    redis, _, raw, saved, _, _ = _prepare(
+        monkeypatch,
+        _exa_with_pastes([
+            _paste_result(f"https://rentry.co/{first_id}", TOKEN_ONE),
+            _paste_result(f"https://rentry.co/{second_id}", TOKEN_TWO),
+        ]),
+        raw_reply,
+    )
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    result = await rentry_task._scan_rentry_async()
+
+    assert raw.calls.count(f"https://rentry.co/api/raw/{first_id}") == 4
+    assert raw.calls.count(f"https://rentry.co/api/raw/{second_id}") == 1
+    assert redis.sets[rentry_provider.RETRY_PASTE_SET] == {first_id}
+    assert f"rentry:seen:{first_id}" not in redis.values
+    assert redis.values[f"rentry:seen:{second_id}"] == "1"
+    assert len(saved) == 1 and saved[0][1]["meta"]["paste_id"] == second_id
+    assert "failed after 4 requests" in caplog.text
+    assert "Keeping it for the next scan" in caplog.text
+    assert result.endswith("Saved 1 new credentials.")
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_waits_then_retries_the_same_paste(monkeypatch, caplog):
+    paste_id = "rate-limited"
+
+    def raw_reply(url, attempt):
+        if attempt == 1:
+            return _response(429, text="slow down", headers={"Retry-After": "2"}, url=url)
+        return _response(200, text=TOKEN_ONE, url=url)
+
+    redis, _, raw, saved, _, sleeps = _prepare(
+        monkeypatch,
+        _exa_with_pastes([_paste_result(f"https://rentry.co/{paste_id}", TOKEN_ONE)]),
+        raw_reply,
+    )
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    await rentry_task._scan_rentry_async()
+
+    assert raw.calls.count(f"https://rentry.co/api/raw/{paste_id}") == 2
+    assert 2 in sleeps
+    assert "HTTP 429" in caplog.text and "trying it again" in caplog.text
+    assert len(saved) == 1
+    assert f"rentry:seen:{paste_id}" in redis.values
+    assert paste_id not in redis.sets[rentry_provider.RETRY_PASTE_SET]
+
+
+@pytest.mark.asyncio
+async def test_long_rate_limit_wait_stops_raw_fetches_and_keeps_later_pastes(monkeypatch, caplog):
+    first_id = "rate-limited"
+    second_id = "later-paste"
+
+    redis, _, raw, _, _, sleeps = _prepare(
+        monkeypatch,
+        _exa_with_pastes([
+            _paste_result(f"https://rentry.co/{first_id}", TOKEN_ONE),
+            _paste_result(f"https://rentry.co/{second_id}", TOKEN_TWO),
+        ]),
+        lambda url, _attempt: _response(429, text="slow down", headers={"Retry-After": "90"}, url=url),
+    )
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    await rentry_task._scan_rentry_async()
+
+    assert raw.calls == [f"https://rentry.co/api/raw/{first_id}"]
+    assert 60 in sleeps
+    assert redis.sets[rentry_provider.RETRY_PASTE_SET] == {first_id, second_id}
+    assert "stopping raw fetches" in caplog.text.casefold()
+    assert "Leaving 1 later paste(s) saved" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_empty_search_results_are_logged_without_raw_fetches(monkeypatch, caplog):
+    redis, exa, raw, _, _, _ = _prepare(
+        monkeypatch,
+        lambda _query, _attempt: _response(payload={"results": []}),
+        lambda *_: _response(404),
+    )
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    await rentry_task._scan_rentry_async()
+
+    assert exa.calls == [FIRST_QUERY, SECOND_QUERY]
+    assert raw.calls == []
+    assert "Search" in caplog.text and "returned no matches" in caplog.text
+    assert redis.sets.get(rentry_provider.RETRY_PASTE_SET, set()) == set()
+
+
+@pytest.mark.asyncio
+async def test_missing_exa_key_is_logged_and_returns_without_requests(monkeypatch, caplog):
+    redis, exa, raw, _, _, _ = _prepare(
+        monkeypatch,
+        lambda *_: _response(payload={"results": []}),
+        lambda *_: _response(404),
+    )
+    monkeypatch.setattr(exa_provider.settings, "EXA_API_KEY", "", raising=False)
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    result = await rentry_task._scan_rentry_async()
+
+    assert exa.calls == []
+    assert raw.calls == []
+    assert "no non-empty Exa API key" in caplog.text
+    assert "Search" in caplog.text and "will run again next scan" in caplog.text
+    assert result.endswith("Saved 0 new credentials.")
+    assert redis.sets.get(rentry_provider.RETRY_PASTE_SET, set()) == set()
+
+
+@pytest.mark.asyncio
+async def test_save_failure_keeps_paste_for_next_scan(monkeypatch, caplog):
+    paste_id = "save-retry"
+    redis, _, _, _, _, _ = _prepare(
+        monkeypatch,
+        _exa_with_pastes([_paste_result(f"https://rentry.co/{paste_id}", TOKEN_ONE)]),
+        lambda url, _attempt: _response(200, text=TOKEN_ONE, url=url),
+    )
+
+    async def fail_to_save(_results, _source_name):
+        raise RuntimeError("validation queue is down")
+
+    monkeypatch.setattr(rentry_task, "_save_credentials_async", fail_to_save)
+    caplog.set_level(logging.INFO, logger="scanners")
+
+    result = await rentry_task._scan_rentry_async()
+
+    assert paste_id in redis.sets[rentry_provider.RETRY_PASTE_SET]
+    assert f"rentry:seen:{paste_id}" not in redis.values
+    assert f"Could not save results from paste '{paste_id}'" in caplog.text
+    assert "Keeping the paste for the next scan" in caplog.text
+    assert "Errors: 1" in result
