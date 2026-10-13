@@ -245,4 +245,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 ## 2026-10-14 — S4.4 URLScan complete
 
-- Committed the URLScan provider, worker, failure tests, and final state and journal notes to `main`, then pushed them to `origin main`. The final focused run passed 13 tests with 0 failures. The four-hour scan schedule and all other scanner code were left unchanged. Checkpoints: S4.1 `9d8ba99`; S4.2 `1cacd66`; S4.3 `0fb9f1d`. The S4.4 code commit hash will be added in the completion note.
+- Committed the URLScan provider, worker, failure tests, and final state and journal notes to `main`, then pushed them to `origin main` as `8410ef6`. The final focused run passed 13 tests with 0 failures. The four-hour scan schedule and all other scanner code were left unchanged. Checkpoints: S4.1 `9d8ba99`; S4.2 `1cacd66`; S4.3 `0fb9f1d`; S4.4 code `8410ef6`.
