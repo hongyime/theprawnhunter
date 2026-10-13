@@ -261,4 +261,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 
 ## 2026-10-14 — S5.4 GrepApp code commit
 
-- The GrepApp provider now checks replies, reports failures with the search and next step, waits before retries, and limits pages and results. Added real-worker tests for outage, HTTP errors, rate limits, empty results, later-scan recovery, page and result limits, and continued paging after a temporary error. The focused run passed 13 tests with 0 failures. The code commit hash will be recorded with the S5.4 completion tick. Checkpoints: S5.1 `0dd4bb0`; S5.2 `9047c45`; S5.3 `6cd722b`.
+- The GrepApp provider now checks replies, reports failures with the search and next step, waits before retries, and limits pages and results. Added real-worker tests for outage, HTTP errors, rate limits, empty results, later-scan recovery, page and result limits, and continued paging after a temporary error. The focused run passed 13 tests with 0 failures. Pushed the code, tests, and state and journal notes as `fc0128e`. Checkpoints: S5.1 `0dd4bb0`; S5.2 `9047c45`; S5.3 `6cd722b`; S5.4 `fc0128e`.
