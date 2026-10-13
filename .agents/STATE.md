@@ -3,8 +3,8 @@
 ## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** S6.1 complete; Gist failure paths reviewed and recorded in JOURNAL.md.
-- **Next-step:** Harden Gist for S6.2.
+- **Status:** S6.2 complete; Gist failures are logged, rate waits are shared, and failed files are saved for another try.
+- **Next-step:** Add and run Gist failure tests for S6.3.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
 - **Task list — every task small enough to finish in one step:**
   - [x] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
@@ -28,7 +28,7 @@
   - [x] S5.3 Test GrepApp — failure paths covered with REAL code, no fake stand-ins.
   - [x] S5.4 Commit GrepApp — commit + push + tick this box + JOURNAL.md line with commit hash.
   - [x] S6.1 Vet Gist — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
-  - [ ] S6.2 Harden Gist — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [x] S6.2 Harden Gist — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
   - [ ] S6.3 Test Gist — failure paths covered with REAL code, no fake stand-ins.
   - [ ] S6.4 Commit Gist — commit + push + tick this box + JOURNAL.md line with commit hash.
   - [ ] S7.1 Vet Exa — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
