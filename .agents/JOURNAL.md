@@ -138,3 +138,14 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Both containers recreated, healthy, RestartCount 0. beat/api/redis/cloudflared untouched.
 - 6-min log scan: zero tracebacks / RecursionError / NameError / ImportError / CRITICAL in worker or bot. Worker tasks processing (broadcasts succeeding); bot polling with watchdog.
 - Known operational note (not a crash): all 4 Telegram user sessions on cooldown until ~2026-10-14 06:01 UTC; broadcaster falls back to trusting saved topic IDs and sends succeed.
+
+## 2026-10-14 00:05 SGT — 12-scanner check + harden job starting (supervisor checkpoint)
+
+- Gate checked: 5-fix job complete (HEAD d2b0494, worker + bot healthy, no new crashes). No Codex job running on this repo. Other Codex jobs on other repos (unifiedcollector, forge) do not block this repo.
+- Job: check and harden all 12 bot-discovery scanners, one at a time, one commit each, in the order listed in STATE.md. Bryan said: continue all the way.
+- Rules: read code first; every failure logged clearly, no crash of the whole scan, work stays retryable next time; tests use REAL code; no port / database / login changes; scan times unchanged.
+- Next: Scanner 1 — GitHub search.
+
+## Login cleanup import audit — completed
+
+- Confirmed `login.py` already imports `schedule_deletion` from `.commands`; commit `cb8ed1c` introduced the import. The reported issue is already fixed, so no code change, tests, or commit were made.

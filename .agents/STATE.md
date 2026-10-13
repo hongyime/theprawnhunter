@@ -1,18 +1,48 @@
 # theprawnhunter — STATE
 
-## Current task (updated 2026-10-13 23:41 SGT)
+## Current task (updated 2026-10-14 00:08 SGT)
+
+- **Job:** Check and harden all 12 bot-discovery scanners, one at a time. Bryan said: continue all the way. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
+- **Status:** Starting. Scanner 1 of 12 (GitHub search) is next.
+- **Order (one at a time, one commit each):**
+  1. [ ] GitHub search — check + harden + commit
+  2. [ ] GitHub firehose — check + harden + commit
+  3. [ ] Shodan — check + harden + commit
+  4. [ ] URLScan — check + harden + commit
+  5. [ ] GrepApp — check + harden + commit
+  6. [ ] Gist — check + harden + commit
+  7. [ ] Exa — check + harden + commit
+  8. [ ] Rentry — check + harden + commit
+  9. [ ] Hastebin — check + harden + commit
+  10. [ ] Wayback — check + harden + commit
+  11. [ ] Telegram search — check + harden + commit
+  12. [ ] Netlas — check + harden + commit
+- **After all 12:** Rebuild ONLY the worker container, check it is healthy, watch the logs briefly for new crashes.
+- **Rules for every scanner:** Read the code first. Check what happens when the provider is down, returns an error, limits requests, or returns nothing. Every failure must be logged clearly, must not crash the whole scan, and must leave the work to be tried again next time. Tests must use the REAL code being checked, not a fake copy of it. No port changes, no database changes, no login/secret changes. Do NOT change scan times (the 4h/6h/12h rhythm stays as-is).
+- **Supervision rules (Bryan 2026-10-13):** small steps, one at a time, no wandering; update STATE.md + JOURNAL.md after EACH small step (tick the checkbox above + append a journal line); liveness checks every few minutes (process alive, log growing, deliverable moved); on crash, verify state from scratch and resume from STATE.md checkpoint, never restart from zero. Tests must use REAL code, no fake stand-ins.
+- **How this job runs:** One Codex run per scanner, one commit per scanner. The supervisor starts each run, watches it, checks the commit landed, then starts the next.
+
+## Completed — all 5 latent-bug fixes (2026-10-13 ~23:50 SGT) — RESTORED after collision
 
 - **Job:** All 5 latent-bugs fixes done + worker/bot rebuilt. Job complete.
-- **Status:** All five fixes pushed (HEAD c57c3bf); worker + bot rebuilt from base compose, both healthy, 0 restarts, no new crashes in log watch.
+- **Status:** All five fixes pushed (HEAD c57c3bf at the time); worker + bot rebuilt from base compose, both healthy, 0 restarts, no new crashes in log watch.
 - **Order (one at a time, one commit each):**
   1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit `93f2393c79f015f4ff78032546a5435414cadaa3`.
   2. [x] Backfill marked handled before DB update (audit_tasks.py:813-824) — now marks only rows returned by a successful update; regression test passes; commit `0ce213c29843e45757aa7a58fe93bc4fe0ac2ec9`.
   3. [x] Login cleanup helpers never imported (_bot_listener/login.py) — imported `_wipe_conversation` and `schedule_deletion` from `_bot_listener/commands.py`; real-helper login tests pass; commit `cb8ed1c0f235e0f0545c5119f77e37e5124d5956`.
-  4. [x] Extension deletes results before upload succeeds (extension/background.js:526-529) — pruning now follows successful upload; failed uploads retain results.
-  5. [x] Scrape batch failures only debug-logged (scraper_srv.py:307-324, 473-490) — warn, record a failed attempt, and keep partial scrape results retryable when appropriate.
-- **Supervision rules (Bryan 2026-10-13):** small steps, one at a time, no wandering; update STATE.md + JOURNAL.md after EACH small step (tick the checkbox above + append a journal line); liveness checks every few minutes (process alive, log growing, deliverable moved); on crash, verify state from scratch and resume from STATE.md checkpoint, never restart from zero. Tests must use REAL helpers, no fake stand-ins.
+  4. [x] Extension deletes results before upload succeeds (extension/background.js:526-529) — pruning now follows successful upload; failed uploads retain results; commit `a993caf`.
+  5. [x] Scrape batch failures only debug-logged (scraper_srv.py:307-324, 473-490) — warn, record a failed attempt, and keep partial scrape results retryable when appropriate; commits `5181cf1` + follow-up `c57c3bf`.
 - **After all five:** DONE 2026-10-13 ~23:50 SGT - worker + bot rebuilt (base compose, --build --no-deps), both healthy, RestartCount 0, zero tracebacks in 6-min log scan.
 - **Note:** an earlier gate-state block written at 22:58 SGT was overwritten when the redirect job committed its own STATE.md changes (5a370ed). Re-applied here. Lesson: commit STATE.md promptly; uncommitted shared state can be clobbered by a concurrent job.
+
+## 3-fix job — STOOD DOWN (collision 2026-10-14 ~00:05 SGT)
+
+- **Fix 1 (login delete helper):** DONE — verified already fixed: `schedule_deletion` is imported in `login.py` from `.commands` by commit cb8ed1c. No code change, tests, or commit needed. (Also recorded in "Completed check — login cleanup import" below.)
+- **Fixes 2–3 (scanner test passes with nothing queued; failed backfills recorded as successful):** WAITING — stood down due to the STATE.md collision. They run only after the 12-scanner job fully completes. Do NOT start them in parallel.
+
+## Collision record (2026-10-14 ~00:08 SGT)
+
+- Two Codex jobs (scanner vet + 3-fix Fix-1) wrote STATE.md/JOURNAL.md concurrently; the scanner job's STATE entry clobbered the 5-fix completion record. Reconciled here: 5-fix record restored, 3-fix Fix-1 outcome kept, scanner job kept as current. JOURNAL.md needed no repair (append-only, both entries present). Lesson: one writer per repo at a time; commit STATE.md promptly after each step.
 
 
 Last updated: 2026-09-18 (prawn-ui batch)
@@ -98,3 +128,9 @@ Publish the reviewed portability and privacy maintenance from the current defaul
 ## Checkpoint 2026-10-13 23:12 SGT — redirect error fix (resumed)
 
 - Fix verified on disk; 9/9 tests pass (supervisor-run). Next: commit, push, rebuild worker, 10-min log watch.
+
+## Completed check — login cleanup import
+
+- **Current task:** Verify the reported missing `schedule_deletion` import in `app/services/_bot_listener/login.py`.
+- **Progress:** Already fixed on `main`; line 4 imports it from `.commands`, where the helper is defined. Commit `cb8ed1c0f235e0f0545c5119f77e37e5124d5956` adds that import. No code change or tests were needed.
+- **Next step:** No follow-up for this check; continue with the existing next task when directed.
