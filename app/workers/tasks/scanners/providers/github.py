@@ -2,6 +2,7 @@
 
 from ..common import *
 
+
 @app.task(name="scanner.scan_github")
 def scan_github(query: str = None):
     return _run_sync(_scan_github_async(query))
@@ -52,10 +53,14 @@ async def _scan_github_async(query: str = None):
     logger.info(f"🐱 [GitHub] Starting scan with {len(queries)} dorks (cap={DORK_CAP}, sleep={QUERY_SLEEP}s)...")
     await _send_log_async(f"🐱 [GitHub] Starting scan with {len(queries)} dorks...")
 
+    # Code search has no pushed-date qualifier, so the service filters matches
+    # using repository push dates from this rolling cutoff.
+    pushed_since = github.recent_push_cutoff()
+
     for q in queries:
         logger.info(f"    🔎 [GitHub] Dorking: {q}")
         try:
-            results = await _cb("github").call(github.search)(q)
+            results = await _cb("github").call(github.search)(q, pushed_since=pushed_since)
             logger.info(f"    ✅ [GitHub] Dork returned {len(results)} matches.")
 
             saved = await _save_credentials_async(results, "github")

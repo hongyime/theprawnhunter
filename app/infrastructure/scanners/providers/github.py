@@ -1,11 +1,109 @@
 """Scanner client for Github."""
 
+import os
+import time
+from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
+
 from ..common import *
 
+
 class GithubService:
+    REPO_PUSH_CACHE_SECONDS = 300
+
     def __init__(self):
         self.token = settings.GITHUB_TOKEN  # backwards-compat fallback
         self.base_url = "https://api.github.com/search/code"
+        self._repo_push_cache: dict[str, tuple[float, str | None]] = {}
+
+    def recent_push_cutoff(self, now: datetime | None = None) -> datetime:
+        """Return the rolling cutoff; GITHUB_PUSHED_WITHIN_DAYS defaults to 30."""
+        try:
+            days = int(os.getenv("GITHUB_PUSHED_WITHIN_DAYS", "30"))
+        except ValueError:
+            days = 30
+        days = max(1, days)
+
+        current_time = now or datetime.now(UTC)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=UTC)
+        return current_time - timedelta(days=days)
+
+    @staticmethod
+    def _is_recent_push(pushed_at: str | None, cutoff: datetime) -> bool:
+        if not isinstance(pushed_at, str) or not pushed_at:
+            return False
+        try:
+            pushed_time = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if pushed_time.tzinfo is None:
+            pushed_time = pushed_time.replace(tzinfo=UTC)
+        return pushed_time.astimezone(UTC) >= cutoff
+
+    async def _get_repo_pushed_at(self, client, full_name: str, headers: dict) -> str | None:
+        cached = self._repo_push_cache.get(full_name)
+        if cached and time.monotonic() - cached[0] < self.REPO_PUSH_CACHE_SECONDS:
+            return cached[1]
+
+        try:
+            repo_url = f"https://api.github.com/repos/{quote(full_name, safe='/')}"
+            response = await client.get(repo_url, headers=headers)
+            response.raise_for_status()
+            pushed_at = response.json().get("pushed_at")
+        except Exception as error:
+            logger.debug("[GitHub] Could not check pushed date for %s: %s", full_name, error)
+            return None
+
+        self._repo_push_cache[full_name] = (time.monotonic(), pushed_at)
+        return pushed_at
+
+    async def _filter_recent_items(
+        self, items: list[dict], headers: dict, cutoff: datetime
+    ) -> list[dict]:
+        """Keep code matches from repositories pushed during the rolling date window."""
+        cutoff = (
+            cutoff.replace(tzinfo=UTC)
+            if cutoff.tzinfo is None
+            else cutoff.astimezone(UTC)
+        )
+
+        pushed_at_by_repo = {}
+        repo_names_to_check = set()
+
+        for item in items:
+            repository = item.get("repository", {})
+            full_name = repository.get("full_name")
+            if not full_name:
+                continue
+
+            pushed_at = repository.get("pushed_at")
+            if pushed_at:
+                pushed_at_by_repo[full_name] = pushed_at
+                self._repo_push_cache[full_name] = (time.monotonic(), pushed_at)
+            else:
+                repo_names_to_check.add(full_name)
+
+        if repo_names_to_check:
+            semaphore = asyncio.Semaphore(10)
+            async with get_async_http_client(timeout=30.0, follow_redirects=False) as client:
+                async def check_repo(full_name):
+                    async with semaphore:
+                        return full_name, await self._get_repo_pushed_at(client, full_name, headers)
+
+                repo_dates = await asyncio.gather(
+                    *(check_repo(full_name) for full_name in repo_names_to_check)
+                )
+            pushed_at_by_repo.update(repo_dates)
+
+        return [
+            item
+            for item in items
+            if self._is_recent_push(
+                pushed_at_by_repo.get(item.get("repository", {}).get("full_name")),
+                cutoff,
+            )
+        ]
 
     def _get_token(self) -> str:
         """
@@ -32,7 +130,10 @@ class GithubService:
             import random as _r
             return _r.choice(tokens)
 
-    async def search(self, query: str) -> list[dict[str, Any]]:
+    async def search(
+        self, query: str, pushed_since: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        """Search code, optionally limiting matches to recently pushed repositories."""
         token = self._get_token()
         if not token:
             logger.warning("GitHub Token missing (set GITHUB_TOKEN or GITHUB_TOKENS)")
@@ -57,8 +158,9 @@ class GithubService:
                     return res.json().get('items', [])
 
             items = await retry_with_backoff(do_github, max_retries=2)
-            if not items:
-                items = []
+            items = items or []
+            if pushed_since is not None:
+                items = await self._filter_recent_items(items, headers, pushed_since)
 
             # Parallel Raw Fetching
             results = []
