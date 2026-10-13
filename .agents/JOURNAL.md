@@ -411,3 +411,9 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - The scanner logs each failed search to the worker log and task log with the cause and next step. A normal failure moves to the next search; unavailable sessions stop cleanly; a FloodWait waits the full requested time and stops the run before another Telegram search. Failed searches stay in the list made for the next scan (`app/workers/tasks/scanners/providers/telegram_search.py:27-38,54-85`). The 5-second gap now also follows failed searches (`:116-118`).
 - Search limits remain three default searches and 100 messages each (`:43-47,56-58`). Cooldown checks and other Telegram session users were left alone. `git diff --check` passed; tests are S11.3.
 - S11.1 checkpoint: `ad07289`. This S11.2 checkpoint hash will be recorded in S11.3.
+
+## 2026-10-14 — S11.3 Telegram search tests
+
+- Added `tests/unit/test_telegram_search_scanner.py`. The tests call the real scanner task and real `search_messages` method. They cover a service outage with later searches continuing, the full FloodWait pause and saved session cooldown, a logged-out session, and an empty reply. Only Telegram replies, Redis, status sending, sleep, and file/lease edges are faked. No real account or session is used.
+- Ran `.venv/bin/pytest -p no:cacheprovider tests/unit/test_telegram_search_scanner.py`: 4 passed, 0 failed. One Starlette deprecation warning did not fail a test. An earlier run had 3 passed and 1 failed because the fake session monitor lacked its `done()` method; the test setup was corrected, then the full file passed.
+- S11.1 checkpoint: `ad07289`; S11.2 checkpoint: `6fdd5d2`. This S11.3 checkpoint hash will be recorded in S11.4.
