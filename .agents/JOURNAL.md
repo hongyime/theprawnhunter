@@ -185,3 +185,9 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Commit marks are held until result saving succeeds (`:577-608`). A failed fetch gets no mark, and the event marker and ETag are saved only after the whole poll succeeds (`:610-628`). This keeps failed work available for the next poll.
 - Added a shared limit of 4,500 requests in one hour, with a shared wait when it fills (`:42-68,92-147,221-234,459-475`). A GitHub rate-limit reply uses its wait headers or a one-minute fallback (`:160-188`). Pages stay capped at three, the commit gap stays 0.2 seconds, and the schedule stays every 30 seconds. Missing login now says the next poll will try again (`:406-410`).
 - No tests were run in S2.2; they are the next box. S2.2 checkpoint commit: `1da2c9c`.
+
+## 2026-10-14 — S2.3 GitHub firehose tests
+
+- Added `tests/unit/test_firehose_tasks.py`. The tests call the real firehose poll, event, commit, and result-save code. Only GitHub replies, Redis, the validation queue, and the system-log send are replaced. They cover provider down, events and commit HTTP errors, event and commit rate limits, the hourly cap, empty events, one commit failing while another finishes, retrying the failed commit, missing login, and retry after a result-queue failure.
+- The first run had 9 passed and 1 failed: it found that the event helper could not see the token checks imported inside the poll. Passed those real imports into the helper and fixed the failure. Final run: `.venv/bin/pytest tests/unit/test_firehose_tasks.py` — 10 passed, 0 failed. Pytest also printed cache and Starlette warnings; no test failed because of them.
+- S2.3 checkpoint commit hash will be added after push.
