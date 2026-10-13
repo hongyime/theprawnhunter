@@ -1,49 +1,64 @@
 # theprawnhunter — STATE
 
-## Current task (updated 2026-10-14 00:08 SGT)
+## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
 
-- **Job:** Check and harden all 12 bot-discovery scanners, one at a time. Bryan said: continue all the way. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
-- **Status:** Starting. Scanner 1 of 12 (GitHub search) is next.
-- **Order (one at a time, one commit each):**
-  1. [ ] GitHub search — check + harden + commit
-  2. [ ] GitHub firehose — check + harden + commit
-  3. [ ] Shodan — check + harden + commit
-  4. [ ] URLScan — check + harden + commit
-  5. [ ] GrepApp — check + harden + commit
-  6. [ ] Gist — check + harden + commit
-  7. [ ] Exa — check + harden + commit
-  8. [ ] Rentry — check + harden + commit
-  9. [ ] Hastebin — check + harden + commit
-  10. [ ] Wayback — check + harden + commit
-  11. [ ] Telegram search — check + harden + commit
-  12. [ ] Netlas — check + harden + commit
-- **After all 12:** Rebuild ONLY the worker container, check it is healthy, watch the logs briefly for new crashes.
-- **Rules for every scanner:** Read the code first. Check what happens when the provider is down, returns an error, limits requests, or returns nothing. Every failure must be logged clearly, must not crash the whole scan, and must leave the work to be tried again next time. Tests must use the REAL code being checked, not a fake copy of it. No port changes, no database changes, no login/secret changes. Do NOT change scan times (the 4h/6h/12h rhythm stays as-is).
-- **Supervision rules (Bryan 2026-10-13):** small steps, one at a time, no wandering; update STATE.md + JOURNAL.md after EACH small step (tick the checkbox above + append a journal line); liveness checks every few minutes (process alive, log growing, deliverable moved); on crash, verify state from scratch and resume from STATE.md checkpoint, never restart from zero. Tests must use REAL code, no fake stand-ins.
+- **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
+- **Status:** Scanner 1 (GitHub search) vet+harden IN PROGRESS — code changes on disk, uncommitted. Next checkbox: S1.1.
+- **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox, set next step) AND append a JOURNAL.md line (what was done, why, commit hash). No step is done until both files are updated. Commit STATE.md promptly with each fix commit so it cannot be clobbered.
+- **Task list — every task small enough to finish in one step:**
+  - [ ] S1.1 Vet GitHub search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S1.2 Harden GitHub search — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S1.3 Test GitHub search — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S1.4 Commit GitHub search — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S2.1 Vet GitHub firehose — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S2.2 Harden GitHub firehose — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S2.3 Test GitHub firehose — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S2.4 Commit GitHub firehose — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S3.1 Vet Shodan — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S3.2 Harden Shodan — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S3.3 Test Shodan — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S3.4 Commit Shodan — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S4.1 Vet URLScan — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S4.2 Harden URLScan — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S4.3 Test URLScan — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S4.4 Commit URLScan — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S5.1 Vet GrepApp — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S5.2 Harden GrepApp — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S5.3 Test GrepApp — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S5.4 Commit GrepApp — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S6.1 Vet Gist — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S6.2 Harden Gist — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S6.3 Test Gist — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S6.4 Commit Gist — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S7.1 Vet Exa — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S7.2 Harden Exa — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S7.3 Test Exa — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S7.4 Commit Exa — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S8.1 Vet Rentry — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S8.2 Harden Rentry — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S8.3 Test Rentry — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S8.4 Commit Rentry — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S9.1 Vet Hastebin — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S9.2 Harden Hastebin — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S9.3 Test Hastebin — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S9.4 Commit Hastebin — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S10.1 Vet Wayback — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S10.2 Harden Wayback — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S10.3 Test Wayback — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S10.4 Commit Wayback — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S11.1 Vet Telegram search — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S11.2 Harden Telegram search — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S11.3 Test Telegram search — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S11.4 Commit Telegram search — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] S12.1 Vet Netlas — read the code; check what happens when the provider is down, errors, rate-limits, or returns nothing.
+  - [ ] S12.2 Harden Netlas — every failure logged clearly; no whole-run crash; work stays retryable next cycle.
+  - [ ] S12.3 Test Netlas — failure paths covered with REAL code, no fake stand-ins.
+  - [ ] S12.4 Commit Netlas — commit + push + tick this box + JOURNAL.md line with commit hash.
+  - [ ] F1 Rebuild ONLY the worker container, verify healthy.
+  - [ ] F2 Log watch — brief watch, no new crashes.
+- **Rules for every scanner:** No port changes, no database changes, no login/secret changes. Do NOT change scan times (the 4h/6h/12h rhythm stays as-is).
+- **Supervision rules (Bryan 2026-10-13):** small steps, one at a time, no wandering; update STATE.md + JOURNAL.md after EACH small step; liveness checks every few minutes (process alive, log growing, deliverable moved); on crash, verify state from scratch and resume from STATE.md checkpoint, never restart from zero. Tests must use REAL code, no fake stand-ins.
 - **How this job runs:** One Codex run per scanner, one commit per scanner. The supervisor starts each run, watches it, checks the commit landed, then starts the next.
-
-## Completed — all 5 latent-bug fixes (2026-10-13 ~23:50 SGT) — RESTORED after collision
-
-- **Job:** All 5 latent-bugs fixes done + worker/bot rebuilt. Job complete.
-- **Status:** All five fixes pushed (HEAD c57c3bf at the time); worker + bot rebuilt from base compose, both healthy, 0 restarts, no new crashes in log watch.
-- **Order (one at a time, one commit each):**
-  1. [x] Bot reply helper called itself (_bot_listener/common.py:54) — now sends the reply with `update.message.reply_text`; commit `93f2393c79f015f4ff78032546a5435414cadaa3`.
-  2. [x] Backfill marked handled before DB update (audit_tasks.py:813-824) — now marks only rows returned by a successful update; regression test passes; commit `0ce213c29843e45757aa7a58fe93bc4fe0ac2ec9`.
-  3. [x] Login cleanup helpers never imported (_bot_listener/login.py) — imported `_wipe_conversation` and `schedule_deletion` from `_bot_listener/commands.py`; real-helper login tests pass; commit `cb8ed1c0f235e0f0545c5119f77e37e5124d5956`.
-  4. [x] Extension deletes results before upload succeeds (extension/background.js:526-529) — pruning now follows successful upload; failed uploads retain results; commit `a993caf`.
-  5. [x] Scrape batch failures only debug-logged (scraper_srv.py:307-324, 473-490) — warn, record a failed attempt, and keep partial scrape results retryable when appropriate; commits `5181cf1` + follow-up `c57c3bf`.
-- **After all five:** DONE 2026-10-13 ~23:50 SGT - worker + bot rebuilt (base compose, --build --no-deps), both healthy, RestartCount 0, zero tracebacks in 6-min log scan.
-- **Note:** an earlier gate-state block written at 22:58 SGT was overwritten when the redirect job committed its own STATE.md changes (5a370ed). Re-applied here. Lesson: commit STATE.md promptly; uncommitted shared state can be clobbered by a concurrent job.
-
-## 3-fix job — STOOD DOWN (collision 2026-10-14 ~00:05 SGT)
-
-- **Fix 1 (login delete helper):** DONE — verified already fixed: `schedule_deletion` is imported in `login.py` from `.commands` by commit cb8ed1c. No code change, tests, or commit needed. (Also recorded in "Completed check — login cleanup import" below.)
-- **Fixes 2–3 (scanner test passes with nothing queued; failed backfills recorded as successful):** WAITING — stood down due to the STATE.md collision. They run only after the 12-scanner job fully completes. Do NOT start them in parallel.
-
-## Collision record (2026-10-14 ~00:08 SGT)
-
-- Two Codex jobs (scanner vet + 3-fix Fix-1) wrote STATE.md/JOURNAL.md concurrently; the scanner job's STATE entry clobbered the 5-fix completion record. Reconciled here: 5-fix record restored, 3-fix Fix-1 outcome kept, scanner job kept as current. JOURNAL.md needed no repair (append-only, both entries present). Lesson: one writer per repo at a time; commit STATE.md promptly after each step.
-
 
 Last updated: 2026-09-18 (prawn-ui batch)
 
