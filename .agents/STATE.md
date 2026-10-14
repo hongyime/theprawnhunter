@@ -11,7 +11,7 @@
   - [x] 2. Notify re-take investigation (@notifyGitlabRepobot) — DONE: live scrape log confirms foreign webhook detected and honeypot setWebhook succeeded; DB records honeypot_active=true.
   - [x] 3. Real Telegram redirect error — DONE: live failures carry `HTTP 403: Forbidden: bot was blocked by the user`.
   - [x] 4. Dependabot pytest alert — updated development pytest pins to patched versions; GitHub marked alert #58 fixed.
-  - [ ] F1. Rebuild ONLY affected containers, verify healthy, brief log watch.
+  - [x] F1. Rebuild ONLY affected containers, verify healthy, brief log watch. — DONE: worker image rebuilt (no prod code changed in loop, container kept), healthy, 5-min log watch 0 errors.
 - **Next:** Item 4 evidence recorded; this run stops here.
 
 ### Item 4 evidence — 2026-10-14
