@@ -51,7 +51,13 @@ async def _auto_delete_msg(msg, delay=AUTO_DELETE_SECONDS):
 
 async def _reply_and_delete(update, text, delay=AUTO_DELETE_SECONDS, **kwargs):
     """Reply to a message and schedule auto-deletion."""
-    sent = await update.message.reply_text(text, **kwargs)
+    try:
+        sent = await update.message.reply_text(text, **kwargs)
+    except Exception as exc:
+        if "replied not found" in str(exc).lower() and getattr(update, "effective_chat", None):
+            sent = await update.get_bot().send_message(chat_id=update.effective_chat.id, text=text, **kwargs)
+        else:
+            raise
     asyncio.create_task(_auto_delete_msg(sent, delay))
     return sent
 

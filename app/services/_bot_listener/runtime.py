@@ -258,6 +258,12 @@ def _build_application(token: str) -> Application:
         conversation_timeout=180,  # 3-minute cap — orphan temp session files get wiped
     )
     application.add_handler(login_conv_handler)
+
+    async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log errors caused by Updates cleanly without uncaught crash."""
+        logger.warning(f"Bot listener handled update exception: {context.error}")
+
+    application.add_error_handler(_error_handler)
     return application
 
 async def _run_bot_once(token: str, is_primary: bool = False):
