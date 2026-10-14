@@ -654,10 +654,33 @@ def backfill_general_messages(apply_changes: bool = False):
     default; an explicit apply choice is required to update rows or dispatch
     the normal broadcaster.
     """
-    return _run_sync(_backfill_general_messages_async(apply_changes=apply_changes))
+    if not apply_changes:
+        return _run_sync(_backfill_general_messages_async(apply_changes=False))
+
+    # Hold one cluster-wide lock for the whole apply run. The lease outlives
+    # Celery's 30-minute hard task limit, including when a worker is killed.
+    lock = redis_client.lock(
+        _GENERAL_BACKFILL_RUN_LOCK_KEY,
+        timeout=_GENERAL_BACKFILL_LOCK_TIMEOUT_SECONDS,
+        blocking=False,
+    )
+    if not lock.acquire():
+        msg = "Backfill skipped: another apply run is already running."
+        logger.info(msg)
+        return msg
+
+    try:
+        return _run_sync(_backfill_general_messages_async(apply_changes=True))
+    finally:
+        try:
+            lock.release()
+        except Exception as exc:
+            logger.warning("[Backfill] Could not release run lock; it will expire: %s", exc)
 
 
 _GENERAL_BACKFILL_DEDUP_KEY = "backfill:general:v1:processed_messages"
+_GENERAL_BACKFILL_RUN_LOCK_KEY = "backfill:general:v1:run_lock"
+_GENERAL_BACKFILL_LOCK_TIMEOUT_SECONDS = 1900
 _GENERAL_BACKFILL_OPTIONAL_COLUMNS = (
     "broadcast_message_id",
     "broadcast_status",

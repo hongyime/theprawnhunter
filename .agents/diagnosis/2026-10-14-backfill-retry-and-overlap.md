@@ -17,11 +17,13 @@ Date: 2026-10-14 | Repo: `/home/bryan/Projects/theprawnhunter` | Status: CONFIRM
 3. The existing regression injects a database update error, expects a returned string, and manually invokes the helper again (`tests/unit/test_general_backfill_safety.py:254-285`).
 4. The global Celery config has late acknowledgements and ignores task results by default (`app/workers/celery_app.py:213-235`), but does not configure automatic retries.
 5. The backfill is on-demand through `/backfill` or a manual Celery call; it is not listed in the beat schedule (`app/services/_bot_listener/commands.py:301-328`, `app/workers/celery_app.py:285-300`). There is no backfill lock.
-6. Each update includes both the selected IDs and `is_broadcasted=True` plus `broadcast_claimed_at IS NULL`, then changes `is_broadcasted` to `False` (`app/workers/tasks/audit_tasks.py:703-725, 811-817`). This is an atomic database compare-and-set: if two requests selected the same row, the first update changes its state, and the second update no longer matches it. Only rows returned by the winning update are marked and counted.
+6. Each update includes both the selected IDs and `is_broadcasted=True` plus `broadcast_claimed_at IS NULL`, then changes `is_broadcasted` to `False` (`app/workers/tasks/audit_tasks.py:710-731, 818-824`). This blocks two immediate updates to the same pending row.
+7. The candidate list is filtered against Redis once before the database update (`app/workers/tasks/audit_tasks.py:797-800`), and Redis markers are added only after that update (`:821-824`). Two runs can both retain the same unmarked candidate. A successful broadcast later sets `is_broadcasted=True` and clears `broadcast_claimed_at` (`app/workers/tasks/flows/broadcast.py:171-183`), so a delayed second run can match its stale candidate again.
+8. The general backfill task has no run lock and is not in the beat schedule; it is queued on demand (`app/services/_bot_listener/commands.py:301-328`; `app/workers/celery_app.py:285-565`, with no `system.backfill_general_messages` entry). The normal broadcast task has its own lock (`app/workers/tasks/flows/broadcast.py:423-437`), but that lock does not cover backfill selection or updates.
 
 ## Root Cause
 
-The exception handler turns a failed apply into a successful return, and the task has no automatic retry policy. The previous change protects unmodified rows from being Redis-marked, but it does not let Celery observe the update error.
+The exception handler turns a failed apply into a successful return, and the task has no automatic retry policy. For overlap, the per-row database condition blocks immediate contention, but it is only a temporary state check. Both runs can pass the Redis check before either marker is written, and the row can become eligible again after broadcast. There is no backfill-level lock to stop the stale second run.
 
 ## Why It Was Not Obvious
 
@@ -33,11 +35,11 @@ The helper-level test proved that a later manual invocation could pick up the ro
 |---|---|---|---|
 | Return an error string | No source change | Celery treats it as success | Reject |
 | Re-raise and configure bounded Celery retries | Backfill task and focused regression | Repeats transient failures a bounded number of times | Recommended |
-| Add a distributed run lock | Redis lock lifecycle and lock tests | Unneeded: the conditional update already permits only one run to change each selected row | Do not add |
+| Add a distributed lock for apply runs | Redis lock around the real apply helper, with a bounded lease and overlap test | A second simultaneous apply is skipped while the first run owns the lock | Recommended |
 
 ## Verification Plan
 
-Run the focused backfill safety tests through the registered Celery task. Inject one database update error, confirm Celery enters retry, and confirm the retry processes the still-eligible row. Review the update predicate and task scheduling again; no Part B code change is needed if the compare-and-set remains intact.
+Run the focused backfill safety tests through the registered Celery task. Inject one database update error, confirm Celery stores `RETRY`, and confirm the retry processes the still-eligible row. Start two apply runs with a shared lock backend, hold the first inside its real helper, and confirm the second is skipped and cannot issue a database update.
 
 ## Recurrence Guard
 

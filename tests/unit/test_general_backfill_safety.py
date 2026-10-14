@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -36,12 +38,34 @@ class _FakePipeline:
         return results
 
 
+class _FakeRedisLock:
+    def __init__(self, redis_client, key):
+        self.redis_client = redis_client
+        self.key = key
+
+    def acquire(self):
+        with self.redis_client._lock_guard:
+            if self.key in self.redis_client.lock_keys:
+                return False
+            self.redis_client.lock_keys.add(self.key)
+            return True
+
+    def release(self):
+        with self.redis_client._lock_guard:
+            self.redis_client.lock_keys.discard(self.key)
+
+
 class _FakeRedis:
     def __init__(self, members=()):
         self.members = set(members)
+        self.lock_keys = set()
+        self._lock_guard = threading.Lock()
 
     def pipeline(self, **_kwargs):
         return _FakePipeline(self)
+
+    def lock(self, key, **_kwargs):
+        return _FakeRedisLock(self, key)
 
 
 class _FakeQuery:
@@ -301,6 +325,95 @@ def test_backfill_update_failure_is_retried_by_celery(monkeypatch):
     assert len(database.update_calls) == 2
     assert redis_client.members == {f"{credential_id}:1001"}
     assert messages[0]["is_broadcasted"] is False
+    assert delayed == [True]
+
+
+def test_overlapping_backfills_cannot_requeue_a_stale_candidate(monkeypatch):
+    credential_id = "cred-eligible"
+    credentials = [{"id": credential_id, "status": "active", "meta": {"topic_id": 42}}]
+    messages = [
+        {
+            "id": "message-1001",
+            "credential_id": credential_id,
+            "telegram_msg_id": 1001,
+            "is_broadcasted": True,
+            "broadcast_claimed_at": None,
+        }
+    ]
+    database, redis_client = _wire_backfill_fakes(monkeypatch, credentials, messages)
+    monkeypatch.setenv("BACKFILL_BATCH_SIZE", "2")
+    monkeypatch.setattr(audit_tasks, "_run_sync", asyncio.run)
+    delayed = []
+    monkeypatch.setattr(flow_tasks, "broadcast_pending", SimpleNamespace(delay=lambda: delayed.append(True)))
+
+    update_gate = threading.Condition()
+    gate_state = {
+        "update_attempts": 0,
+        "first_update_started": False,
+        "second_update_started": False,
+        "release_first": False,
+        "release_second": False,
+        "second_done": False,
+    }
+
+    async def execute_with_update_gate(query):
+        if query.payload is not None:
+            with update_gate:
+                gate_state["update_attempts"] += 1
+                attempt = gate_state["update_attempts"]
+                if attempt in (1, 2):
+                    gate_name = "first" if attempt == 1 else "second"
+                    gate_state[f"{gate_name}_update_started"] = True
+                    update_gate.notify_all()
+                    if not update_gate.wait_for(lambda: gate_state[f"release_{gate_name}"], timeout=5):
+                        raise TimeoutError("timed out waiting for the test update gate")
+        return query.execute()
+
+    monkeypatch.setattr(audit_tasks, "async_execute", execute_with_update_gate)
+
+    def mark_second_done(_future):
+        with update_gate:
+            gate_state["second_done"] = True
+            update_gate.notify_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_run = pool.submit(audit_tasks.backfill_general_messages.run, apply_changes=True)
+        with update_gate:
+            assert update_gate.wait_for(lambda: gate_state["first_update_started"], timeout=5)
+
+        second_run = pool.submit(audit_tasks.backfill_general_messages.run, apply_changes=True)
+        second_run.add_done_callback(mark_second_done)
+        with update_gate:
+            assert update_gate.wait_for(
+                lambda: gate_state["second_update_started"] or gate_state["second_done"],
+                timeout=5,
+            )
+            second_update_started = gate_state["second_update_started"]
+
+        if second_update_started:
+            # Reproduce the stale-candidate window: the first run completes,
+            # the broadcaster marks the row sent again, then the second run
+            # reaches its already-selected ID.
+            with update_gate:
+                gate_state["release_first"] = True
+                update_gate.notify_all()
+            first_result = first_run.result(timeout=5)
+            messages[0]["is_broadcasted"] = True
+            messages[0]["broadcast_claimed_at"] = None
+            with update_gate:
+                gate_state["release_second"] = True
+                update_gate.notify_all()
+            second_result = second_run.result(timeout=5)
+        else:
+            second_result = second_run.result(timeout=5)
+            with update_gate:
+                gate_state["release_first"] = True
+                update_gate.notify_all()
+            first_result = first_run.result(timeout=5)
+
+    assert "already running" in second_result.lower()
+    assert "requeued 1 messages" in first_result
+    assert len(database.update_calls) == 1
     assert delayed == [True]
 
 
