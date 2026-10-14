@@ -5,7 +5,7 @@
 - **Job:** Fix hidden backfill failures, then check whether overlapping runs can update the same rows.
 - **Status:** [x] Part A: the Celery backfill task now retries exceptions, stores its result, and the test confirms a failed database update enters Celery retry and the retry processes the unchanged row. Focused tests: 8 passed, 0 failed.
 - **Status:** [x] Part B: stale candidates could be updated again after the broadcaster made a row eligible. Apply runs now use a shared Redis lock; the overlap regression passes. Focused tests after both parts: 9 passed, 0 failed.
-- **Next:** Commit Part B, record its hash in the journal, push, and verify remote `main`.
+- **Next:** None; both parts are committed and ready for remote verification.
 
 ## Previous task — scanner hardening (completed)
 

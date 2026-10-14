@@ -456,3 +456,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - 2026-10-14 F1/F2: supervisor rebuilt ONLY worker (base compose), healthy restarts=0; 6-min log watch: 0 errors, 111 task lines, no scanner errors. Vet job complete (S1-S12 + F1/F2).
 - 2026-10-14: Tightened the scanner flow test to require queued work and a validator insert; 5 passed, 0 failed. Fix commit: `ad6a19f`.
 - 2026-10-14 Part A: backfill exceptions now enter Celery retry; the retry test stores `RETRY` and requeues the unchanged row. 8 passed, 0 failed. Commit: `f3e1c44`.
+- 2026-10-14 Part B: added a shared Redis lock for apply runs after reproducing a stale-candidate double requeue. Focused suite: 9 passed, 0 failed. Commit: `f03b8bd`.
