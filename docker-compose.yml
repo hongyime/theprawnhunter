@@ -154,6 +154,9 @@ services:
     cpus: "${BOT_CPUS:-0.25}"
     mem_limit: "${BOT_MEM_LIMIT:-256m}"
     mem_reservation: "${BOT_MEM_RESERVATION:-128m}"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     env_file: .env
     command: python -m app.services.bot_listener
     healthcheck:
