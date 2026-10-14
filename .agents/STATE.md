@@ -7,10 +7,34 @@
 - **Task list:**
   - [x] Fix 1. API container cannot reach database — configured explicit DNS in docker-compose.yml; rebuilt API container; verified live DNS resolution, real inserts succeeding, 500s dropped to 0, Telegram pending updates draining.
   - [x] Fix 2. Queue jammed + redirect jobs looping forever — inspected queue contents without purging; added Redis non-blocking lock & 15s debounce on sweeper; broke infinite retry loop by removing stale 10m fence cutoff; terminated terminal dead tokens (HTTP 401) and blocked users (HTTP 403) with permanent non-null redirected_at; verified concurrency 2 is sufficient; rebuilt worker; verified live queue draining (796 -> 510) and zero fenced_out churn.
-  - [ ] Fix 3. All 4 user sessions on cooldown — verify graceful degradation (saved topic IDs fallback working, media fails cleanly, new topics fail cleanly with retry), record recovery time (~17h). Do NOT touch sessions.
-- **Next:** Fix 3 (verify graceful degradation of user sessions on cooldown, do NOT touch sessions).
+  - [x] Fix 3. All 4 user sessions on cooldown — verified graceful degradation (saved topic IDs fallback working via bot API, media auto-archive skipped cleanly with retry scheduled, new-bot topic creation cleanly fails with retry), recorded exact session recovery times (earliest 2026-10-15T06:02:02.954943+00:00 UTC). Zero user sessions touched, polled, or poked.
+- **Next:** All 3 audit issues on 3410 fixed and verified live.
 
-### Fix 2 evidence — 2026-10-14
+### Fix 3 evidence — 2026-10-14
+- Method: Strictly read-only verification of existing live worker logs and application code. Zero sessions touched, queried, or poked.
+- Expected Recovery Times (from live worker logs):
+  - Session 1: `account_6596647252_1791784103` -> cooldown until `2026-10-15T06:02:02.954943+00:00` (~16.2h from now)
+  - Session 2: `account_6592348112_1791783641` -> cooldown until `2026-10-15T06:02:03.950009+00:00` (~16.2h from now)
+  - Session 3: `account_60197282165_1791784179` -> cooldown until `2026-10-15T06:02:03.961395+00:00` (~16.2h from now)
+  - Session 4: `account_6584731565_1791785791` -> cooldown until `2026-10-15T06:22:40.963392+00:00` (~16.5h from now)
+  - Earliest recovery: `2026-10-15T06:02:02.954943+00:00` (14:02 SGT on 2026-10-15).
+- Graceful Degradation Proofs:
+  1. Broadcasts with saved topic IDs:
+     - Broadcaster logs: `[Broadcaster] Could not verify saved topic ... trusting the saved topic ID` and sends via Bot API (`📤 [Broadcaster] Sending via Bot: 8737065943...`).
+     - Live broadcast successes:
+       - `[2026-10-14 13:40:32,322: INFO/ForkPoolWorker-2] ✅ [Broadcaster] Successfully sent video (3283987 bytes, filename=777777.mp4)`
+       - `[2026-10-14 13:40:32,467: INFO/ForkPoolWorker-2] ✅ Broadcasted msg 10a6a7b1-ff4b-42f0-9e4e-934e844d8f07`
+       - `[2026-10-14 13:41:04,707: INFO/ForkPoolWorker-1] ✅ [Broadcaster] Successfully sent photo (165654 bytes, filename=photo.jpg)`
+       - `[2026-10-14 13:41:04,796: INFO/ForkPoolWorker-1] ✅ Broadcasted msg 59e990d6-c118-4563-b6b8-eea001ed9230`
+  2. Media archiving failure handling:
+     - For photo/media updates requiring Telethon user session download, worker skips archive gracefully and logs:
+       - `[2026-10-14 13:47:34,299: WARNING/ForkPoolWorker-1] [Broadcaster] Auto-archive skipped for msg=124215: session_unavailable No usable user session.`
+       - `[2026-10-14 13:47:34,526: WARNING/ForkPoolWorker-1] Audit: broadcast.failed | cred_id=1c4e81ba-... | reason: 'media_archive_session_unavailable', retryable: True, next_retry_at: '2026-10-15T10:53:55...'`
+     - Clean warning logged, retry scheduled, zero unhandled exceptions or container crashes.
+  3. New-bot topic creation:
+     - `broadcaster.ensure_topic()` catches `UserAgentSessionUnavailableError` from `user_agent.find_topic_id()`, raises `RuntimeError("Could not resolve existing topic: No usable user session")`.
+     - Honeypot broadcast catches topic failure and records `_mark_broadcast_failure(..., BroadcastSendError("topic_failed", ..., retryable=True))`.
+     - Celery queues retry for when user sessions recover; no silent drop and no crashes.
 - Root cause:
   1. Celery Beat dispatched `honeypot_redirect_sweep` every 30s. With 2 workers, sweep tasks piled up into hundreds in Redis.
   2. Tasks waiting in queue had valid claim tokens, but `_is_fence_valid()` enforced an arbitrary 10-minute timeout (`gte("redirect_claimed_at", now - 10m)`). Tasks that waited > 10m were rejected with `fenced_out`.
