@@ -1,5 +1,7 @@
 # theprawnhunter — JOURNAL
 
+- 2026-10-14: Remaining 2 findings done (Fix 2 ad6a19f, Fix 3 f3e1c44 + f03b8bd). Supervisor rebuilt worker only, verified healthy, log watch clean.
+
 - 2026-10-14: Verified Fix 1: login imports both cleanup helpers, their definitions are present, and the security tests passed 3/3.
 
 ## 2026-09-16 — Baseline batch C review

@@ -1,6 +1,8 @@
 # theprawnhunter — STATE
 
-## Current task (updated 2026-10-14)
+## Current task (updated 2026-10-14) — remaining 2 findings DONE; worker rebuilt + verified healthy; log watch clean (0 errors, 0 redirect failures)
+
+## Previous current task (updated 2026-10-14)
 
 - **Job:** Fix hidden backfill failures, then check whether overlapping runs can update the same rows.
 - **Status:** [x] Part A: the Celery backfill task now retries exceptions, stores its result, and the test confirms a failed database update enters Celery retry and the retry processes the unchanged row. Focused tests: 8 passed, 0 failed.
