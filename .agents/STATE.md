@@ -10,9 +10,16 @@
   - [x] 1c. Two older fake-helper tests — now exercise the real bot-reply helper.
   - [x] 2. Notify re-take investigation (@notifyGitlabRepobot) — DONE: live scrape log confirms foreign webhook detected and honeypot setWebhook succeeded; DB records honeypot_active=true.
   - [x] 3. Real Telegram redirect error — DONE: live failures carry `HTTP 403: Forbidden: bot was blocked by the user`.
-  - [ ] 4. One moderate Dependabot alert — identify, fix with dep update + tests, or prove false positive.
+  - [x] 4. Dependabot pytest alert — updated development pytest pins to patched versions; GitHub marked alert #58 fixed.
   - [ ] F1. Rebuild ONLY affected containers, verify healthy, brief log watch.
-- **Next:** Item 3 evidence recorded; next is item 4 (moderate Dependabot alert).
+- **Next:** Item 4 evidence recorded; this run stops here.
+
+### Item 4 evidence — 2026-10-14
+
+- GitHub Dependabot alert #58 was the sole open moderate alert: `pytest` in `requirements-dev.txt`, GHSA-6w46-j5rx-g56g / CVE-2025-71176, vulnerable range `<9.0.3`, patched version `9.0.3`.
+- Updated `requirements-dev.txt` from pytest 8.3.5 / pytest-asyncio 0.24.0 to pytest 9.0.3 / pytest-asyncio 1.4.0, matching the already-pinned compatible versions in `requirements.txt`. Dependency fix commit `889f766` was pushed to `main`.
+- After the push, GitHub's dependency graph SBOM showed pytest 9.0.3 and Dependabot alert #58 changed to `fixed` at `2026-10-14T02:08:22Z`.
+- Ran `./.venv/bin/python -m pytest tests/unit/` under pytest 9.0.3 + pytest-asyncio 1.4.0: 566 passed, 2 failed (568 total). The failures were `test_telemetry_command_restricts_non_admin` (expected reply text differs from `Admin only.`) and `test_log_calls_never_interpolate_raw_telegram_user_ids` (found three source locations); neither touches the dependency files changed here. No application code was changed.
 
 ### Item 3 evidence — 2026-10-14
 
