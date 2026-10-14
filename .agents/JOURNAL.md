@@ -454,3 +454,4 @@ User requested scaling back to dev-only work (no full prod run), minimal Docker 
 - Focused tests: 17 passed, 0 failed. No real Netlas request or key was used. `git diff --check` passed.
 - S12.1 checkpoint: `55884a9`; S12.2 checkpoint: `bc38737`; S12.3 checkpoint: `ef68cff`; S12.4 code commit: `7836c18`. The push was checked with `git log --oneline -2` and `git status --porcelain`; only the pre-existing `.agents/handoffs/` folder remains untracked.
 - 2026-10-14 F1/F2: supervisor rebuilt ONLY worker (base compose), healthy restarts=0; 6-min log watch: 0 errors, 111 task lines, no scanner errors. Vet job complete (S1-S12 + F1/F2).
+- 2026-10-14: Tightened the scanner flow test to require queued work and a validator insert; 5 passed, 0 failed. Fix commit: `ad6a19f`.
