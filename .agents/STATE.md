@@ -1,5 +1,19 @@
 # theprawnhunter — STATE
 
+## Current task — Ralph loop: tail work (started 2026-10-14)
+
+- **Job:** Grind through the remaining tail work, one item at a time, one Codex run per item. Full spec: /tmp/ralph-tail-spec.md. SOLE WRITER on this repo.
+- **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox) AND append a JOURNAL.md line (what was done, why, commit hash). Commit STATE.md promptly with each fix commit.
+- **Task list:**
+  - [x] 1a. Extension tests — small runnable suite proving results kept until upload succeeds.
+  - [ ] 1b. Scraper batch helper test — real helper, failure warns + stays retryable.
+  - [ ] 1c. Two older fake-helper tests — replace fakes with the real helper.
+  - [ ] 2. Notify re-take investigation (@notifyGitlabRepobot) — evidence, fix if needed, else verified-awaiting-live-event.
+  - [ ] 3. Real Telegram redirect error — check DB/logs since fix; report real reason or verified-awaiting-live-failure.
+  - [ ] 4. One moderate Dependabot alert — identify, fix with dep update + tests, or prove false positive.
+  - [ ] F1. Rebuild ONLY affected containers, verify healthy, brief log watch.
+- **Next:** 1b. Scraper batch helper test.
+
 ## Current task (updated 2026-10-14) — remaining 2 findings DONE; worker rebuilt + verified healthy; log watch clean (0 errors, 0 redirect failures)
 
 ## Previous current task (updated 2026-10-14)
