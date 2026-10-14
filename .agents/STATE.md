@@ -2,9 +2,9 @@
 
 ## Current task (updated 2026-10-14)
 
-- **Job:** Verify Fix 1, the login cleanup imports.
-- **Status:** Fix 1 verify-only is done. `login.py:4` imports both helpers; `commands.py:330` and `:341` define them. `tests/unit/test_bot_listener_security.py` passed: 3 passed, 0 failed. No code was changed and nothing was committed.
-- **Next:** Fix 2.
+- **Job:** Fix the weak scanner flow test.
+- **Status:** [x] `tests/integration/test_scanner_flow.py` now checks that a token is queued and the real validator inserts it. The focused file passed: 5 passed, 0 failed.
+- **Next:** Fix 2, per the existing follow-up list.
 
 ## Previous task — scanner hardening (completed)
 
