@@ -7,12 +7,12 @@
 - **Task list:**
   - [x] 1a. Extension tests — small runnable suite proving results kept until upload succeeds.
   - [x] 1b. Scraper batch helper test — real helper, failure warns + stays retryable.
-  - [ ] 1c. Two older fake-helper tests — replace fakes with the real helper.
+  - [x] 1c. Two older fake-helper tests — now exercise the real bot-reply helper.
   - [ ] 2. Notify re-take investigation (@notifyGitlabRepobot) — evidence, fix if needed, else verified-awaiting-live-event.
   - [ ] 3. Real Telegram redirect error — check DB/logs since fix; report real reason or verified-awaiting-live-failure.
   - [ ] 4. One moderate Dependabot alert — identify, fix with dep update + tests, or prove false positive.
   - [ ] F1. Rebuild ONLY affected containers, verify healthy, brief log watch.
-- **Next:** 1c. Replace the two scraper tests that fake the bot-reply helper.
+- **Next:** 2. Investigate the notify re-take behavior for @notifyGitlabRepobot.
 
 ## Current task (updated 2026-10-14) — remaining 2 findings DONE; worker rebuilt + verified healthy; log watch clean (0 errors, 0 redirect failures)
 

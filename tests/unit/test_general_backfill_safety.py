@@ -421,50 +421,56 @@ class _FakeMessage:
     def __init__(self):
         self.replies = []
 
+    async def reply_text(self, text, **kwargs):
+        self.replies.append({"text": text, **kwargs})
+        return SimpleNamespace()
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("args", "expected_apply"), [([], False), (["--dry-run"], False), (["--apply"], True)])
 async def test_backfill_command_requires_explicit_apply(monkeypatch, args, expected_apply):
     queued = []
-    replies = []
 
-    async def reply(_update, text, **_kwargs):
-        replies.append(text)
+    async def do_not_wait_for_auto_delete(*_args, **_kwargs):
+        pass
 
     monkeypatch.setattr(bot_listener, "is_admin", lambda _update: True)
-    monkeypatch.setattr(bot_listener, "_reply_and_delete", reply)
+    # Exercise the real reply helper while keeping its 30-second delete timer out of the test.
+    monkeypatch.setattr(bot_listener, "_auto_delete_msg", do_not_wait_for_auto_delete)
     monkeypatch.setattr(
         audit_tasks,
         "backfill_general_messages",
         SimpleNamespace(delay=lambda **kwargs: queued.append(kwargs)),
     )
 
-    await bot_listener.backfill_command(SimpleNamespace(message=_FakeMessage()), SimpleNamespace(args=args))
+    message = _FakeMessage()
+    await bot_listener.backfill_command(SimpleNamespace(message=message), SimpleNamespace(args=args))
 
     assert queued == [{"apply_changes": expected_apply}]
-    assert ("dry run" in replies[0].lower()) is (not expected_apply)
+    assert ("dry run" in message.replies[0]["text"].lower()) is (not expected_apply)
 
 
 @pytest.mark.asyncio
 async def test_backfill_command_rejects_unrecognized_flags_without_queueing(monkeypatch):
     queued = []
-    replies = []
 
-    async def reply(_update, text, **_kwargs):
-        replies.append(text)
+    async def do_not_wait_for_auto_delete(*_args, **_kwargs):
+        pass
 
     monkeypatch.setattr(bot_listener, "is_admin", lambda _update: True)
-    monkeypatch.setattr(bot_listener, "_reply_and_delete", reply)
+    # Exercise the real reply helper while keeping its 30-second delete timer out of the test.
+    monkeypatch.setattr(bot_listener, "_auto_delete_msg", do_not_wait_for_auto_delete)
     monkeypatch.setattr(
         audit_tasks,
         "backfill_general_messages",
         SimpleNamespace(delay=lambda **kwargs: queued.append(kwargs)),
     )
 
-    await bot_listener.backfill_command(SimpleNamespace(message=_FakeMessage()), SimpleNamespace(args=["oops"]))
+    message = _FakeMessage()
+    await bot_listener.backfill_command(SimpleNamespace(message=message), SimpleNamespace(args=["oops"]))
 
     assert queued == []
-    assert "no backfill was queued" in replies[0].lower()
+    assert "no backfill was queued" in message.replies[0]["text"].lower()
 
 
 def test_celery_entrypoint_defaults_to_dry_run(monkeypatch):
