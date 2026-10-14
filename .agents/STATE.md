@@ -9,10 +9,16 @@
   - [x] 1b. Scraper batch helper test — real helper, failure warns + stays retryable.
   - [x] 1c. Two older fake-helper tests — now exercise the real bot-reply helper.
   - [x] 2. Notify re-take investigation (@notifyGitlabRepobot) — DONE: live scrape log confirms foreign webhook detected and honeypot setWebhook succeeded; DB records honeypot_active=true.
-  - [ ] 3. Real Telegram redirect error — check DB/logs since fix; report real reason or verified-awaiting-live-failure.
+  - [x] 3. Real Telegram redirect error — DONE: live failures carry `HTTP 403: Forbidden: bot was blocked by the user`.
   - [ ] 4. One moderate Dependabot alert — identify, fix with dep update + tests, or prove false positive.
   - [ ] F1. Rebuild ONLY affected containers, verify healthy, brief log watch.
-- **Next:** Item 2 evidence recorded; this iteration is complete.
+- **Next:** Item 3 evidence recorded; next is item 4 (moderate Dependabot alert).
+
+### Item 3 evidence — 2026-10-14
+
+- The redirect detail fix is commit `5a370ed` (2026-10-13 23:09:43 SGT / 15:09:43 UTC). Queried live `honeypot_updates` rows with non-null `redirect_error` and `received_at` on or after that UTC time: 3 rows, received from 2026-10-13 15:48:20 to 19:04:22 UTC. All 3 contain `HTTP 403: Forbidden: bot was blocked by the user`.
+- Queried live worker logs from the fix time onward: 491 `[Redirect] FAILED` entries, spanning 2026-10-14 00:18:26–01:59:51 local. All carry the same HTTP status and Telegram error text. The answer is: **HTTP 403 — Forbidden: bot was blocked by the user.**
+- This is a live Telegram response; no failure was fabricated. No code or credentials were changed.
 
 ### Item 2 evidence — 2026-10-14
 
