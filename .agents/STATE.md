@@ -1,18 +1,27 @@
 # theprawnhunter — STATE
 
-## Current task — Ralph loop: tail work (started 2026-10-14)
+## Current task — Fix 3 audit issues on 3410 (started 2026-10-14 21:10 SGT)
 
-- **Job:** Grind through the remaining tail work, one item at a time, one Codex run per item. Full spec: /tmp/ralph-tail-spec.md. SOLE WRITER on this repo.
+- **Job:** Fix the 3 honeypot issues discovered in the 2026-10-14 20:50 SGT audit. One fix at a time, live verification, commit + push, STATE.md and JOURNAL.md updated after every step.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox) AND append a JOURNAL.md line (what was done, why, commit hash). Commit STATE.md promptly with each fix commit.
 - **Task list:**
-  - [x] 1a. Extension tests — small runnable suite proving results kept until upload succeeds.
-  - [x] 1b. Scraper batch helper test — real helper, failure warns + stays retryable.
-  - [x] 1c. Two older fake-helper tests — now exercise the real bot-reply helper.
-  - [x] 2. Notify re-take investigation (@notifyGitlabRepobot) — DONE: live scrape log confirms foreign webhook detected and honeypot setWebhook succeeded; DB records honeypot_active=true.
-  - [x] 3. Real Telegram redirect error — DONE: live failures carry `HTTP 403: Forbidden: bot was blocked by the user`.
-  - [x] 4. Dependabot pytest alert — updated development pytest pins to patched versions; GitHub marked alert #58 fixed.
-  - [x] F1. Rebuild ONLY affected containers, verify healthy, brief log watch. — DONE: worker image rebuilt (no prod code changed in loop, container kept), healthy, 5-min log watch 0 errors.
-- **Next:** Item 4 evidence recorded; this run stops here.
+  - [x] Fix 1. API container cannot reach database — configured explicit DNS in docker-compose.yml; rebuilt API container; verified live DNS resolution, real inserts succeeding, 500s dropped to 0, Telegram pending updates draining.
+  - [ ] Fix 2. Queue jammed + redirect jobs looping forever — inspect 942-job queue, break claim/re-queue loop, skip 401 dead-token jobs, verify concurrency, rebuild worker, verify live queue draining.
+  - [ ] Fix 3. All 4 user sessions on cooldown — verify graceful degradation (saved topic IDs fallback working, media fails cleanly, new topics fail cleanly with retry), record recovery time (~17h). Do NOT touch sessions.
+- **Next:** Fix 2 (inspect queue, fix loop and dead-token skip in honeypot redirect sweeper/worker).
+
+### Fix 1 evidence — 2026-10-14
+- Root cause: `theprawnhunter_api` container had Docker-assigned upstream DNS `100.100.100.100` (Tailscale MagicDNS) in `/etc/resolv.conf`, which returned `RCODE 2` (Server Failure) for domain resolution. As a result, all database writes to Supabase in `app/api/routers/honeypot.py` threw `[Errno -3] Temporary failure in name resolution` and responded `HTTP 500` to Telegram (13,955 failures in 24h).
+- Fix: Added explicit public DNS servers (`8.8.8.8`, `1.1.1.1`) to the `api` service definition in `docker-compose.yml`.
+- Rebuild: Rebuilt ONLY `theprawnhunter_api` container (`docker compose up -d --build api`).
+- Live Verification:
+  - DNS resolution verified inside container: `socket.gethostbyname("api.telegram.org")` -> `149.154.166.110`.
+  - Supabase connectivity verified inside container: `db.table("honeypot_updates").select(...)` succeeded.
+  - Real inserts verified live: row count in `honeypot_updates` immediately climbed from 202 to 222+ as live webhooks landed.
+  - Error rate: exactly 0 errors / 0 HTTP 500s logged since container startup.
+  - Telegram pending updates draining: `@uhkls3bot` drained 2 -> 0; `@Scampage2_bot` drained 6 -> 0; `@poiu4bot` drained 6 -> 2; `@iamprcompanyBot` drained 7 -> 4.
+
+## Previous task — Ralph loop: tail work (started 2026-10-14)
 
 ### Item 4 evidence — 2026-10-14
 
