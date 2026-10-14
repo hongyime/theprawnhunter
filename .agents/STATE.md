@@ -6,9 +6,33 @@
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox) AND append a JOURNAL.md line (what was done, why, commit hash). Commit STATE.md promptly with each fix commit.
 - **Task list:**
   - [x] Fix 1. API container cannot reach database — configured explicit DNS in docker-compose.yml; rebuilt API container; verified live DNS resolution, real inserts succeeding, 500s dropped to 0, Telegram pending updates draining.
-  - [ ] Fix 2. Queue jammed + redirect jobs looping forever — inspect 942-job queue, break claim/re-queue loop, skip 401 dead-token jobs, verify concurrency, rebuild worker, verify live queue draining.
+  - [x] Fix 2. Queue jammed + redirect jobs looping forever — inspected queue contents without purging; added Redis non-blocking lock & 15s debounce on sweeper; broke infinite retry loop by removing stale 10m fence cutoff; terminated terminal dead tokens (HTTP 401) and blocked users (HTTP 403) with permanent non-null redirected_at; verified concurrency 2 is sufficient; rebuilt worker; verified live queue draining (796 -> 510) and zero fenced_out churn.
   - [ ] Fix 3. All 4 user sessions on cooldown — verify graceful degradation (saved topic IDs fallback working, media fails cleanly, new topics fail cleanly with retry), record recovery time (~17h). Do NOT touch sessions.
-- **Next:** Fix 2 (inspect queue, fix loop and dead-token skip in honeypot redirect sweeper/worker).
+- **Next:** Fix 3 (verify graceful degradation of user sessions on cooldown, do NOT touch sessions).
+
+### Fix 2 evidence — 2026-10-14
+- Root cause:
+  1. Celery Beat dispatched `honeypot_redirect_sweep` every 30s. With 2 workers, sweep tasks piled up into hundreds in Redis.
+  2. Tasks waiting in queue had valid claim tokens, but `_is_fence_valid()` enforced an arbitrary 10-minute timeout (`gte("redirect_claimed_at", now - 10m)`). Tasks that waited > 10m were rejected with `fenced_out`.
+  3. On failures (including dead bot tokens returning HTTP 401 like `@monkeydatebot`), `_honeypot_redirect_one_logic` reset `redirected_at = None` and `redirect_claimed_at = None`, while the 15-minute sweeper cleared stale claims and re-dispatched the same row indefinitely (over 9,675 failed attempts for `@monkeydatebot` alone).
+- Fix:
+  1. Added a non-blocking Redis lock (`theprawnhunter:lock:honeypot_redirect_sweep`, 25s TTL) and 15s timestamp debounce to `honeypot_redirect_sweep` so duplicate backlogged sweeps exit in ~10ms without queuing duplicate work.
+  2. In `_is_fence_valid`, removed the restrictive 10-minute age cutoff so queue wait time no longer falsely marks in-flight jobs as `fenced_out`.
+  3. In `_honeypot_redirect_one_logic` and `_honeypot_redirect_sweep_logic`:
+     - Dead tokens (HTTP 401 / Unauthorized): logs dead-token skip, caches in Redis `credential:revoked:{cred_id}`, calls `_mark_credential_revoked` to update DB status to `revoked`, and finalizes the row in `honeypot_updates` with `redirected_at = now, redirected_bot = 'token_revoked', redirect_error = redirect_error`.
+     - Blocked users (HTTP 403 / Forbidden): finalizes row with `redirected_at = now, redirected_bot = 'user_blocked'`.
+     - Max retries (attempts >= 3): finalizes row with `redirected_at = now, redirected_bot = 'max_retries_exceeded'`.
+     - In-flight marker (`redirect:inflight:{update_id}`) prevents double-dispatch while queued.
+- Concurrency evaluation:
+  - Base `docker-compose.yml` sets `--concurrency=${WORKER_CONCURRENCY:-2}` while `docker-compose.prod.yml` sets 6.
+  - Live inspection confirmed concurrency 2 is NOT the bottleneck once duplicate loops are broken: queue drained rapidly from 796 down to 510 in minutes. Concurrency left unchanged at 2.
+- Rebuild & Live Verification:
+  - Rebuilt ONLY `theprawnhunter_worker` container (`docker compose up -d --build --no-deps worker`).
+  - Unit tests: 12/12 passed in `tests/unit/test_honeypot_redirect_bugs.py`.
+  - Queue depth: dropped from 796 to 510 and steadily draining.
+  - Sweeper: backlogged sweep tasks drained in ~0.012s each with `{'status': 'skipped', 'reason': 'debounced'}`.
+  - Fenced_out churn: exactly 0 new `fenced_out` occurrences in live worker logs over 10-minute observation.
+  - Dead tokens: `@monkeydatebot` jobs skipped and finalized, not retried.
 
 ### Fix 1 evidence — 2026-10-14
 - Root cause: `theprawnhunter_api` container had Docker-assigned upstream DNS `100.100.100.100` (Tailscale MagicDNS) in `/etc/resolv.conf`, which returned `RCODE 2` (Server Failure) for domain resolution. As a result, all database writes to Supabase in `app/api/routers/honeypot.py` threw `[Errno -3] Temporary failure in name resolution` and responded `HTTP 500` to Telegram (13,955 failures in 24h).

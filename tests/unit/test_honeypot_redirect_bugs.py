@@ -567,3 +567,366 @@ async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
     assert not sendmessage_calls, (
         "sendMessage must NOT be called for inline_query — fallthrough bug still present"
     )
+
+
+# ---------------------------------------------------------------------------
+# BUG 7: Dead-token jobs (401) must be skipped permanently, not retried
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_redirect_one_skips_dead_token_401(monkeypatch, caplog):
+    """When Telegram returns HTTP 401 Unauthorized, redirect_one must mark the
+    row token_revoked with a real timestamp, log the skip, and not retry."""
+    db_updates: list[dict] = []
+    revoked_calls: list[str] = []
+
+    class FakeQuery:
+        def __init__(self):
+            self._table = None
+
+        def update(self, payload):
+            db_updates.append({"table": self._table, "payload": payload})
+            return self
+
+        def eq(self, *_):
+            return self
+
+        def select(self, *_):
+            return self
+
+        def limit(self, *_):
+            return self
+
+        def is_(self, *_):
+            return self
+
+        def execute(self):
+            return types.SimpleNamespace(data=[{"bot_token": "gAAAAfake", "status": "active"}])
+
+    class FakeDb:
+        def table(self, name):
+            q = FakeQuery()
+            q._table = name
+            return q
+
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        def set(self, key, value, **kwargs):
+            self.store[key] = value
+
+        def get(self, key):
+            return self.store.get(key)
+
+        def exists(self, key):
+            return 1 if key in self.store else 0
+
+        def delete(self, key):
+            self.store.pop(key, None)
+
+    class FakeSecurity:
+        def decrypt(self, _):
+            return "123456:ABCfaketoken"
+
+    class FakeResponse:
+        status_code = 401
+
+        def json(self):
+            return {"ok": False, "description": "Unauthorized"}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def post(self, *_a, **_kw):
+            return FakeResponse()
+
+    async def fake_mark_revoked(cred_id, reason):
+        revoked_calls.append(cred_id)
+
+    import app.workers.tasks.flow_tasks as ft
+
+    monkeypatch.setattr("app.workers.tasks.flow_tasks.db", FakeDb())
+    monkeypatch.setattr("app.workers.tasks.flow_tasks.security", FakeSecurity())
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+    monkeypatch.setattr("app.workers.tasks.flows.honeypot._mark_credential_revoked", fake_mark_revoked)
+
+    fake_redis = FakeRedis()
+    fake_redis_srv = types.SimpleNamespace(client=fake_redis)
+
+    with (
+        patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
+            return_value=types.SimpleNamespace(data=[{"id": "upd-401", "bot_token": "gAAAAfake", "status": "active"}])
+        )),
+        patch("httpx.AsyncClient", FakeClient),
+        patch("app.core.redis_srv.redis_srv", fake_redis_srv),
+        patch("app.workers.tasks.flows.honeypot.redis_client", fake_redis),
+    ):
+        result = await ft._honeypot_redirect_one_logic(
+            update_id="upd-401",
+            credential_id="cred-401",
+            user_id=12345,
+            chat_id=12345,
+            update_type="message",
+            claim_token="claim-401",
+        )
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "token_revoked"
+    assert "cred-401" in revoked_calls
+
+    # Verify update row was marked token_revoked with a real timestamp
+    revoked_updates = [
+        u["payload"] for u in db_updates
+        if u.get("payload", {}).get("redirected_bot") == "token_revoked"
+    ]
+    assert revoked_updates, "Row must be updated with redirected_bot='token_revoked'"
+    assert revoked_updates[-1]["redirected_at"] is not None, "redirected_at must be set to prevent re-sweep"
+    assert "401" in revoked_updates[-1]["redirect_error"]
+
+    # Verify log output mentions skipped dead-token job
+    assert any("Skipped dead-token job" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# BUG 8: User blocked (403) must be finalized permanently, not retried
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_redirect_one_skips_blocked_user_403(monkeypatch, caplog):
+    """When Telegram returns HTTP 403 Forbidden: bot was blocked by the user,
+    redirect_one must mark the row user_blocked with a real timestamp."""
+    db_updates: list[dict] = []
+
+    class FakeQuery:
+        def __init__(self):
+            self._table = None
+
+        def update(self, payload):
+            db_updates.append({"table": self._table, "payload": payload})
+            return self
+
+        def eq(self, *_):
+            return self
+
+        def select(self, *_):
+            return self
+
+        def limit(self, *_):
+            return self
+
+        def is_(self, *_):
+            return self
+
+        def execute(self):
+            return types.SimpleNamespace(data=[{"bot_token": "gAAAAfake", "status": "active"}])
+
+    class FakeDb:
+        def table(self, name):
+            q = FakeQuery()
+            q._table = name
+            return q
+
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        def set(self, key, value, **kwargs):
+            self.store[key] = value
+
+        def get(self, key):
+            return self.store.get(key)
+
+        def exists(self, key):
+            return 1 if key in self.store else 0
+
+        def delete(self, key):
+            self.store.pop(key, None)
+
+    class FakeSecurity:
+        def decrypt(self, _):
+            return "123456:ABCfaketoken"
+
+    class FakeResponse:
+        status_code = 403
+
+        def json(self):
+            return {"ok": False, "description": "Forbidden: bot was blocked by the user"}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def post(self, *_a, **_kw):
+            return FakeResponse()
+
+    import app.workers.tasks.flow_tasks as ft
+
+    monkeypatch.setattr("app.workers.tasks.flow_tasks.db", FakeDb())
+    monkeypatch.setattr("app.workers.tasks.flow_tasks.security", FakeSecurity())
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
+    fake_redis = FakeRedis()
+    fake_redis_srv = types.SimpleNamespace(client=fake_redis)
+
+    with (
+        patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
+            return_value=types.SimpleNamespace(data=[{"id": "upd-403", "bot_token": "gAAAAfake", "status": "active"}])
+        )),
+        patch("httpx.AsyncClient", FakeClient),
+        patch("app.core.redis_srv.redis_srv", fake_redis_srv),
+        patch("app.workers.tasks.flows.honeypot.redis_client", fake_redis),
+    ):
+        result = await ft._honeypot_redirect_one_logic(
+            update_id="upd-403",
+            credential_id="cred-403",
+            user_id=12345,
+            chat_id=12345,
+            update_type="message",
+            claim_token="claim-403",
+        )
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "user_blocked"
+
+    blocked_updates = [
+        u["payload"] for u in db_updates
+        if u.get("payload", {}).get("redirected_bot") == "user_blocked"
+    ]
+    assert blocked_updates, "Row must be updated with redirected_bot='user_blocked'"
+    assert blocked_updates[-1]["redirected_at"] is not None, "redirected_at must be set to prevent re-sweep"
+    assert "403" in blocked_updates[-1]["redirect_error"]
+
+
+# ---------------------------------------------------------------------------
+# BUG 9: Max retries (>=3) breaks the loop permanently
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_redirect_one_max_retries_breaks_loop(monkeypatch):
+    """When a transient error occurs on attempt 3, redirect_one must mark the
+    row max_retries_exceeded with a real timestamp."""
+    db_updates: list[dict] = []
+
+    class FakeQuery:
+        def __init__(self):
+            self._table = None
+
+        def update(self, payload):
+            db_updates.append({"table": self._table, "payload": payload})
+            return self
+
+        def eq(self, *_):
+            return self
+
+        def select(self, *_):
+            return self
+
+        def limit(self, *_):
+            return self
+
+        def is_(self, *_):
+            return self
+
+        def execute(self):
+            return types.SimpleNamespace(data=[{"bot_token": "gAAAAfake", "status": "active", "redirect_attempt": 3}])
+
+    class FakeDb:
+        def table(self, name):
+            q = FakeQuery()
+            q._table = name
+            return q
+
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        def set(self, key, value, **kwargs):
+            self.store[key] = value
+
+        def get(self, key):
+            return self.store.get(key)
+
+        def exists(self, key):
+            return 1 if key in self.store else 0
+
+        def delete(self, key):
+            self.store.pop(key, None)
+
+    class FakeSecurity:
+        def decrypt(self, _):
+            return "123456:ABCfaketoken"
+
+    class FakeResponse:
+        status_code = 502
+
+        def json(self):
+            return {"ok": False, "description": "Bad Gateway"}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def post(self, *_a, **_kw):
+            return FakeResponse()
+
+    import app.workers.tasks.flow_tasks as ft
+
+    monkeypatch.setattr("app.workers.tasks.flow_tasks.db", FakeDb())
+    monkeypatch.setattr("app.workers.tasks.flow_tasks.security", FakeSecurity())
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(ft.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+
+    fake_redis = FakeRedis()
+    fake_redis_srv = types.SimpleNamespace(client=fake_redis)
+
+    with (
+        patch("app.workers.tasks.flow_tasks.async_execute", new=AsyncMock(
+            return_value=types.SimpleNamespace(data=[{"id": "upd-502", "bot_token": "gAAAAfake", "status": "active", "redirect_attempt": 3}])
+        )),
+        patch("httpx.AsyncClient", FakeClient),
+        patch("app.core.redis_srv.redis_srv", fake_redis_srv),
+        patch("app.workers.tasks.flows.honeypot.redis_client", fake_redis),
+    ):
+        result = await ft._honeypot_redirect_one_logic(
+            update_id="upd-502",
+            credential_id="cred-502",
+            user_id=12345,
+            chat_id=12345,
+            update_type="message",
+            claim_token="claim-502",
+        )
+
+    assert result["status"] == "failed"
+
+    max_retry_updates = [
+        u["payload"] for u in db_updates
+        if u.get("payload", {}).get("redirected_bot") == "max_retries_exceeded"
+    ]
+    assert max_retry_updates, "Row must be updated with redirected_bot='max_retries_exceeded'"
+    assert max_retry_updates[-1]["redirected_at"] is not None, "redirected_at must be set to prevent loop"
+
