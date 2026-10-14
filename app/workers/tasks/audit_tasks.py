@@ -631,7 +631,14 @@ async def _cleanup_matkap_bots_async():
         return f"Matkap cleanup failed: {e}"
 
 
-@app.task(name="system.backfill_general_messages")
+@app.task(
+    name="system.backfill_general_messages",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+    max_retries=3,
+    ignore_result=False,
+)
 def backfill_general_messages(apply_changes: bool = False):
     """
     One-time/on-demand task: re-broadcasts messages that were previously
@@ -828,4 +835,4 @@ async def _backfill_general_messages_async(apply_changes: bool = False):
     except Exception as e:
         error_msg = f"❌ **Backfill** failed: {e}"
         logger.error(error_msg)
-        return error_msg
+        raise

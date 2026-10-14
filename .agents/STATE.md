@@ -2,9 +2,9 @@
 
 ## Current task (updated 2026-10-14)
 
-- **Job:** Fix the weak scanner flow test.
-- **Status:** [x] `tests/integration/test_scanner_flow.py` now checks that a token is queued and the real validator inserts it. The focused file passed: 5 passed, 0 failed.
-- **Next:** Fix 2, per the existing follow-up list.
+- **Job:** Fix hidden backfill failures, then check whether overlapping runs can update the same rows.
+- **Status:** [x] Part A: the Celery backfill task now retries exceptions, stores its result, and the test confirms a failed database update enters Celery retry and the retry processes the unchanged row. Focused tests: 8 passed, 0 failed.
+- **Next:** Part B: confirm whether the conditional database update prevents two overlapping runs from updating the same rows; add a separate fix only if a race is possible.
 
 ## Previous task — scanner hardening (completed)
 

@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from celery.exceptions import Retry
+from celery.signals import task_retry
 
 from app.services import bot_listener
 from app.workers.tasks import audit_tasks, flow_tasks
@@ -250,8 +252,7 @@ async def test_backfill_apply_claims_pair_and_batches_state_reset(monkeypatch):
     assert delayed == [True]
 
 
-@pytest.mark.asyncio
-async def test_backfill_update_failure_leaves_messages_unmarked_for_retry(monkeypatch):
+def test_backfill_update_failure_is_retried_by_celery(monkeypatch):
     credential_id = "cred-eligible"
     credentials = [{"id": credential_id, "status": "active", "meta": {"topic_id": 42}}]
     messages = [
@@ -266,19 +267,38 @@ async def test_backfill_update_failure_leaves_messages_unmarked_for_retry(monkey
     database, redis_client = _wire_backfill_fakes(monkeypatch, credentials, messages)
     database.fail_next_update = True
     monkeypatch.setenv("BACKFILL_BATCH_SIZE", "2")
+    monkeypatch.setattr(audit_tasks, "_run_sync", asyncio.run)
+    monkeypatch.setitem(audit_tasks.app.conf, "result_backend", "cache+memory://")
+    memory_backend = audit_tasks.app._get_backend()
+    monkeypatch.setattr(audit_tasks.app, "_backend_cache", memory_backend)
+    monkeypatch.setattr(audit_tasks.backfill_general_messages, "store_eager_result", True)
     delayed = []
     monkeypatch.setattr(flow_tasks, "broadcast_pending", SimpleNamespace(delay=lambda: delayed.append(True)))
 
-    failed = await audit_tasks._backfill_general_messages_async(apply_changes=True)
+    retry_events = []
+    retry_states = []
 
-    assert "failed" in failed.lower()
-    assert redis_client.members == set()
-    assert messages[0]["is_broadcasted"] is True
-    assert delayed == []
+    def record_retry(sender=None, request=None, reason=None, **_kwargs):
+        task_name = getattr(sender, "name", sender)
+        if task_name == "system.backfill_general_messages":
+            retry_events.append(reason)
+            retry_states.append(sender.AsyncResult(request.id).state)
 
-    retried = await audit_tasks._backfill_general_messages_async(apply_changes=True)
+    task_retry.connect(record_retry, weak=False)
+    try:
+        result = audit_tasks.backfill_general_messages.apply(
+            kwargs={"apply_changes": True},
+            throw=False,
+        )
+    finally:
+        task_retry.disconnect(record_retry)
 
-    assert "requeued 1 messages" in retried
+    assert result.successful()
+    assert len(retry_events) == 1
+    assert isinstance(retry_events[0], Retry)
+    assert "temporary database failure" in str(retry_events[0])
+    assert retry_states == ["RETRY"]
+    assert len(database.update_calls) == 2
     assert redis_client.members == {f"{credential_id}:1001"}
     assert messages[0]["is_broadcasted"] is False
     assert delayed == [True]
