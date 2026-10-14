@@ -1,5 +1,7 @@
 # theprawnhunter — JOURNAL
 
+- 2026-10-14: Verified Fix 1: login imports both cleanup helpers, their definitions are present, and the security tests passed 3/3.
+
 ## 2026-09-16 — Baseline batch C review
 
 Actor: automated maintenance (OhMyOpenCode / Sisyphus-Junior).

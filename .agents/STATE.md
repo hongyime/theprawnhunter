@@ -1,6 +1,12 @@
 # theprawnhunter — STATE
 
-## Current task (updated 2026-10-14 00:11 SGT) — BRYAN DIRECT ORDER: GO DO NOW
+## Current task (updated 2026-10-14)
+
+- **Job:** Verify Fix 1, the login cleanup imports.
+- **Status:** Fix 1 verify-only is done. `login.py:4` imports both helpers; `commands.py:330` and `:341` define them. `tests/unit/test_bot_listener_security.py` passed: 3 passed, 0 failed. No code was changed and nothing was committed.
+- **Next:** Fix 2.
+
+## Previous task — scanner hardening (completed)
 
 - **Job:** Check and harden all 12 bot-discovery scanners. One checkbox at a time. No jumping ahead, no wandering. SOLE WRITER on this repo — the 3-fix job has stood down; its Fixes 2–3 wait until this job fully completes.
 - **Status:** ALL 12 SCANNERS DONE + F1/F2 done. Vet-and-harden job COMPLETE. Next: Fixes 2-3 (3-fix job resumes).
