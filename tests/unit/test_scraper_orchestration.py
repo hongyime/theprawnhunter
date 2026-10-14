@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
@@ -140,3 +141,61 @@ async def test_scrape_history_returns_webhook_conflict_when_bot_api_terminal(mon
 
     assert result.reason == ScrapeReason.WEBHOOK_CONFLICT
     assert result.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_message_id_batch_failure_warns_and_remains_retryable(monkeypatch, caplog):
+    async def no_monitor_groups():
+        return set()
+
+    class FailedBatchClient:
+        async def get_messages(self, _chat_id, *, ids):
+            assert ids == [20, 19, 18]
+            raise ConnectionError("Telegram connection dropped")
+
+    async def get_client(_bot_token):
+        return FailedBatchClient()
+
+    from app.services import bot_manager_srv
+
+    monkeypatch.setattr(bot_manager_srv.bot_manager, "get_client", get_client)
+    monkeypatch.setattr("app.services.scraper_srv._resolve_monitor_group_ids_async", no_monitor_groups)
+
+    service = ScraperService()
+    service.bot_preflight_service = _Preflight()
+    service.telethon_history_reader = _Reader(
+        StrategyReadOutcome(
+            messages=[{"telegram_msg_id": 5, "content": "partial", "chat_id": -100}],
+            attempt=StrategyAttempt(
+                name="telethon_history",
+                success=True,
+                message_count=1,
+                reason=ScrapeReason.SUCCESS,
+            ),
+        )
+    )
+    service.bot_api_update_reader = _Reader(
+        StrategyReadOutcome(
+            messages=[{"telegram_msg_id": 20, "content": "anchor", "chat_id": -100}],
+            attempt=StrategyAttempt(
+                name="bot_api_updates",
+                success=True,
+                message_count=1,
+                reason=ScrapeReason.SUCCESS,
+            ),
+        )
+    )
+    monkeypatch.setattr(service, "is_monitor_bot", lambda _token: False)
+
+    caplog.set_level(logging.WARNING, logger="scraper")
+    result = await service.scrape_history("123:ABC", -100, limit=3)
+
+    assert "GetMessages batch 1 failed for chat -100" in caplog.text
+    assert result.retryable is True
+    assert result.reason == ScrapeReason.NETWORK_DISCONNECT
+    assert [message["telegram_msg_id"] for message in result.messages] == [5, 20]
+    batch_attempt = next(
+        attempt for attempt in result.strategy_attempts if attempt.name == "message_id_reader"
+    )
+    assert batch_attempt.success is False
+    assert batch_attempt.retryable is True
