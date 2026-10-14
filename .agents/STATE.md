@@ -8,11 +8,18 @@
   - [x] 1a. Extension tests — small runnable suite proving results kept until upload succeeds.
   - [x] 1b. Scraper batch helper test — real helper, failure warns + stays retryable.
   - [x] 1c. Two older fake-helper tests — now exercise the real bot-reply helper.
-  - [ ] 2. Notify re-take investigation (@notifyGitlabRepobot) — evidence, fix if needed, else verified-awaiting-live-event.
+  - [x] 2. Notify re-take investigation (@notifyGitlabRepobot) — DONE: live scrape log confirms foreign webhook detected and honeypot setWebhook succeeded; DB records honeypot_active=true.
   - [ ] 3. Real Telegram redirect error — check DB/logs since fix; report real reason or verified-awaiting-live-failure.
   - [ ] 4. One moderate Dependabot alert — identify, fix with dep update + tests, or prove false positive.
   - [ ] F1. Rebuild ONLY affected containers, verify healthy, brief log watch.
-- **Next:** 2. Investigate the notify re-take behavior for @notifyGitlabRepobot.
+- **Next:** Item 2 evidence recorded; this iteration is complete.
+
+### Item 2 evidence — 2026-10-14
+
+- The live worker's source contains the `scrape_history` takeover preflight and `takeover_only` path from commit `867f25d`; runtime config has honeypot mode, receiver, secret, and AUTO allowlist enabled, and the target credential passes the allowlist check.
+- `docker logs --since 48h theprawnhunter_worker`: credential `e34b2ee0-ddcc-4479-bd9f-491a051d1ee5` (`@notifyGitlabRepobot`) began exfiltration at 00:52:40 UTC. At 00:52:51 UTC the worker logged a foreign webhook, then `setWebhook succeeded ... (foreign webhook re-taken over)`, and continued into the scraper flow. At 00:52:52 UTC, the scrape audit recorded `bot_api_updates` with `getUpdates_status=409` and `honeypot_active=true`; the scrape completed as `no_new_messages`.
+- The foreign-webhook URL in the raw worker log contains a Telegram Bot API token. The value is redacted in this record. No credential changes or unrelated code changes were made.
+- Diagnosis: `.agents/diagnosis/2026-10-14-notifygitlabrepobot-retake.md`.
 
 ## Current task (updated 2026-10-14) — remaining 2 findings DONE; worker rebuilt + verified healthy; log watch clean (0 errors, 0 redirect failures)
 
