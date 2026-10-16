@@ -17,6 +17,7 @@ from app.core.logger import get_logger
 from app.domain.media import bot_api_media_info
 from app.infrastructure.database import execute_async
 from app.services.honeypot_urls import extract_message_urls
+from app.services.message_preview import prepare_stored_content
 
 logger = get_logger(__name__)
 
@@ -96,13 +97,15 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
         file_meta["update_id"] = safe_update_id
         file_meta["message_id"] = chat_msg_id
         file_meta["chat_id"] = chat_id
+        stored_content, text_metadata = prepare_stored_content(str(content))
+        file_meta.update(text_metadata)
 
         return {
             "credential_id": credential_id,
             "telegram_msg_id": telegram_msg_id,
             "sender_name": str(sender_name)[:128],
             "sender_user_id": sender_user_id,
-            "content": str(content)[:2000],
+            "content": stored_content,
             "media_type": media_type,
             "file_meta": file_meta,
             "is_broadcasted": False,
@@ -127,13 +130,15 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
             "message_id": chat_msg_id,
             "chat_id": _to_int(cb_chat.get("id")),
         }
+        stored_content, text_metadata = prepare_stored_content(f"[Callback Query] {cb_data}")
+        file_meta.update(text_metadata)
 
         return {
             "credential_id": credential_id,
             "telegram_msg_id": telegram_msg_id,
             "sender_name": str(sender_name)[:128],
             "sender_user_id": sender_user_id,
-            "content": f"[Callback Query] {cb_data}"[:2000],
+            "content": stored_content,
             "media_type": "callback_query",
             "file_meta": file_meta,
             "is_broadcasted": False,
@@ -153,13 +158,15 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
             "inline_id": iq.get("id"),
             "update_id": safe_update_id,
         }
+        stored_content, text_metadata = prepare_stored_content(f"[Inline Query] {query_text}")
+        file_meta.update(text_metadata)
 
         return {
             "credential_id": credential_id,
             "telegram_msg_id": telegram_msg_id,
             "sender_name": str(sender_name)[:128],
             "sender_user_id": sender_user_id,
-            "content": f"[Inline Query] {query_text}"[:2000],
+            "content": stored_content,
             "media_type": "inline_query",
             "file_meta": file_meta,
             "is_broadcasted": False,

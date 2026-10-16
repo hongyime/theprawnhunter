@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import Final, TypedDict
 
 from app.services.honeypot_rendering import JsonValue
+from app.services.message_preview import TextPreview, preview_text, utf16_length
 
 _URL_PATTERN: Final = re.compile(r"\b(?:https?://|www\.)[^\s<>'\"`]+", re.IGNORECASE)
 
@@ -71,12 +72,29 @@ def _shorten(text: str, limit: int) -> str:
     return encoded[:max(0, limit - 3) * 2].decode("utf-16-le", errors="ignore") + "..."
 
 
-def format_link_caption(header: str, content: str, urls: Sequence[str]) -> str:
+def _link_section(urls: Sequence[str], explicit_evidence: bool = False) -> str:
+    if not urls:
+        return ""
     shown = [_shorten(url.replace("\r", " ").replace("\n", " "), 160) for url in urls[:3]]
     section = "\n\nLinks:\n" + "\n".join(f"- {url}" for url in shown)
     if len(urls) > len(shown):
-        section += f"\n(+{len(urls) - len(shown)} more; full URLs saved)"
+        location = "full links in evidence JSON file" if explicit_evidence else "full URLs saved"
+        section += f"\n(+{len(urls) - len(shown)} more; {location})"
     elif any(original != displayed for original, displayed in zip(urls, shown, strict=True)):
-        section += "\n(Full URLs saved)"
+        section += (
+            "\n[Links shortened; full links in evidence JSON file.]"
+            if explicit_evidence else "\n(Full URLs saved)"
+        )
+    return section
+
+
+def format_link_caption(header: str, content: str, urls: Sequence[str]) -> str:
+    section = _link_section(urls)
     reserved = len((header + "\n" + section).encode("utf-16-le")) // 2
     return header + "\n" + _shorten(content, 1024 - reserved) + section
+
+
+def format_link_preview(header: str, content: TextPreview, urls: Sequence[str]) -> str:
+    section = _link_section(urls, explicit_evidence=True)
+    available = 1024 - utf16_length(header + "\n" + section)
+    return header + "\n" + preview_text(content, available) + section

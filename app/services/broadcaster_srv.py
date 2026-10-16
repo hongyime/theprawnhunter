@@ -19,7 +19,8 @@ from app.services.archive_source import (
     honeypot_source_chat_id,
     is_honeypot_message,
 )
-from app.services.honeypot_urls import format_link_caption
+from app.services.honeypot_urls import format_link_caption, format_link_preview
+from app.services.message_preview import TEXT_PREVIEW_VERSION, TextPreview
 from app.services.note_transfer import (
     NOTE_MEDIA_TYPES,
     NoteMediaTooLargeError,
@@ -339,12 +340,18 @@ class BroadcasterService:
         sender = msg_obj.get("sender_name", "Unknown")
         media_type = msg_obj.get("media_type", "text")
         msg_id = msg_obj.get("telegram_msg_id", "?")
-        urls = (msg_obj.get("file_meta") or {}).get("urls") or []
+        file_meta = msg_obj.get("file_meta") or {}
+        urls = file_meta.get("urls") or []
 
         header = f"[ID: {msg_id}] [From: {sender}]"
-        caption = format_link_caption(header, content, urls) if urls else f"{header}\n{content}"
-        if not urls and len(caption) > 1024:
-            caption = caption[:1021] + "..."
+        if file_meta.get("text_preview_version") == TEXT_PREVIEW_VERSION:
+            caption = format_link_preview(
+                header, TextPreview(content, file_meta.get("content_truncated") is True), urls
+            )
+        else:
+            caption = format_link_caption(header, content, urls) if urls else f"{header}\n{content}"
+            if not urls and len(caption) > 1024:
+                caption = caption[:1021] + "..."
 
         to_send_text = caption
         if media_type == "photo":
@@ -477,7 +484,10 @@ class BroadcasterService:
                                 msg_id,
                             )
                             if archive_result and archive_result.ok:
-                                if media_type in NOTE_MEDIA_TYPES:
+                                if (
+                                    media_type in NOTE_MEDIA_TYPES
+                                    or file_meta.get("text_preview_version") == TEXT_PREVIEW_VERSION
+                                ):
                                     summary = await bot.send_message(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
