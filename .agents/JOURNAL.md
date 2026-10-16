@@ -1,5 +1,13 @@
 # theprawnhunter — JOURNAL
 
+- 2026-10-16: Committed the verified Fix 3 Compose change as `a3189d0` (`fix(compose): extend container log retention`); only `docker-compose.yml` is in the code commit. The deployment record remains to be committed and both commits remain to be pushed together.
+
+- 2026-10-16: Completed the Fix 3 live gate. Over 10 minutes all six recreated containers retained `json-file` `10m` x 100 settings; health-checked services stayed healthy with zero restarts, API and Redis responded, and the queue drained 404 to 361. Log scans found no new traceback, critical, HTTP 5xx, fence, persistence, bot, beat, tunnel, or Redis errors. Fix 3 is ready for its isolated commit and push.
+
+- 2026-10-16: Deployed Fix 3 without rebuilding images by recreating exactly the six running Compose services. All now use `json-file` rotation `10m` x 100; health-checked services are healthy with zero restarts, cloudflared is running, API is active, Redis returns PONG, and the queue continues draining. The bot's temporary unhealthy state was its designed 120-second previous-instance poll-lock wait; it resumed polling and recovered without intervention. Final observation remains pending.
+
+- 2026-10-16: Started Fix 3 after Fix 2 commit `1acb191` was pushed and local/remote `main` matched. Increased shared Docker `json-file` retention from 30 MB to 1 GB per container (`10m` x 100), calibrated to more than 15 days at the live worker's measured backlog-drain rate; all base/profile/production-overlay Compose parser checks passed. Deployment is pending, no image was rebuilt, and YAML LSP is unavailable.
+
 - 2026-10-16: Completed Fix 2 as a read-only investigation with no fence change. A persistent Redis backlog contained three generations of redirect jobs for four rows: eight superseded claim-token jobs were correctly fenced before send, then four latest-claim jobs detected the credential's existing revoked status and terminalized the rows without Telegram delivery. The queue drained from 1,922 to 432; worker health remained good and no production setting or data was manually altered.
 
 - 2026-10-16: Pushed Fix 1 commit `1ac0846` to `origin/main` and verified local/remote HEAD equality; worker remained healthy with zero restarts. Began read-only Fix 2 investigation after logs showed four rows repeatedly fencing immediately pre-send for one credential; no fence logic changed.
