@@ -1,6 +1,13 @@
 """Bot listener commands handlers."""
 
+from app.services.archive_source import (
+    archive_message_id,
+    honeypot_source_chat_id,
+    is_honeypot_message,
+)
+
 from .common import *
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     subject = _subject_label(update.effective_user.id)
@@ -211,7 +218,7 @@ async def _fetch_attachment_message(target_id: str) -> dict[str, Any] | None:
             .eq("id", target_id)
             .limit(1)
         )
-    elif target_id.isdigit():
+    elif target_id.removeprefix("-").isdigit():
         response = await _execute_db(
             db.table("exfiltrated_messages")
             .select("*")
@@ -224,6 +231,8 @@ async def _fetch_attachment_message(target_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 async def _resolve_attachment_source_chat_id(row: dict[str, Any]) -> int | str | None:
+    if is_honeypot_message(row):
+        return honeypot_source_chat_id(row)
     if row.get("chat_id"):
         return row["chat_id"]
 
@@ -287,14 +296,20 @@ async def getfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply_and_delete(update, "Source chat unavailable.")
         return
 
+    source_message_id = archive_message_id(row)
+    if source_message_id is None:
+        await _reply_and_delete(update, "Original source message ID unavailable.")
+        return
+
     await _reply_and_delete(update, "Retrieving attachment...")
     from app.services.user_agent_srv import user_agent
 
     result = await user_agent.archive_media_transiently(
         source_chat_id,
-        int(row["telegram_msg_id"]),
+        source_message_id,
         target_chat_id=update.effective_chat.id,
         caption=f"Archived Attachment [ID: {row['id']}]",
+        exact_source=is_honeypot_message(row),
     )
     await _reply_and_delete(update, _format_archive_result_message(result))
 

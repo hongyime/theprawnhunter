@@ -1,5 +1,9 @@
 """User-agent group and archive operations."""
 
+import logging
+
+from app.services.engagement import pseudonymize_engagement_subject
+
 from .common import *
 from .session_lifecycle import UserAgentSessionUnavailableError
 
@@ -374,10 +378,18 @@ class UserAgentGroupArchive:
         self,
         source: int | str,
         message_id: int,
+        *,
+        exact_source: bool = False,
     ):
         try:
             return await self.client.get_messages(source, ids=message_id)
         except (ValueError, TypeError) as entity_err:
+            if exact_source:
+                return ArchiveMediaResult(
+                    ok=False,
+                    code="missing_access_hash",
+                    detail="The source chat is not accessible to this user session.",
+                )
             if not self._should_retry_missing_entity(source, entity_err):
                 raise
 
@@ -446,11 +458,17 @@ class UserAgentGroupArchive:
         target_chat_id: int | str,
         topic_id: int | None = None,
         caption: str = "",
+        *,
+        exact_source: bool = False,
     ) -> ArchiveMediaResult:
         """
         Download a source attachment to a temporary file, re-upload it, then
         immediately remove the local file regardless of upload outcome.
         """
+        if message_id <= 0:
+            return ArchiveMediaResult(
+                ok=False, code="invalid_source", detail="A positive source message ID is required."
+            )
         temp_path = ""
         async with self.lock:
             if not await self.start():
@@ -458,7 +476,15 @@ class UserAgentGroupArchive:
             try:
                 source = self._coerce_chat_ref(entity_or_chat_id)
                 target = self._coerce_chat_ref(target_chat_id)
-                message = await self._get_archive_message_with_entity_fallback(source, message_id)
+                logging.getLogger("archive.lookup").info(
+                    "[ArchiveLookup] source_chat_ref=%s message_id=%s exact_source=%s",
+                    pseudonymize_engagement_subject(source),
+                    message_id,
+                    exact_source,
+                )
+                message = await self._get_archive_message_with_entity_fallback(
+                    source, message_id, exact_source=exact_source
+                )
                 if isinstance(message, ArchiveMediaResult):
                     return message
                 if not message or not getattr(message, "media", None):

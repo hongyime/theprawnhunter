@@ -14,6 +14,11 @@ from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 from app.infrastructure.database import execute_async as _execute_async_shared
+from app.services.archive_source import (
+    archive_message_id,
+    honeypot_source_chat_id,
+    is_honeypot_message,
+)
 from app.services.honeypot_urls import format_link_caption
 from app.services.user_agent_srv import UserAgentSessionUnavailableError, user_agent
 
@@ -155,6 +160,8 @@ class BroadcasterService:
         self._last_send_time = time.time()
 
     async def _resolve_chat_id(self, msg_obj: dict) -> int | str | None:
+        if is_honeypot_message(msg_obj):
+            return honeypot_source_chat_id(msg_obj)
         cred_info = msg_obj.get("discovered_credentials") or msg_obj.get("credential") or {}
         if isinstance(cred_info, dict):
             username = _username_from_meta(cred_info.get("meta"))
@@ -196,16 +203,21 @@ class BroadcasterService:
             return None
 
     async def _auto_archive_media(self, group_id: int | str, thread_id: int, msg_obj: dict, msg_id):
+        source_message_id = archive_message_id(msg_obj)
+        if source_message_id is None:
+            logger.warning("[Broadcaster] Auto-archive skipped: original source message ID unavailable")
+            return None
         source_chat_id = await self._resolve_chat_id(msg_obj)
         if not source_chat_id:
             logger.warning(f"[Broadcaster] Auto-archive skipped for msg={msg_id}: missing source chat_id")
             return None
         result = await user_agent.archive_media_transiently(
             source_chat_id,
-            int(msg_obj["telegram_msg_id"]),
+            source_message_id,
             target_chat_id=group_id,
             topic_id=thread_id,
             caption=f"Archived Attachment [ID: {msg_obj.get('id', msg_id)}]",
+            exact_source=is_honeypot_message(msg_obj),
         )
         if not result.ok:
             logger.warning(
