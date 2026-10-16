@@ -11,7 +11,14 @@
 - **Live watch:** Worker, API, bot, beat, and Redis remained healthy; API returned `{"status":"active"}`. Over 10 minutes the worker had zero restarts and zero matches for traceback, critical, fence, delivery-failure, or evidence-persistence errors. No post-deploy redirect occurred, and all five new evidence columns remain empty.
 - **Canary check:** Bryan authorized a controlled canary. The configured `CANARY_CREDENTIAL_ID` resolves to a revoked credential; live Telegram `getMe` and monitor-chat membership checks both returned unsuccessful. No message was sent, no synthetic row was inserted, and no token was printed or persisted.
 - **Waiver:** Bryan explicitly accepted migration, tests, worker-only rollout, service health, and the clean 10-minute watch in place of a fresh live message-ID correlation. No arbitrary historical user was messaged.
-- **Next gate:** Commit and push Fix 1 as one atomic fix, verify remote HEAD, then begin Fix 2 investigation without changing fence logic. No fence change or secret persistence occurred.
+- **Next gate:** Fix 1 is shipped. Fix 2 was completed as a read-only investigation with no fence change; proceed to the seven-day container log-retention fix.
+
+### Fix 1 shipment — 2026-10-16
+
+- Commit `1ac0846` (`fix(worker): persist redirect delivery evidence`) was pushed to `origin/main`; local and remote HEAD both resolve to `1ac0846b8de5cdd094de768400d801d4375e4160`. The worker remains healthy on the verified image with restart count 0.
+- **Fix 2 status:** [x] Investigation complete; no fence logic changed. The persistent Redis `celery` queue held three generations of `flow.honeypot_redirect_one` jobs for the same four rows while draining from 1,922 to 432 entries. The first eight jobs carried superseded claim tokens and were correctly rejected immediately pre-send by `_is_fence_valid()`; surrounding sweeps reported `dispatched: 0`, proving those jobs came from the existing queue rather than a new dispatch. The final four jobs matched the latest claims, observed that credential `1f82cee6-...` was already `revoked`, attempted no Telegram send, and terminalized all four rows with `redirect_attempt = 3`, cleared claims, `redirected_bot = token_revoked`, and a non-null completion timestamp. Across the post-deploy log there were exactly 12 redirect-one receipts: eight fenced and four revoked skips.
+- **Fix 2 conclusion:** The observed `fenced_out` results were expected stale-work rejection during backlog drainage, not a regression in fence logic. Worker health remained good and no source, production data, credentials, or runtime configuration was manually changed during the read-only investigation.
+- **Next gate:** Commit and push the Fix 2 investigation record only, then configure shared Docker log retention for at least seven days as Fix 3.
 
 ## Previous task — Fix 3 audit issues on 3410 (started 2026-10-14 21:10 SGT)
 

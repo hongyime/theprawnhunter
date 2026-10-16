@@ -1,5 +1,9 @@
 # theprawnhunter — JOURNAL
 
+- 2026-10-16: Completed Fix 2 as a read-only investigation with no fence change. A persistent Redis backlog contained three generations of redirect jobs for four rows: eight superseded claim-token jobs were correctly fenced before send, then four latest-claim jobs detected the credential's existing revoked status and terminalized the rows without Telegram delivery. The queue drained from 1,922 to 432; worker health remained good and no production setting or data was manually altered.
+
+- 2026-10-16: Pushed Fix 1 commit `1ac0846` to `origin/main` and verified local/remote HEAD equality; worker remained healthy with zero restarts. Began read-only Fix 2 investigation after logs showed four rows repeatedly fencing immediately pre-send for one credential; no fence logic changed.
+
 - 2026-10-16: Bryan explicitly waived fresh live DB/log message-ID correlation because the configured canary is revoked, no active credential belongs to an owned monitor bot, and organic traffic produced no redirect during the clean watch. Fix 1 is accepted on migration, focused tests, worker-only rollout, service health, and the 10-minute zero-error observation; no arbitrary historical user was messaged.
 
 - 2026-10-16: Checked the configured controlled canary after authorization. Its credential is revoked, and live Telegram `getMe` plus monitor-chat membership checks were unsuccessful. No message or synthetic row was created, and no token was exposed or persisted; Fix 1 remains blocked on a valid safe canary or an explicit live-correlation waiver.
