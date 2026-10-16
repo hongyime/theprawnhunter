@@ -1,5 +1,7 @@
 # theprawnhunter — JOURNAL
 
+- 2026-10-16: Pushed Fix 3 commits `a3189d0` and `0a2e554` to `origin/main` and verified local/remote equality at `0a2e554e1e6cc32de9e572417cade63db517efc4`. Final live checks showed the retention settings active on all six containers, health-checked services healthy with zero restarts, API active, cloudflared running, and the queue down to 349. The ordered three-fix production job is complete.
+
 - 2026-10-16: Committed the verified Fix 3 Compose change as `a3189d0` (`fix(compose): extend container log retention`); only `docker-compose.yml` is in the code commit. The deployment record remains to be committed and both commits remain to be pushed together.
 
 - 2026-10-16: Completed the Fix 3 live gate. Over 10 minutes all six recreated containers retained `json-file` `10m` x 100 settings; health-checked services stayed healthy with zero restarts, API and Redis responded, and the queue drained 404 to 361. Log scans found no new traceback, critical, HTTP 5xx, fence, persistence, bot, beat, tunnel, or Redis errors. Fix 3 is ready for its isolated commit and push.
