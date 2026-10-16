@@ -1,5 +1,7 @@
 """Honeypot flow task definitions."""
 
+from app.services.honeypot_rendering import render_honeypot_broadcast
+
 from .common import *
 
 from .broadcast import _is_broadcast_claim_valid, _mark_broadcast_failure, _update_message_broadcast_success
@@ -148,12 +150,23 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
     if attachment_only:
         sent_msg_id = msg.get("broadcast_message_id")
     else:
-        if not await _is_broadcast_claim_valid(msg["id"], claim_time, lease_minutes=5):
-            logger.warning(f"[HoneypotBroadcast] Fenced out immediately pre-send for {msg['id']}")
-            return {"status": "fenced_out"}
-
         try:
-            sent_msg_id = await broadcaster.send_message(group_id, thread_id, msg)
+            broadcast_msg = msg
+            if not msg.get("content") and msg.get("media_type") == "text":
+                raw_res = await async_execute(
+                    db.table("honeypot_updates")
+                    .select("payload")
+                    .eq("credential_id", credential_id)
+                    .eq("update_id", -telegram_msg_id)
+                    .limit(1)
+                )
+                raw_rows = raw_res.data or []
+                raw_update = raw_rows[0]["payload"] if raw_rows else {}
+                broadcast_msg = render_honeypot_broadcast(msg, raw_update)
+            if not await _is_broadcast_claim_valid(msg["id"], claim_time, lease_minutes=5):
+                logger.warning(f"[HoneypotBroadcast] Fenced out immediately pre-send for {msg['id']}")
+                return {"status": "fenced_out"}
+            sent_msg_id = await broadcaster.send_message(group_id, thread_id, broadcast_msg)
         except Exception as send_err:
             logger.error(f"❌ [HoneypotBroadcast] Send failed: {send_err}")
             if not await _mark_broadcast_failure(msg, send_err, claim_token=claim_time):
