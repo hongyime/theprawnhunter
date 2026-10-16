@@ -26,7 +26,7 @@ x-logging: &default-logging
   driver: "json-file"
   options:
     max-size: "10m"
-    max-file: "3"
+    max-file: "100"
 
 x-app-build: &app-build
   build:
