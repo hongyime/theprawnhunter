@@ -6,7 +6,7 @@ import mimetypes
 import time
 from typing import Any
 
-from telegram import Bot
+from telegram import Bot, LinkPreviewOptions
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.request import HTTPXRequest
 
@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
 from app.infrastructure.database import execute_async as _execute_async_shared
+from app.services.honeypot_urls import format_link_caption
 from app.services.user_agent_srv import UserAgentSessionUnavailableError, user_agent
 
 logger = logging.getLogger("broadcaster")
@@ -303,9 +304,11 @@ class BroadcasterService:
         sender = msg_obj.get("sender_name", "Unknown")
         media_type = msg_obj.get("media_type", "text")
         msg_id = msg_obj.get("telegram_msg_id", "?")
+        urls = (msg_obj.get("file_meta") or {}).get("urls") or []
 
-        caption = f"[ID: {msg_id}] [From: {sender}]\n{content}"
-        if len(caption) > 1024:
+        header = f"[ID: {msg_id}] [From: {sender}]"
+        caption = format_link_caption(header, content, urls) if urls else f"{header}\n{content}"
+        if not urls and len(caption) > 1024:
             caption = caption[:1021] + "..."
 
         to_send_text = caption
@@ -341,7 +344,11 @@ class BroadcasterService:
                     sent_via_media = False
                     media_delivery_failure: BroadcastSendError | None = None
 
-                    logger.info(f"    🔍 DEBUG: media_type={media_type}, file_id={file_id}, fm={file_meta}")
+                    media_debug_meta = {
+                        key: value for key, value in file_meta.items()
+                        if key not in {"urls", "text_links"}
+                    }
+                    logger.info(f"    🔍 DEBUG: media_type={media_type}, file_id={file_id}, fm={media_debug_meta}")
 
                     if (file_id or has_telethon_hash) and media_type in ARCHIVE_MEDIA_TYPES:
                         media_bytes = await self._download_media_bytes(file_meta, msg_obj.get("credential_id"))
@@ -429,7 +436,8 @@ class BroadcasterService:
                         _sent = await bot.send_message(
                             chat_id=group_id,
                             message_thread_id=bot_thread_id,
-                            text=to_send_text
+                            text=to_send_text,
+                            link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
                         )
                         sent_message_id = getattr(_sent, "message_id", None)
                     return sent_message_id

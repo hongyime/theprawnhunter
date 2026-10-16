@@ -16,6 +16,7 @@ from app.core.database import db
 from app.core.logger import get_logger
 from app.domain.media import bot_api_media_info
 from app.infrastructure.database import execute_async
+from app.services.honeypot_urls import extract_message_urls
 
 logger = get_logger(__name__)
 
@@ -87,6 +88,9 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
         sender_user_id = _to_int(sender.get("id"))
         content = target.get("text") or target.get("caption") or ""
         media_type, file_meta = _extract_media_info(target)
+        url_metadata = extract_message_urls(target)
+        if url_metadata["urls"]:
+            file_meta.update(url_metadata)
 
         file_meta["source"] = "bot_api"
         file_meta["update_id"] = safe_update_id
