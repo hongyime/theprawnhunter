@@ -742,6 +742,7 @@ async def test_forward_honeypot_message_recorded_unbroadcast_redispatches_with_r
 @pytest.mark.asyncio
 async def test_multi_touch_tasks_use_atomic_claims_and_fencing(monkeypatch):
     """Verify touch2 logic acquires atomic Redis reservation, DB claim, and handles contention."""
+    from app.workers.tasks.honeypot_redirect_strategies import TelegramDeliveryResult
     from app.workers.tasks.honeypot_redirect_tasks import _redirect_touch2_logic, settings
 
     monkeypatch.setattr(settings, "HONEYPOT_REDIRECT_MODE", True)
@@ -800,7 +801,7 @@ async def test_multi_touch_tasks_use_atomic_claims_and_fencing(monkeypatch):
          patch("app.workers.tasks.honeypot_redirect_tasks.async_execute", mock_async_exec), \
          patch("app.core.redis_srv.redis_srv", fake_redis_srv), \
          patch("app.workers.tasks.honeypot_redirect_strategies.HoneypotRedirectStrategies.get_bot_token", AsyncMock(return_value="fake_token")), \
-         patch("app.workers.tasks.honeypot_redirect_strategies.HoneypotRedirectStrategies.send_multi_touch_message", AsyncMock(return_value=True)), \
+         patch("app.workers.tasks.honeypot_redirect_strategies.HoneypotRedirectStrategies.send_multi_touch_message", AsyncMock(return_value=TelegramDeliveryResult(True, "sendMessage", 4202, None))), \
          patch("app.workers.tasks.honeypot_redirect_strategies.HoneypotRedirectStrategies.mark_multi_touch_sent"):
         res = await _redirect_touch2_logic()
         assert res["status"] == "ok"
@@ -837,7 +838,5 @@ async def test_receiver_and_extractor_reject_update_id_exceeding_32_bit():
         assert res == {"ok": True}
         # Dropped before database insert
         mock_db.table.assert_not_called()
-
-
 
 

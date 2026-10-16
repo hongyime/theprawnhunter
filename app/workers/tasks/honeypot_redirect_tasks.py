@@ -9,8 +9,9 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import settings
 from app.core.database import db
 from app.core.logger import get_logger
+from app.services.engagement import pseudonymize_engagement_subject
 from app.workers.celery_app import app, get_worker_loop
-from app.workers.tasks.flow_tasks import async_execute, _safe_release_redis_reservation
+from app.workers.tasks.flow_tasks import _safe_release_redis_reservation, async_execute
 
 logger = get_logger(__name__)
 from app.workers.tasks.honeypot_redirect_strategies import (  # noqa: E402 — intentional deferred import
@@ -133,16 +134,17 @@ async def _redirect_touch2_logic() -> dict:
                 continue
 
             # 5. Send second touch message
-            sent_ok = await HoneypotRedirectStrategies.send_multi_touch_message(
+            delivery = await HoneypotRedirectStrategies.send_multi_touch_message(
                 bot_token, user_id, 2, redirect_url, redirect_bot
             )
 
-            if sent_ok:
+            if delivery.accepted:
                 now = datetime.now(UTC).isoformat()
                 upd = await async_execute(
                     db.table("honeypot_updates")
                     .update({
                         "redirect_2_sent_at": now,
+                        "redirect_2_message_id": delivery.message_id,
                         "redirect_attempt": 2,
                         "redirect_claimed_at": None,
                     })
@@ -153,11 +155,20 @@ async def _redirect_touch2_logic() -> dict:
                     # Mark in Redis with 24h TTL
                     HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 2)
                     sent += 1
-                    logger.info(f"🔀 [Touch2] sent cred:{credential_id[:8]}...")
+                    subject = pseudonymize_engagement_subject(user_id)
+                    logger.info(
+                        f"[Touch2] delivery recorded credential={credential_id} "
+                        f"subject={subject} method={delivery.method} "
+                        f"message_id={delivery.message_id} timestamp={now}"
+                    )
                 else:
                     logger.warning(f"🔀 [Touch2] Fenced out post-send for {update_id}")
                     _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
             else:
+                logger.warning(
+                    f"[Touch2] delivery failed credential={credential_id} "
+                    f"reason={delivery.error}"
+                )
                 with contextlib.suppress(Exception):
                     await async_execute(
                         db.table("honeypot_updates")
@@ -284,16 +295,17 @@ async def _redirect_touch3_logic() -> dict:
                 continue
 
             # 5. Send third touch message
-            sent_ok = await HoneypotRedirectStrategies.send_multi_touch_message(
+            delivery = await HoneypotRedirectStrategies.send_multi_touch_message(
                 bot_token, user_id, 3, redirect_url, redirect_bot
             )
 
-            if sent_ok:
+            if delivery.accepted:
                 now = datetime.now(UTC).isoformat()
                 upd = await async_execute(
                     db.table("honeypot_updates")
                     .update({
                         "redirect_3_sent_at": now,
+                        "redirect_3_message_id": delivery.message_id,
                         "redirect_attempt": 3,
                         "redirect_claimed_at": None,
                     })
@@ -303,11 +315,20 @@ async def _redirect_touch3_logic() -> dict:
                 if upd.data:
                     HoneypotRedirectStrategies.mark_multi_touch_sent(credential_id, user_id, 3)
                     sent += 1
-                    logger.info(f"🔀 [Touch3] sent cred:{credential_id[:8]}...")
+                    subject = pseudonymize_engagement_subject(user_id)
+                    logger.info(
+                        f"[Touch3] delivery recorded credential={credential_id} "
+                        f"subject={subject} method={delivery.method} "
+                        f"message_id={delivery.message_id} timestamp={now}"
+                    )
                 else:
                     logger.warning(f"🔀 [Touch3] Fenced out post-send for {update_id}")
                     _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
             else:
+                logger.warning(
+                    f"[Touch3] delivery failed credential={credential_id} "
+                    f"reason={delivery.error}"
+                )
                 with contextlib.suppress(Exception):
                     await async_execute(
                         db.table("honeypot_updates")
@@ -435,16 +456,17 @@ async def _proactive_outreach_logic() -> dict:
                 continue
 
             # 5. Send proactive inline request
-            sent_ok = await HoneypotRedirectStrategies.send_proactive_inline_request(
+            delivery = await HoneypotRedirectStrategies.send_proactive_inline_request(
                 bot_token, user_id, redirect_bot
             )
 
-            if sent_ok:
+            if delivery.accepted:
                 now = datetime.now(UTC).isoformat()
                 upd = await async_execute(
                     db.table("honeypot_updates")
                     .update({
                         "proactive_sent_at": now,
+                        "proactive_message_id": delivery.message_id,
                         "redirect_claimed_at": None,
                     })
                     .eq("id", update_id)
@@ -458,11 +480,20 @@ async def _proactive_outreach_logic() -> dict:
                         logger.debug(f"[suppressed] {_swallowed}")
 
                     sent += 1
-                    logger.info(f"🔗 [Proactive] sent cred:{credential_id[:8]}...")
+                    subject = pseudonymize_engagement_subject(user_id)
+                    logger.info(
+                        f"[Proactive] delivery recorded credential={credential_id} "
+                        f"subject={subject} method={delivery.method} "
+                        f"message_id={delivery.message_id} timestamp={now}"
+                    )
                 else:
                     logger.warning(f"🔀 [Proactive] Fenced out post-send for {update_id}")
                     _safe_release_redis_reservation(redis_srv.client, dedup_key, owner_token)
             else:
+                logger.warning(
+                    f"[Proactive] delivery failed credential={credential_id} "
+                    f"reason={delivery.error}"
+                )
                 with contextlib.suppress(Exception):
                     await async_execute(
                         db.table("honeypot_updates")

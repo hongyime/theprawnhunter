@@ -1,6 +1,19 @@
 # theprawnhunter — STATE
 
-## Current task — Fix 3 audit issues on 3410 (started 2026-10-14 21:10 SGT)
+## Current task — Production redirect evidence (resumed 2026-10-16 SGT)
+
+- **Job:** Complete three ordered production fixes on machine 3410: persist and log Telegram redirect delivery evidence, investigate `fenced_out` without changing fence logic, then retain container logs for at least seven days. Finish, live-verify, commit, and push each fix before starting the next.
+- **Fix 1 status:** [x] Deployed and healthy; Bryan explicitly waived fresh live DB/log correlation after the configured canary proved revoked and no active credential matched an owned monitor bot. A typed Telegram delivery result preserves real `sendMessage` IDs, callback/inline acknowledgements retain a null ID with their method, and the initial/touch-2/touch-3/proactive rows persist stage-specific evidence only after fenced writes succeed. Success logs include credential, pseudonymous subject, method, message ID, and timestamp.
+- **Fix 1 contract:** Store real `message_id` values returned by Telegram `sendMessage` on the matching `honeypot_updates` row and emit privacy-safe success evidence. `answerCallbackQuery` and `answerInlineQuery` return only `true`, so their method/acknowledgement must be recorded with a null message ID; never invent an ID.
+- **Local verification:** 33 focused redirect tests passed; the full unit suite reached 573 passed with exactly two pre-existing failures (`test_telemetry_command_restricts_non_admin` text mismatch and three unrelated `group_archive.py` raw-ID log findings). Ruff passed for directly changed modules/tests; basedpyright/py_compile passed; Compose config validated; the worker image built successfully as `theprawnhunter-worker:latest`. The Python LSP daemon repeatedly timed out, so no LSP result is available.
+- **Production migration:** Applied `20261016000001_honeypot_redirect_delivery_evidence.sql` through the Supabase Management API (HTTP 201), reapplied it successfully to prove idempotency, and independently verified nullable `redirect_method` (`text`) plus four stage message-ID columns (`bigint`). No data backfill occurred.
+- **Worker rollout:** Recreated only `theprawnhunter_worker` from image `sha256:d08a2d82760a2e946ff69e455e2193a6a83658be02e19e06a162184d5220104f`. It reached healthy with restart count 0; API, bot, beat, Redis, and tunnel retained their previous container identities/uptimes.
+- **Live watch:** Worker, API, bot, beat, and Redis remained healthy; API returned `{"status":"active"}`. Over 10 minutes the worker had zero restarts and zero matches for traceback, critical, fence, delivery-failure, or evidence-persistence errors. No post-deploy redirect occurred, and all five new evidence columns remain empty.
+- **Canary check:** Bryan authorized a controlled canary. The configured `CANARY_CREDENTIAL_ID` resolves to a revoked credential; live Telegram `getMe` and monitor-chat membership checks both returned unsuccessful. No message was sent, no synthetic row was inserted, and no token was printed or persisted.
+- **Waiver:** Bryan explicitly accepted migration, tests, worker-only rollout, service health, and the clean 10-minute watch in place of a fresh live message-ID correlation. No arbitrary historical user was messaged.
+- **Next gate:** Commit and push Fix 1 as one atomic fix, verify remote HEAD, then begin Fix 2 investigation without changing fence logic. No fence change or secret persistence occurred.
+
+## Previous task — Fix 3 audit issues on 3410 (started 2026-10-14 21:10 SGT)
 
 - **Job:** Fix the 3 honeypot issues discovered in the 2026-10-14 20:50 SGT audit. One fix at a time, live verification, commit + push, STATE.md and JOURNAL.md updated after every step.
 - **Discipline (Bryan):** After EVERY small task, update STATE.md (tick the checkbox) AND append a JOURNAL.md line (what was done, why, commit hash). Commit STATE.md promptly with each fix commit.

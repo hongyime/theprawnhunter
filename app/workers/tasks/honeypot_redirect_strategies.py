@@ -12,8 +12,9 @@ Note: Level 6 (username takeover via Telegram support) is NOT implemented.
 Only Option A for Level 5 (inline mode first) is implemented.
 Options B (group notification) and C (bot bio optimization) are NOT implemented.
 """
-import contextlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 import httpx
 
@@ -24,6 +25,65 @@ from app.core.security import security
 from app.infrastructure.database import execute_async as _execute_async_shared
 
 logger = get_logger(__name__)
+
+TelegramMethod = Literal["sendMessage", "answerCallbackQuery", "answerInlineQuery"]
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramDeliveryResult:
+    accepted: bool
+    method: TelegramMethod
+    message_id: int | None
+    error: str | None
+
+
+def _telegram_delivery_result(
+    method: TelegramMethod,
+    status_code: int,
+    response_body: dict,
+) -> TelegramDeliveryResult:
+    detail = str(
+        response_body.get("description")
+        or response_body.get("error")
+        or "Telegram returned no error details"
+    )[:200]
+    if status_code != 200 or response_body.get("ok") is not True:
+        return TelegramDeliveryResult(
+            False,
+            method,
+            None,
+            f"HTTP {status_code}: {detail}"[:200],
+        )
+
+    if method == "sendMessage":
+        result = response_body.get("result")
+        message_id = result.get("message_id") if isinstance(result, dict) else None
+        if not isinstance(message_id, int) or isinstance(message_id, bool):
+            return TelegramDeliveryResult(
+                False,
+                method,
+                None,
+                "Telegram sendMessage response missing message_id",
+            )
+        return TelegramDeliveryResult(True, method, message_id, None)
+
+    if response_body.get("result") is not True:
+        return TelegramDeliveryResult(
+            False,
+            method,
+            None,
+            f"Telegram {method} response missing acknowledgement",
+        )
+    return TelegramDeliveryResult(True, method, None, None)
+
+
+def _telegram_transport_error(
+    method: TelegramMethod,
+    error: Exception,
+    bot_token: str,
+) -> TelegramDeliveryResult:
+    detail = str(error).replace(bot_token, "[redacted]")[:200]
+    return TelegramDeliveryResult(False, method, None, f"{type(error).__name__}: {detail}")
 
 # Helper for async DB execution (defined locally to avoid circular imports)
 async def async_execute(query_builder):
@@ -40,7 +100,7 @@ class HoneypotRedirectStrategies:
         callback_id: str,
         redirect_url: str,
         redirect_bot: str,
-    ) -> bool:
+    ) -> TelegramDeliveryResult:
         """
         Level 3: Callback query hijack - answer with popup and redirect URL.
 
@@ -59,10 +119,9 @@ class HoneypotRedirectStrategies:
                     },
                 )
                 resp = r.json()
-                return r.status_code == 200 and resp.get("ok", False)
+                return _telegram_delivery_result("answerCallbackQuery", r.status_code, resp)
         except Exception as e:
-            logger.error(f"Callback hijack failed: {e}")
-            return False
+            return _telegram_transport_error("answerCallbackQuery", e, bot_token)
 
     @staticmethod
     async def send_inline_hijack(
@@ -71,7 +130,7 @@ class HoneypotRedirectStrategies:
         query_text: str,
         redirect_url: str,
         redirect_bot: str,
-    ) -> bool:
+    ) -> TelegramDeliveryResult:
         """
         Level 4: Inline query hijack - return migration result.
 
@@ -105,10 +164,9 @@ class HoneypotRedirectStrategies:
                     },
                 )
                 resp = r.json()
-                return r.status_code == 200 and resp.get("ok", False)
+                return _telegram_delivery_result("answerInlineQuery", r.status_code, resp)
         except Exception as e:
-            logger.error(f"Inline hijack failed: {e}")
-            return False
+            return _telegram_transport_error("answerInlineQuery", e, bot_token)
 
     @staticmethod
     async def send_multi_touch_message(
@@ -117,7 +175,7 @@ class HoneypotRedirectStrategies:
         message_num: int,
         redirect_url: str,
         redirect_bot: str,
-    ) -> bool:
+    ) -> TelegramDeliveryResult:
         """
         Level 2: Multi-touch reminder sequences.
 
@@ -158,17 +216,16 @@ class HoneypotRedirectStrategies:
                     },
                 )
                 resp = r.json()
-                return r.status_code == 200 and resp.get("ok", False)
+                return _telegram_delivery_result("sendMessage", r.status_code, resp)
         except Exception as e:
-            logger.error(f"Multi-touch message {message_num} failed: {e}")
-            return False
+            return _telegram_transport_error("sendMessage", e, bot_token)
 
     @staticmethod
     async def send_proactive_inline_request(
         bot_token: str,
         chat_id: int,
         redirect_bot: str,
-    ) -> bool:
+    ) -> TelegramDeliveryResult:
         """
         Level 5 Option A: Proactive outreach via inline mode (NO PM required).
 
@@ -199,10 +256,9 @@ class HoneypotRedirectStrategies:
                     },
                 )
                 resp = r.json()
-                return r.status_code == 200 and resp.get("ok", False)
+                return _telegram_delivery_result("sendMessage", r.status_code, resp)
         except Exception as e:
-            logger.error(f"Proactive inline request failed: {e}")
-            return False
+            return _telegram_transport_error("sendMessage", e, bot_token)
 
     @staticmethod
     def check_redirect_sent(credential_id: str, user_id: int) -> bool:
@@ -268,6 +324,7 @@ class HoneypotRedirectStrategies:
         update_id: str,
         user_id: int,
         redirect_bot: str,
+        delivery: TelegramDeliveryResult,
         error: str | None = None,
         proactive: bool = False,
         claim_token: str | None = None,
@@ -285,6 +342,8 @@ class HoneypotRedirectStrategies:
             "redirect_claimed_at": None,
             "redirected_bot": redirect_bot,
             "sender_user_id": user_id,
+            "redirect_method": delivery.method,
+            "redirect_1_message_id": delivery.message_id,
         }
         if error:
             payload["redirect_error"] = str(error)[:200]

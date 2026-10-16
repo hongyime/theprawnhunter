@@ -264,7 +264,7 @@ async def test_redirect_one_failure_preserves_telegram_error(monkeypatch, caplog
 
 
 @pytest.mark.asyncio
-async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
+async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch, caplog):
     """When sendMessage succeeds, redirected_at AND redirect_1_sent_at must be
     written, and the Redis dedup key must be set."""
     db_updates: list[dict] = []
@@ -370,6 +370,19 @@ async def test_redirect_one_success_marks_redirected_and_dedup(monkeypatch):
     assert "redirect_1_sent_at" in success_payloads[0], (
         "redirect_1_sent_at must be written on first successful send"
     )
+    assert success_payloads[0]["redirect_1_message_id"] == 42
+
+    success_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "[Redirect] delivery recorded" in record.getMessage()
+    ]
+    assert success_logs
+    assert any("credential=cred-002" in message for message in success_logs)
+    assert any("message_id=42" in message for message in success_logs)
+    assert any("timestamp=" in message for message in success_logs)
+    assert any("subject=" in message for message in success_logs)
+    assert all("99999" not in message for message in success_logs)
 
     # Redis dedup key must be set
     assert any("redirect:sent:" in k for k in redis_sets), (
@@ -385,13 +398,21 @@ async def test_callback_failure_does_not_mark_redirected(monkeypatch):
     called_mark = []
 
     import app.workers.tasks.flow_tasks as ft
-    from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+    from app.workers.tasks.honeypot_redirect_strategies import (
+        HoneypotRedirectStrategies,
+        TelegramDeliveryResult,
+    )
 
     async def fake_get_bot_token(_cred_id):
         return "123456:ABCfaketoken"
 
     async def fake_send_callback_hijack(*_a, **_kw):
-        return False  # simulate failure
+        return TelegramDeliveryResult(
+            False,
+            "answerCallbackQuery",
+            None,
+            "HTTP 400: callback query is too old",
+        )
 
     async def fake_update_redirect_record(*_a, **_kw):
         called_update.append(True)
@@ -437,7 +458,10 @@ async def test_callback_branch_returns_early_no_sendmessage(monkeypatch):
     """callback_query branch must return with status='callback_handled' and
     must NOT reach the sendMessage path (no httpx.AsyncClient.post for sendMessage)."""
     import app.workers.tasks.flow_tasks as ft
-    from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+    from app.workers.tasks.honeypot_redirect_strategies import (
+        HoneypotRedirectStrategies,
+        TelegramDeliveryResult,
+    )
 
     sendmessage_calls: list[str] = []
 
@@ -445,7 +469,7 @@ async def test_callback_branch_returns_early_no_sendmessage(monkeypatch):
         return "123456:ABCfaketoken"
 
     async def fake_send_callback_hijack(*_a, **_kw):
-        return True  # simulate success
+        return TelegramDeliveryResult(True, "answerCallbackQuery", None, None)
 
     async def fake_update_redirect_record(*_a, **_kw):
         return True
@@ -508,7 +532,10 @@ async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
     """inline_query branch must return with status='inline_handled' and
     must NOT reach the sendMessage path (no httpx.AsyncClient.post for sendMessage)."""
     import app.workers.tasks.flow_tasks as ft
-    from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+    from app.workers.tasks.honeypot_redirect_strategies import (
+        HoneypotRedirectStrategies,
+        TelegramDeliveryResult,
+    )
 
     sendmessage_calls: list[str] = []
 
@@ -516,7 +543,7 @@ async def test_inline_branch_returns_early_no_sendmessage(monkeypatch):
         return "123456:ABCfaketoken"
 
     async def fake_send_inline_hijack(*_a, **_kw):
-        return True  # simulate success
+        return TelegramDeliveryResult(True, "answerInlineQuery", None, None)
 
     async def fake_update_redirect_record(*_a, **_kw):
         return True
@@ -929,4 +956,3 @@ async def test_redirect_one_max_retries_breaks_loop(monkeypatch):
     ]
     assert max_retry_updates, "Row must be updated with redirected_bot='max_retries_exceeded'"
     assert max_retry_updates[-1]["redirected_at"] is not None, "redirected_at must be set to prevent loop"
-

@@ -717,11 +717,28 @@ async def _honeypot_redirect_one_logic(
 
     import httpx
 
-    from app.workers.tasks.honeypot_redirect_strategies import HoneypotRedirectStrategies
+    from app.services.engagement import pseudonymize_engagement_subject
+    from app.workers.tasks.honeypot_redirect_strategies import (
+        HoneypotRedirectStrategies,
+        TelegramDeliveryResult,
+        _telegram_delivery_result,
+        _telegram_transport_error,
+    )
 
     dedup_key = f"redirect:sent:{credential_id}:{user_id}"
     owner_token = f"claiming:{update_id}:{claim_token}" if claim_token else None
     inflight_key = f"redirect:inflight:{update_id}"
+
+    def _log_recorded_delivery(
+        delivery: TelegramDeliveryResult,
+        timestamp: str,
+    ) -> None:
+        subject = pseudonymize_engagement_subject(user_id)
+        logger.info(
+            f"[Redirect] delivery recorded credential={credential_id} "
+            f"subject={subject} method={delivery.method} "
+            f"message_id={delivery.message_id} timestamp={timestamp}"
+        )
 
     async def _cleanup_inflight():
         try:
@@ -842,27 +859,33 @@ async def _honeypot_redirect_one_logic(
                 logger.warning(f"🔀 [Callback] Fenced out immediately pre-send for {update_id}")
                 return {"status": "fenced_out", "credential_id": credential_id}
 
-            sent_ok = await HoneypotRedirectStrategies.send_callback_hijack(
+            delivery = await HoneypotRedirectStrategies.send_callback_hijack(
                 bot_token, callback_id, redirect_url, redirect_bot
             )
 
-            if sent_ok:
+            if delivery.accepted:
                 updated = await HoneypotRedirectStrategies.update_redirect_record(
-                    update_id, user_id, redirect_bot, claim_token=claim_token
+                    update_id,
+                    user_id,
+                    redirect_bot,
+                    delivery,
+                    claim_token=claim_token,
                 )
                 if not updated:
                     await _cleanup_inflight()
                     logger.warning(f"🔀 [Callback] Fenced out post-send for {update_id}")
                     return {"status": "fenced_out", "credential_id": credential_id}
                 HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+                _log_recorded_delivery(delivery, datetime.now(UTC).isoformat())
             else:
                 await _release_pending_claim("callback_send_failed")
+                logger.warning(
+                    f"[Callback] delivery failed credential={credential_id} "
+                    f"reason={delivery.error}"
+                )
 
-            logger.info(
-                f"🔀 [Callback] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
-            )
             await _cleanup_inflight()
-            return {"status": "callback_handled", "sent": sent_ok}
+            return {"status": "callback_handled", "sent": delivery.accepted}
         finally:
             await _cleanup_inflight()
 
@@ -893,27 +916,33 @@ async def _honeypot_redirect_one_logic(
                 logger.warning(f"🔀 [Inline] Fenced out immediately pre-send for {update_id}")
                 return {"status": "fenced_out", "credential_id": credential_id}
 
-            sent_ok = await HoneypotRedirectStrategies.send_inline_hijack(
+            delivery = await HoneypotRedirectStrategies.send_inline_hijack(
                 bot_token, inline_id, query_text, redirect_url, redirect_bot
             )
 
-            if sent_ok:
+            if delivery.accepted:
                 updated = await HoneypotRedirectStrategies.update_redirect_record(
-                    update_id, user_id, redirect_bot, claim_token=claim_token
+                    update_id,
+                    user_id,
+                    redirect_bot,
+                    delivery,
+                    claim_token=claim_token,
                 )
                 if not updated:
                     await _cleanup_inflight()
                     logger.warning(f"🔀 [Inline] Fenced out post-send for {update_id}")
                     return {"status": "fenced_out", "credential_id": credential_id}
                 HoneypotRedirectStrategies.mark_redirect_sent(credential_id, user_id)
+                _log_recorded_delivery(delivery, datetime.now(UTC).isoformat())
             else:
                 await _release_pending_claim("inline_send_failed")
+                logger.warning(
+                    f"[Inline] delivery failed credential={credential_id} "
+                    f"reason={delivery.error}"
+                )
 
-            logger.info(
-                f"🔀 [Inline] hijacked cred:{credential_id[:8]}... sent={sent_ok}"
-            )
             await _cleanup_inflight()
-            return {"status": "inline_handled", "sent": sent_ok}
+            return {"status": "inline_handled", "sent": delivery.accepted}
         finally:
             await _cleanup_inflight()
 
@@ -997,20 +1026,12 @@ async def _honeypot_redirect_one_logic(
                 if isinstance(response_body, dict)
                 else {"error": str(response_body)}
             )
-            sent_ok = r.status_code == 200 and resp.get("ok")
+            delivery = _telegram_delivery_result("sendMessage", r.status_code, resp)
     except Exception as e:
-        sent_ok = False
-        resp = {"error": str(e)[:200]}
+        delivery = _telegram_transport_error("sendMessage", e, bot_token)
 
-    redirect_error = None
-    if not sent_ok:
-        error_text = str(
-            resp.get("description")
-            or resp.get("error")
-            or "Telegram returned no error details"
-        )
-        status_prefix = f"HTTP {http_status}: " if http_status is not None else ""
-        redirect_error = f"{status_prefix}{error_text}"[:200]
+    sent_ok = delivery.accepted
+    redirect_error = delivery.error
 
     # Dead token handling: HTTP 401 Unauthorized
     is_dead_token = http_status == 401 or "unauthorized" in str(redirect_error or "").lower()
@@ -1074,6 +1095,8 @@ async def _honeypot_redirect_one_logic(
                 "redirected_bot": redirect_bot,
                 "sender_user_id": user_id,
                 "redirect_1_sent_at": now,
+                "redirect_method": delivery.method,
+                "redirect_1_message_id": delivery.message_id,
                 "redirect_attempt": 1,
             }
         else:
@@ -1117,8 +1140,17 @@ async def _honeypot_redirect_one_logic(
             )
             await _cleanup_inflight()
             return {"status": "failed", "credential_id": credential_id}
-    except Exception as _swallowed:
-        logger.debug(f"[suppressed] {_swallowed}")
+    except Exception as persistence_error:
+        logger.warning(
+            f"[Redirect] delivery evidence persistence failed credential={credential_id} "
+            f"message_id={delivery.message_id} reason={persistence_error}"
+        )
+        await _cleanup_inflight()
+        return {
+            "status": "failed",
+            "reason": "evidence_persistence_failed",
+            "credential_id": credential_id,
+        }
 
     # BUG-5 FIX: Set permanent dedup key on success, or safely release claiming reservation on failure
     try:
@@ -1133,10 +1165,7 @@ async def _honeypot_redirect_one_logic(
     await _cleanup_inflight()
 
     if sent_ok:
-        logger.info(
-            f"🔀 [Redirect] sent via cred:{credential_id[:8]}... "
-            f"→ @{redirect_bot}"
-        )
+        _log_recorded_delivery(delivery, now)
     else:
         logger.warning(
             f"🔀 [Redirect] FAILED cred:{credential_id[:8]}...: "
