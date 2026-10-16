@@ -20,11 +20,19 @@ from app.services.archive_source import (
     is_honeypot_message,
 )
 from app.services.honeypot_urls import format_link_caption
+from app.services.note_transfer import (
+    NOTE_MEDIA_TYPES,
+    NoteMediaTooLargeError,
+    NoteTransfer,
+    NoteTransferResult,
+    is_note_media_type,
+    relay_note_media,
+)
 from app.services.user_agent_srv import UserAgentSessionUnavailableError, user_agent
 
 logger = logging.getLogger("broadcaster")
 
-ARCHIVE_MEDIA_TYPES = {"document", "photo", "audio", "video"}
+ARCHIVE_MEDIA_TYPES = {"document", "photo", "audio", "video"} | NOTE_MEDIA_TYPES
 ANDROID_PACKAGE_MIME = "application/vnd.android.package-archive"
 
 for _android_package_ext in (".apk", ".apks", ".xapk"):
@@ -298,6 +306,21 @@ class BroadcasterService:
             logger.warning(f"    ⚠️ [Broadcaster] _download_media_bytes failed: {exc}")
             return None
 
+    async def _transfer_note_media(self, target: Bot, transfer: NoteTransfer) -> NoteTransferResult | None:
+        if not transfer.credential_id:
+            return None
+        res = await _async_execute(
+            db.table("discovered_credentials")
+            .select("bot_token")
+            .eq("id", transfer.credential_id)
+            .limit(1)
+        )
+        rows = res.data or []
+        if not rows or not rows[0].get("bot_token"):
+            return None
+        source_token = security.decrypt(rows[0]["bot_token"]).strip()
+        return await relay_note_media(self._get_bot_instance(source_token), target, transfer)
+
     async def send_message(
         self,
         group_id: int | str,
@@ -362,7 +385,36 @@ class BroadcasterService:
                     }
                     logger.info(f"    🔍 DEBUG: media_type={media_type}, file_id={file_id}, fm={media_debug_meta}")
 
-                    if (file_id or has_telethon_hash) and media_type in ARCHIVE_MEDIA_TYPES:
+                    if file_id and is_note_media_type(media_type):
+                        try:
+                            note_result = await self._transfer_note_media(bot, NoteTransfer(
+                                kind=media_type,
+                                credential_id=msg_obj.get("credential_id"),
+                                file_id=file_id,
+                                chat_id=group_id,
+                                thread_id=thread_id,
+                                summary=to_send_text,
+                                has_urls=bool(urls),
+                            ))
+                            if note_result is not None:
+                                sent_via_media = True
+                                sent_message_id = note_result.summary.message_id
+                                logger.info("[Broadcaster] Transferred %s file and summary", media_type)
+                        except NoteMediaTooLargeError as size_err:
+                            raise BroadcastSendError(
+                                "media_archive_too_large", str(size_err), retryable=False
+                            ) from size_err
+                        except TelegramError as media_err:
+                            media_delivery_failure = _classify_broadcast_exception(media_err)
+                            if media_delivery_failure.reason == "flood_wait":
+                                self._flood_wait_hits += 1
+                            last_failure = media_delivery_failure
+                            logger.warning("[Broadcaster] Note transfer failed: %s", media_delivery_failure.reason)
+
+                    if (
+                        (file_id or has_telethon_hash) and media_type in ARCHIVE_MEDIA_TYPES
+                        and media_type not in NOTE_MEDIA_TYPES
+                    ):
                         media_bytes = await self._download_media_bytes(file_meta, msg_obj.get("credential_id"))
                         if media_bytes:
                             filename = _media_filename(file_meta, media_type)
@@ -425,6 +477,14 @@ class BroadcasterService:
                                 msg_id,
                             )
                             if archive_result and archive_result.ok:
+                                if media_type in NOTE_MEDIA_TYPES:
+                                    summary = await bot.send_message(
+                                        chat_id=group_id,
+                                        message_thread_id=bot_thread_id,
+                                        text=to_send_text,
+                                        link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
+                                    )
+                                    return summary.message_id
                                 return
 
                             detail = "Media could not be archived."
