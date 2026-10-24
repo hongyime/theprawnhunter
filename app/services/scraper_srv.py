@@ -693,6 +693,11 @@ class ScraperService:
             return False
 
         # 2. Bot doesn't have access — try to invite it
+        if not settings.AUTO_INVITE_CAPTURED_BOTS:
+            logger.info(
+                f"    🚫 [Scraper] Auto-invite disabled by AUTO_INVITE_CAPTURED_BOTS — skipping invite to {chat_id}."
+            )
+            return False
         logger.info(f"    🚪 [Scraper] Bot not in target chat {chat_id}. Attempting auto-invite...")
         try:
             # Get bot username

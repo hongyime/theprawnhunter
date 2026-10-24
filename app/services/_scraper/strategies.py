@@ -689,6 +689,16 @@ class UserAgentJoinService:
         except Exception as exc:
             evidence["cooldown_check_error"] = str(exc)[:300]
 
+        from app.core.config import settings
+
+        if not settings.AUTO_INVITE_CAPTURED_BOTS:
+            return StrategyAttempt(
+                name="user_agent_invite",
+                reason=ScrapeReason.USER_AGENT_INVITE_FAILED,
+                retryable=False,
+                evidence={**evidence, "bot_username": username, "auto_invite_disabled": True},
+            )
+
         try:
             from app.services.user_agent_srv import user_agent
 
