@@ -25,7 +25,6 @@ from app.services.honeypot_srv import extract_honeypot_message
     ({"new_chat_members": [{"id": 12, "first_name": "Fixture"}]},
      "New members joined the chat"),
     ({"pinned_message": {"message_id": 71}}, "Message pinned"),
-    ({"animation": {"file_id": "fixture"}}, "Animation shared"),
     ({"location": {"latitude": 1.0, "longitude": 2.0}}, "Location shared"),
     ({"contact": {"first_name": "Fixture", "phone_number": "fixture"}}, "Contact shared"),
     ({"poll": {"id": "fixture", "question": "Fixture?"}}, "Poll posted"),

@@ -386,7 +386,8 @@ async def test_send_document_preserves_original_filename(monkeypatch):
         },
     )
 
-    assert fake_bot.calls == []
+    assert len(fake_bot.calls) == 1
+    assert fake_bot.calls[0]["text"] == "apk"
     assert len(fake_bot.document_calls) == 1
     sent = fake_bot.document_calls[0]
     assert sent["document"] == b"apk-bytes"

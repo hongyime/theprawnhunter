@@ -20,7 +20,7 @@ from app.services.archive_source import (
     is_honeypot_message,
 )
 from app.services.honeypot_urls import format_link_caption, format_link_preview
-from app.services.message_preview import TEXT_PREVIEW_VERSION, TextPreview
+from app.services.message_preview import TEXT_PREVIEW_VERSION, TextPreview, utf16_length
 from app.services.note_transfer import (
     NOTE_MEDIA_TYPES,
     NoteMediaTooLargeError,
@@ -33,7 +33,7 @@ from app.services.user_agent_srv import UserAgentSessionUnavailableError, user_a
 
 logger = logging.getLogger("broadcaster")
 
-ARCHIVE_MEDIA_TYPES = {"document", "photo", "audio", "video"} | NOTE_MEDIA_TYPES
+ARCHIVE_MEDIA_TYPES = {"document", "photo", "audio", "video", "animation"} | NOTE_MEDIA_TYPES
 ANDROID_PACKAGE_MIME = "application/vnd.android.package-archive"
 
 for _android_package_ext in (".apk", ".apks", ".xapk"):
@@ -52,7 +52,77 @@ def _media_filename(file_meta: dict[str, Any], media_type: str) -> str | None:
         "video": "video.mp4",
         "audio": "audio",
         "document": "document.bin",
+        "animation": "animation.mp4",
     }.get(media_type)
+
+
+def _cap_utf16(text: str, limit: int) -> str:
+    """Truncate to `limit` UTF-16 units with an ellipsis (display-only cap)."""
+    if utf16_length(text) <= limit:
+        return text
+    enc = text.encode("utf-16-le")
+    return enc[: max(0, limit - 3) * 2].decode("utf-16-le", errors="ignore") + "..."
+
+
+def _cut_at_units(text: str, budget: int) -> int:
+    """Return the char index that fits within `budget` UTF-16 code units."""
+    units = 0
+    cut = 0
+    for i, ch in enumerate(text):
+        units += 2 if ord(ch) > 0xFFFF else 1
+        if units > budget:
+            break
+        cut = i + 1
+    return cut or 1
+
+
+def _split_utf16_text(text: str, limit: int = 4096) -> list[str]:
+    """Split text into Telegram-safe chunks measured in UTF-16 units.
+
+    Chunks are numbered "(n/total)" only when there is more than one. The
+    split budget leaves headroom for the numbering suffix so the final
+    message never exceeds Telegram's 4096-character limit.
+    """
+    if utf16_length(text) <= limit:
+        return [text]
+
+    budget = max(1, limit - 32)
+    words = text.split(" ")
+    chunks: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if utf16_length(candidate) > budget:
+            if current:
+                chunks.append(current)
+                current = word
+            else:
+                while utf16_length(word) > budget:
+                    cut = _cut_at_units(word, budget)
+                    chunks.append(word[:cut])
+                    word = word[cut:]
+                current = word
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+
+    total = len(chunks)
+    if total <= 1:
+        return chunks
+    return [f"{chunk} ({i}/{total})" for i, chunk in enumerate(chunks, 1)]
+
+
+def _source_label(file_meta: dict[str, Any]) -> str:
+    chat_type = file_meta.get("source_chat_type")
+    title = file_meta.get("source_chat_title")
+    if chat_type == "private":
+        return "[DM]"
+    if chat_type in ("group", "supergroup"):
+        return f"[Group: {title}]" if isinstance(title, str) and title.strip() else "[Group]"
+    if chat_type == "channel":
+        return f"[Channel: {title}]" if isinstance(title, str) and title.strip() else "[Channel]"
+    return ""
 
 
 async def _mute_topic_best_effort(group_id: int | str, topic_id: int) -> bool:
@@ -361,20 +431,37 @@ class BroadcasterService:
             )
 
         header = f"[ID: {msg_id}] [From: {sender}]"
+        source_label = _source_label(file_meta)
+        if source_label:
+            header = f"{header} {source_label}"
+
         if file_meta.get("text_preview_version") == TEXT_PREVIEW_VERSION:
-            caption = format_link_preview(
+            full_text = format_link_preview(
                 header, TextPreview(content, file_meta.get("content_truncated") is True), urls
             )
         else:
-            caption = format_link_caption(header, content, urls) if urls else f"{header}\n{content}"
-            if not urls and len(caption) > 1024:
-                caption = caption[:1021] + "..."
+            full_text = format_link_caption(header, content, urls) if urls else f"{header}\n{content}"
 
-        to_send_text = caption
-        if media_type == "photo":
-            to_send_text = f"{caption}\n\n[Photo Media Detected]"
-        elif media_type != "text":
-            to_send_text = f"{caption}\n\n[{media_type} Media Detected]"
+        if media_type == "paid_media":
+            star_count = file_meta.get("paid_media_star_count")
+            if isinstance(star_count, int):
+                full_text += f"\n\n[Paid media shared: {star_count} Stars]"
+            else:
+                full_text += "\n\n[Paid media shared]"
+        elif media_type == "story":
+            full_text += "\n\n[Story shared]"
+
+        text_parts = _split_utf16_text(full_text)
+        media_caption = header if utf16_length(header) <= 1024 else None
+        to_send_text = _cap_utf16(full_text, 1024)
+        follow_text_parts: list[str] | None = None
+        if media_type in ARCHIVE_MEDIA_TYPES and str(content or "").strip():
+            follow_text = (
+                format_link_caption("", content, urls).strip("\n")
+                if urls
+                else str(content)
+            )
+            follow_text_parts = _split_utf16_text(follow_text)
 
         # Try up to N times (total size of pool)
         last_failure: BroadcastSendError | None = None
@@ -448,7 +535,7 @@ class BroadcasterService:
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         photo=media_bytes,
-                                        caption=caption,
+                                        caption=media_caption,
                                         filename=filename,
                                     )
                                 elif media_type == "document":
@@ -456,7 +543,7 @@ class BroadcasterService:
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         document=media_bytes,
-                                        caption=caption,
+                                        caption=media_caption,
                                         filename=filename,
                                         disable_content_type_detection=False,
                                     )
@@ -465,7 +552,7 @@ class BroadcasterService:
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         video=media_bytes,
-                                        caption=caption,
+                                        caption=media_caption,
                                         filename=filename,
                                     )
                                 elif media_type == "audio":
@@ -473,7 +560,15 @@ class BroadcasterService:
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
                                         audio=media_bytes,
-                                        caption=caption,
+                                        caption=media_caption,
+                                        filename=filename,
+                                    )
+                                elif media_type == "animation":
+                                    _sent = await bot.send_animation(
+                                        chat_id=group_id,
+                                        message_thread_id=bot_thread_id,
+                                        animation=media_bytes,
+                                        caption=media_caption,
                                         filename=filename,
                                     )
                                 else:
@@ -485,6 +580,19 @@ class BroadcasterService:
                                     f"    ✅ [Broadcaster] Successfully sent {media_type} "
                                     f"({len(media_bytes)} bytes, filename={filename})"
                                 )
+                                if follow_text_parts:
+                                    try:
+                                        for _part in follow_text_parts:
+                                            await bot.send_message(
+                                                chat_id=group_id,
+                                                message_thread_id=bot_thread_id,
+                                                text=_part,
+                                                link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
+                                            )
+                                    except TelegramError as _follow_err:
+                                        logger.warning(
+                                            f"⚠️ Follow-up text after {media_type} failed: {_follow_err}"
+                                        )
                             except TelegramError as media_err:
                                 media_delivery_failure = _classify_broadcast_exception(media_err)
                                 if media_delivery_failure.reason == "flood_wait":
@@ -532,13 +640,17 @@ class BroadcasterService:
                         raise last_failure
 
                     if not sent_via_media:
-                        _sent = await bot.send_message(
-                            chat_id=group_id,
-                            message_thread_id=bot_thread_id,
-                            text=to_send_text,
-                            link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
-                        )
-                        sent_message_id = getattr(_sent, "message_id", None)
+                        first_id = None
+                        for _part in text_parts:
+                            _sent = await bot.send_message(
+                                chat_id=group_id,
+                                message_thread_id=bot_thread_id,
+                                text=_part,
+                                link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
+                            )
+                            if first_id is None:
+                                first_id = getattr(_sent, "message_id", None)
+                        sent_message_id = first_id
                     return sent_message_id
                 except Forbidden as e:
                     self._failed_tokens.add(token)
