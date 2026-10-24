@@ -336,7 +336,11 @@ SELECT
     status,
     meta,
     confidence_score,
-    chat_member_count
+    chat_member_count,
+    collection_yield_score,
+    chat_id,
+    chat_name,
+    chat_type
 FROM discovered_credentials;
 
 GRANT SELECT ON discovered_credentials_public TO anon;

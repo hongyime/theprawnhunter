@@ -129,7 +129,8 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
 
     const displayName = credential.meta?.bot_username
         ? `@${credential.meta.bot_username}`
-        : credential.meta?.chat_title || "Unknown Bot";
+        : credential.chat_name || credential.meta?.chat_title || "Unknown Bot";
+    const chatName = credential.chat_name || credential.meta?.chat_title;
     const gatewayTelemetry = credential.meta?.gateway_telemetry;
     const infrastructureContext = credential.meta?.infrastructure_context;
     const commands = (gatewayTelemetry?.command_dictionary || [])
@@ -156,6 +157,11 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                             <span className="text-xs font-mono text-slate-400">
                                 ID: {credential.meta?.bot_id || credential.id.slice(0, 8)}
                             </span>
+                            {chatName && (
+                                <span className="text-xs text-slate-500 truncate" title={chatName}>
+                                    {chatTypeLabel(credential.chat_type)}: {chatName}
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -264,8 +270,21 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     );
 }
 
-function collectInfrastructureEndpoints(context: InfrastructureContext | undefined): string[] {
-    if (!context) return [];
+function chatTypeLabel(chatType?: string | null): string {
+    switch (chatType) {
+        case "private":
+            return "DM";
+        case "channel":
+            return "Channel";
+        case "group":
+        case "supergroup":
+            return "Group";
+        default:
+            return "Chat";
+    }
+}
+
+function collectInfrastructureEndpoints(context: InfrastructureContext | undefined): string[] {    if (!context) return [];
     const endpoints: string[] = [];
     if (context.api_urls && Array.isArray(context.api_urls)) {
         endpoints.push(...context.api_urls.filter((u): u is string => typeof u === 'string' && u.length > 0));

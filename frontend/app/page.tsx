@@ -35,6 +35,9 @@ export interface Credential {
   /** @deprecated legacy alias for collection_yield_score */
   confidence_score?: number | null;
   chat_member_count?: number | null;
+  chat_id?: number | null;
+  chat_name?: string | null;
+  chat_type?: string | null;
   meta?: {
     chat_title?: string;
     bot_username?: string;
@@ -80,7 +83,7 @@ export default function Home() {
     const { data, error } = await supabase
       .from("discovered_credentials_public")
       .select(
-        "id,created_at,source,meta,confidence_score,collection_yield_score,chat_member_count",
+        "id,created_at,source,meta,confidence_score,collection_yield_score,chat_member_count,chat_id,chat_name,chat_type",
       )
       .eq("id", credentialId)
       .limit(1);

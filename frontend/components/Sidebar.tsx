@@ -22,6 +22,20 @@ function ConfidenceBadge({ score }: { score: number | null }) {
   )
 }
 
+function chatTypeLabel(chatType?: string | null): string {
+  switch (chatType) {
+    case "private":
+      return "DM";
+    case "channel":
+      return "Channel";
+    case "group":
+    case "supergroup":
+      return "Group";
+    default:
+      return "Chat";
+  }
+}
+
 export default function Sidebar({
     selected,
     activeView,
@@ -46,7 +60,7 @@ export default function Sidebar({
 
                 const { data: dataNew, error: errNew } = await supabase
                     .from("discovered_credentials_public")
-                    .select("id, created_at, source, meta, confidence_score, collection_yield_score, chat_member_count")
+                    .select("id, created_at, source, meta, confidence_score, collection_yield_score, chat_member_count, chat_id, chat_name, chat_type")
                     .not("id", "is", null)
                     // Prefer new collection_yield_score column when the view exposes it;
                     // fall back to confidence_score for the legacy alias.
@@ -54,7 +68,7 @@ export default function Sidebar({
                     .order("created_at", { ascending: false })
                     .limit(500);
 
-                if (errNew && /confidence_score|collection_yield_score|chat_member_count/.test(errNew.message)) {
+                if (errNew && /confidence_score|collection_yield_score|chat_member_count|chat_name|chat_type/.test(errNew.message)) {
                     // View is on old schema — migration 004 not applied yet.
                     console.warn("[Sidebar] migration 004 not applied; falling back");
                     const { data: dataOld, error: errOld } = await supabase
@@ -181,6 +195,13 @@ export default function Sidebar({
                             )}
                             <span className="font-mono text-xs opacity-70 truncate">ID: {cred.meta?.bot_id || cred.id.slice(0, 8)}</span>
                         </div>
+                        {(cred.chat_name || cred.meta?.chat_title) && (
+                            <div className="text-xs text-slate-500 truncate mt-1">
+                                <span className="bg-cyan-50 text-cyan-700 px-1 py-0.5 rounded font-mono" title={cred.chat_name || cred.meta?.chat_title}>
+                                    {chatTypeLabel(cred.chat_type)}: {cred.chat_name || cred.meta?.chat_title}
+                                </span>
+                            </div>
+                        )}
                     </button>
                 ))}
             </div>

@@ -15,6 +15,8 @@ class CredentialCreate(CredentialBase):
 class CredentialOut(CredentialBase):
     id: UUID
     chat_id: int | None = None
+    chat_name: str | None = None
+    chat_type: str | None = None
     meta: dict[str, Any] = Field(
         default_factory=dict,
         description=(
