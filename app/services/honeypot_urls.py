@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import Final, TypedDict
 
 from app.services.honeypot_rendering import JsonValue
-from app.services.message_preview import TextPreview, preview_text, utf16_length
+from app.services.message_preview import TextPreview
 
 _URL_PATTERN: Final = re.compile(r"\b(?:https?://|www\.)[^\s<>'\"`]+", re.IGNORECASE)
 
@@ -65,36 +65,18 @@ def extract_message_urls(target: Mapping[str, JsonValue]) -> UrlMetadata:
     return {"urls": list(dict.fromkeys(urls)), "text_links": text_links}
 
 
-def _shorten(text: str, limit: int) -> str:
-    encoded = text.encode("utf-16-le")
-    if len(encoded) <= limit * 2:
-        return text
-    return encoded[:max(0, limit - 3) * 2].decode("utf-16-le", errors="ignore") + "..."
-
-
-def _link_section(urls: Sequence[str], explicit_evidence: bool = False) -> str:
+def _link_section(urls: Sequence[str]) -> str:
+    """List ALL URLs fully, one per line. No shortening, no truncation."""
     if not urls:
         return ""
-    shown = [_shorten(url.replace("\r", " ").replace("\n", " "), 160) for url in urls[:3]]
-    section = "\n\nLinks:\n" + "\n".join(f"- {url}" for url in shown)
-    if len(urls) > len(shown):
-        location = "full links in evidence JSON file" if explicit_evidence else "full URLs saved"
-        section += f"\n(+{len(urls) - len(shown)} more; {location})"
-    elif any(original != displayed for original, displayed in zip(urls, shown, strict=True)):
-        section += (
-            "\n[Links shortened; full links in evidence JSON file.]"
-            if explicit_evidence else "\n(Full URLs saved)"
-        )
-    return section
+    return "\n\nLinks:\n" + "\n".join(f"- {url}" for url in urls)
 
 
 def format_link_caption(header: str, content: str, urls: Sequence[str]) -> str:
-    section = _link_section(urls)
-    reserved = len((header + "\n" + section).encode("utf-16-le")) // 2
-    return header + "\n" + _shorten(content, 1024 - reserved) + section
+    """Assemble the full broadcast text: header + full content + full links."""
+    return header + "\n" + content + _link_section(urls)
 
 
 def format_link_preview(header: str, content: TextPreview, urls: Sequence[str]) -> str:
-    section = _link_section(urls, explicit_evidence=True)
-    available = 1024 - utf16_length(header + "\n" + section)
-    return header + "\n" + preview_text(content, available) + section
+    """Assemble the full broadcast text with NO truncation."""
+    return header + "\n" + content.text + _link_section(urls)

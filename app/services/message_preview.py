@@ -3,8 +3,12 @@
 from dataclasses import dataclass
 from typing import Final, TypedDict
 
-STORED_CONTENT_LIMIT: Final = 2000
-TEXT_PREVIEW_VERSION: Final = 1
+# Version 2: no stored-content cap. The full text of every capture is stored.
+# Telegram's 4096-character message limit is handled at send time in
+# broadcaster_srv (split into numbered parts), not by truncating stored data.
+TEXT_PREVIEW_VERSION: Final = 2
+
+# Retained for legacy callers; new rows never truncate.
 TRUNCATION_NOTICE: Final = "[Preview only: text shortened. Full text is in the evidence JSON file.]"
 
 
@@ -21,9 +25,10 @@ class TextPreview:
 
 
 def prepare_stored_content(text: str) -> tuple[str, StoredTextMetadata]:
-    return text[:STORED_CONTENT_LIMIT], {
+    """Store the FULL text of a capture, untruncated."""
+    return text, {
         "text_preview_version": TEXT_PREVIEW_VERSION,
-        "content_truncated": len(text) > STORED_CONTENT_LIMIT,
+        "content_truncated": False,
         "content_original_length": len(text),
     }
 
@@ -33,6 +38,7 @@ def utf16_length(text: str) -> int:
 
 
 def preview_text(content: TextPreview, limit: int) -> str:
+    """Compatibility helper. New callers should not truncate at all."""
     if not content.was_truncated and utf16_length(content.text) <= limit:
         return content.text
     notice = "\n\n" + TRUNCATION_NOTICE

@@ -119,14 +119,15 @@ def test_url_entities_capture_bare_domains_and_keep_distinct_hidden_labels():
     ]
 
 
-def test_urls_after_the_text_cutoff_are_still_recorded():
+def test_urls_past_any_length_are_kept_in_full_content():
     url = "https://late.invalid/path"
+    text = "x" * 2100 + " " + url
     record = extract_honeypot_message({"update_id": 104, "message": {
-        "text": "x" * 2100 + " " + url,
+        "text": text,
     }}, "fixture")
 
     assert record is not None
-    assert len(record["content"]) == 2000
+    assert record["content"] == text
     assert record["file_meta"]["urls"] == [url]
 
 
@@ -144,17 +145,15 @@ def test_duplicate_hidden_and_visible_destination_is_recorded_once():
     assert record["file_meta"]["text_links"] == [{"text": "Open", "url": url}]
 
 
-def test_many_urls_fit_caption_limit_and_report_the_omitted_count():
+def test_many_urls_are_all_listed_in_full():
     urls = [f"https://many.invalid/{number}" for number in range(10)]
     summary = format_link_caption("[ID: -106] [From: Fixture]", "\U0001f600" * 2000, urls)
 
-    assert len(summary.encode("utf-16-le")) // 2 <= 1024
-    assert all(url in summary for url in urls[:3])
-    assert urls[3] not in summary
-    assert "+7 more" in summary
+    assert all(url in summary for url in urls)
+    assert "+7 more" not in summary
 
 
-def test_long_url_is_kept_in_metadata_but_shortened_for_display():
+def test_long_url_is_kept_in_full_in_display():
     url = "https://long.invalid/" + "x" * 2000
     record = extract_honeypot_message({"update_id": 107, "message": {"text": url}}, "fixture")
     assert record is not None
@@ -162,8 +161,7 @@ def test_long_url_is_kept_in_metadata_but_shortened_for_display():
     summary = format_link_caption("[ID: -107] [From: Fixture]", record["content"], record["file_meta"]["urls"])
 
     assert record["file_meta"]["urls"] == [url]
-    assert len(summary) <= 1024
-    assert "Full URLs saved" in summary
+    assert url in summary
 
 
 def test_plain_url_punctuation_and_balanced_parentheses():

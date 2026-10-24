@@ -19,8 +19,7 @@ from app.workers.tasks.flows.honeypot import _honeypot_evidence_document
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["text", "caption"])
-async def test_over_limit_text_has_explicit_preview_and_marked_record(field: str):
-    # Given a new over-limit message with a recognisable beginning and end.
+async def test_over_limit_text_is_stored_and_sent_in_full(field: str):
     full_text = "BEGIN " + "x" * 3000 + " END-FULL-TEXT"
     payload = {"update_id": 101, "message": {
         "message_id": 42, "from": {"first_name": "Fixture"},
@@ -47,21 +46,17 @@ async def test_over_limit_text_has_explicit_preview_and_marked_record(field: str
     request = HTTPXRequest(httpx_kwargs={"transport": httpx.MockTransport(telegram_reply)})
     broadcaster._bots[token] = Bot(token, request=request, get_updates_request=request)
 
-    # When the real broadcaster sends the actual extracted record.
     try:
         await broadcaster.send_message(-100123, 456, record)
     finally:
         await request.shutdown()
 
-    # Then a reader sees a preview notice, while unchanged evidence retains all text.
-    assert record["content"] == full_text[:2000]
-    assert record["file_meta"]["content_truncated"] is True
+    assert record["content"] == full_text
+    assert record["file_meta"]["content_truncated"] is False
     assert record["file_meta"]["content_original_length"] == len(full_text)
     assert sent_text[0].startswith("[ID: -101] [From: Fixture]\nBEGIN ")
-    assert "Preview only" in sent_text[0]
-    assert "evidence JSON file" in sent_text[0]
-    assert "END-FULL-TEXT" not in sent_text[0]
-    assert len(sent_text[0].encode("utf-16-le")) // 2 <= 1024
+    assert "END-FULL-TEXT" in sent_text[0]
+    assert "Preview only" not in sent_text[0]
     document, filename = _honeypot_evidence_document(record, {
         "update_id": 101, "payload": payload, "received_at": record["created_at"],
     }, {})
@@ -72,25 +67,20 @@ async def test_over_limit_text_has_explicit_preview_and_marked_record(field: str
     assert set(evidence) == {"message_text", "sender", "received_by", "message_ids", "raw_telegram_update"}
 
 
-@pytest.mark.parametrize(("size", "stored_cut", "preview_cut"), [
-    (100, False, False), (1100, False, True), (2000, False, True), (2001, True, True),
-])
-def test_storage_and_broadcast_cut_limits_are_marked_separately(size, stored_cut, preview_cut):
+@pytest.mark.parametrize("size", [100, 1100, 2000, 2001, 6000])
+def test_storage_keeps_full_text_at_all_sizes(size):
     text = "x" * size
     stored, metadata = prepare_stored_content(text)
 
-    rendered = format_link_preview("[ID: -101] [From: Fixture]", TextPreview(stored, metadata["content_truncated"]), [])
+    rendered = format_link_preview("[ID: -101] [From: Fixture]", TextPreview(stored), [])
 
-    assert len(stored) == min(size, 2000)
-    assert metadata["content_truncated"] is stored_cut
+    assert stored == text
+    assert metadata["content_truncated"] is False
     assert metadata["content_original_length"] == size
-    assert ("Preview only" in rendered) is preview_cut
-    assert len(rendered.encode("utf-16-le")) // 2 <= 1024
-    if not preview_cut:
-        assert rendered == f"[ID: -101] [From: Fixture]\n{text}"
+    assert rendered == f"[ID: -101] [From: Fixture]\n{text}"
 
 
-def test_unicode_preview_reserves_space_for_notice_and_links():
+def test_unicode_preview_lists_all_urls_in_full():
     text = "\U0001f600" * 1500
     stored, metadata = prepare_stored_content(text)
     urls = [f"https://fixture.invalid/{number}" for number in range(8)]
@@ -98,35 +88,31 @@ def test_unicode_preview_reserves_space_for_notice_and_links():
     rendered = format_link_preview("[ID: -101] [From: Fixture]", TextPreview(stored), urls)
 
     assert metadata["content_truncated"] is False
-    assert "Preview only" in rendered
-    assert "evidence JSON file" in rendered
-    assert all(url in rendered for url in urls[:3])
-    assert "+5 more" in rendered
-    assert len(rendered.encode("utf-16-le")) // 2 <= 1024
+    assert all(url in rendered for url in urls)
+    assert "+5 more" not in rendered
 
 
-def test_shortened_hidden_link_has_explicit_full_evidence_location():
+def test_long_url_is_listed_in_full_in_display():
     destination = "https://fixture.invalid/" + "a" * 500
 
     rendered = format_link_preview("[ID: -101] [From: Fixture]", TextPreview("Open notice"), [destination])
 
-    assert "Links shortened" in rendered
-    assert "full links in evidence JSON file" in rendered
+    assert destination in rendered
     assert "Open notice" in rendered
-    assert len(rendered.encode("utf-16-le")) // 2 <= 1024
 
 
 @pytest.mark.parametrize("update_type", ["callback_query", "inline_query"])
-def test_query_content_cuts_are_also_marked(update_type):
+def test_query_content_is_stored_in_full(update_type):
     query = {"id": "fixture", "from": {"first_name": "Fixture"},
              "data": "x" * 3000, "query": "x" * 3000}
+    prefix = "[Callback Query] " if update_type == "callback_query" else "[Inline Query] "
 
     record = extract_honeypot_message({"update_id": 102, update_type: query}, "fixture")
 
     assert record is not None
-    assert len(record["content"]) == 2000
-    assert record["file_meta"]["content_truncated"] is True
-    assert record["file_meta"]["content_original_length"] > 3000
+    assert record["content"] == prefix + "x" * 3000
+    assert record["file_meta"]["content_truncated"] is False
+    assert record["file_meta"]["content_original_length"] == len(record["content"])
 
 
 def test_short_new_messages_have_an_explicit_complete_storage_flag():
@@ -136,4 +122,4 @@ def test_short_new_messages_have_an_explicit_complete_storage_flag():
     assert record["content"] == "Complete text"
     assert record["file_meta"]["content_truncated"] is False
     assert record["file_meta"]["content_original_length"] == len("Complete text")
-    assert record["file_meta"]["text_preview_version"] == 1
+    assert record["file_meta"]["text_preview_version"] == 2
