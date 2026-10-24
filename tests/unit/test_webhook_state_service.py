@@ -96,7 +96,7 @@ async def test_approved_foreign_webhook_is_repointed_and_reader_continues(
     assert post_kwargs["data"] == {
         "url": "https://ours.example/honeypot/receive/approved-credential",
         "secret_token": "secret-password",
-        "allowed_updates": '["message","callback_query","edited_message","channel_post","inline_query"]',
+        "allowed_updates": '["message","callback_query","edited_message","channel_post","edited_channel_post","inline_query"]',
         "drop_pending_updates": "false",
     }
 

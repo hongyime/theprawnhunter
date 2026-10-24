@@ -116,7 +116,7 @@ class WebhookStateService:
                     data={
                         "url": honeypot_url,
                         "secret_token": settings.HONEYPOT_SECRET,
-                        "allowed_updates": '["message","callback_query","edited_message","channel_post","inline_query"]',
+                        "allowed_updates": '["message","callback_query","edited_message","channel_post","edited_channel_post","inline_query"]',
                         "drop_pending_updates": "false",
                     },
                 )
