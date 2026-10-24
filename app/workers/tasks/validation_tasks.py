@@ -701,6 +701,112 @@ async def _backfill_scoring_async(batch_size: int):
             except Exception as e:
                 logger.warning(f"[Backfill] row {row['id'][:8]} failed: {e}")
                 continue
-
-    logger.info(f"[Backfill] scored {done}/{len(rows)} rows")
     return done
+
+
+# ============================================================
+# Membership rotation: refresh chat identity + membership state
+# ============================================================
+
+@app.task(name="validation.membership_rotation", queue="validation")
+def membership_rotation(batch_size: int = 100):
+    from app.workers.celery_app import _run_sync
+
+    return _run_sync(_membership_rotation_async(batch_size))
+
+
+async def _membership_rotation_async(batch_size: int):
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.membership_srv import process_membership_update
+
+    res = await async_execute(
+        db.table("discovered_credentials")
+        .select("id, bot_token, chat_id, chat_name, chat_type, meta")
+        .eq("status", "active")
+        .order("updated_at", desc=False)
+        .limit(batch_size)
+    )
+    rows = res.data or []
+    if not rows:
+        return {"status": "ok", "checked": 0, "updated": 0}
+
+    now = datetime.now(UTC)
+    checked = 0
+    updated = 0
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        for row in rows:
+            try:
+                token = security.decrypt(row["bot_token"])
+                if _scraper_srv_is_monitor(token):
+                    continue
+                base_url = f"https://api.telegram.org/bot{token}"
+
+                await _acquire_rate_token()
+                wh_res = await client.get(f"{base_url}/getWebhookInfo")
+                webhook_url = ""
+                if wh_res.status_code == 200 and wh_res.json().get("ok"):
+                    webhook_url = (wh_res.json().get("result") or {}).get("url") or ""
+                if webhook_url:
+                    continue
+
+                await _acquire_rate_token()
+                upd_res = await client.get(
+                    f"{base_url}/getUpdates",
+                    params={"limit": 10, "allowed_updates": '["my_chat_member"]'},
+                )
+                if upd_res.status_code == 200 and upd_res.json().get("ok"):
+                    for update in upd_res.json().get("result", []):
+                        if "my_chat_member" not in update:
+                            continue
+                        result = await process_membership_update(update, row["id"])
+                        if result and result.get("status") == "ok":
+                            updated += 1
+
+                meta = dict(row.get("meta") or {})
+                last_getchat = meta.get("membership_last_getchat_at")
+                needs_getchat = not last_getchat
+                if last_getchat:
+                    try:
+                        parsed = datetime.fromisoformat(last_getchat.replace("Z", "+00:00"))
+                        needs_getchat = now - parsed > timedelta(hours=24)
+                    except (TypeError, ValueError):
+                        needs_getchat = True
+
+                if needs_getchat and row.get("chat_id"):
+                    await _acquire_rate_token()
+                    chat_res = await client.get(
+                        f"{base_url}/getChat", params={"chat_id": row["chat_id"]}
+                    )
+                    if chat_res.status_code == 200 and chat_res.json().get("ok"):
+                        chat = chat_res.json()["result"]
+                        patch = {
+                            "chat_name": (
+                                chat.get("title")
+                                or chat.get("username")
+                                or chat.get("first_name")
+                            ),
+                            "chat_type": chat.get("type"),
+                        }
+                        await async_execute(
+                            db.table("discovered_credentials")
+                            .update(
+                                {**patch, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+                            )
+                            .eq("id", row["id"])
+                        )
+                        updated += 1
+
+                meta["membership_last_checked_at"] = now.isoformat()
+                if needs_getchat:
+                    meta["membership_last_getchat_at"] = now.isoformat()
+                await async_execute(
+                    db.table("discovered_credentials")
+                    .update({"meta": meta, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                    .eq("id", row["id"])
+                )
+                checked += 1
+            except Exception as e:
+                logger.warning(f"[MembershipRotation] row {row['id'][:8]} failed: {e}")
+                continue
+    return {"status": "ok", "checked": checked, "updated": updated}

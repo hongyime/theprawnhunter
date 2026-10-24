@@ -182,6 +182,13 @@ async def receive_webhook_update(credential_id: str, request: Request):
         # Signal failure to Telegram so it retries delivery per Bot API docs
         raise HTTPException(status_code=500, detail="Database persistence failed")
 
+    try:
+        from app.services.membership_srv import process_membership_update
+
+        await process_membership_update(payload, credential_id)
+    except Exception as _membership_err:
+        logger.debug(f"[Honeypot] membership processing skipped: {_membership_err}")
+
     # Raw message forwarding to exfiltrated_messages (feeds webapp) and topic broadcast.
     # Awaiting here ensures that DB errors raise HTTP 500 to trigger Telegram redelivery.
     from app.services.honeypot_srv import forward_honeypot_message
