@@ -642,3 +642,55 @@ app.conf.update(
         },
     },
 )
+
+# Stale-beat guard: a periodic task that waited in the broker past its useful
+# window must be discarded, not executed late. Without this, one delayed beat
+# can amplify a backlog (e.g. a stale force-webhook takeover enqueuing 200
+# exfiltrations long after its scheduled run).
+_BEAT_EXPIRY_SECONDS: dict[str, int] = {
+    "broadcast-every-minute": 180,
+    "firehose-github-events-30s": 25,
+    "rescrape-active-hourly": 600,
+    "system-heartbeat-30min": 300,
+    "queue-monitor-5min": 240,
+    "close-revoked-topics-5min": 240,
+    "mute-monitor-topics-daily": 1800,
+    "canary-flow-check-30min": 300,
+    "canary-findings-check-hourly": 600,
+    "probe-webhooks-6hours": 900,
+    "force-webhook-takeover-6hours": 600,
+    "report-pin-metrics-12hours": 1800,
+    "reclassify-dark-matter-daily": 1800,
+    "produce-findings-15min": 600,
+    "build-entity-graph-hourly": 600,
+    "route-finding-deltas-5min": 240,
+    "daily-top-findings-0805-utc": 1800,
+    "weekly-finding-alert-coverage": 3600,
+    "source-quality-weekly": 3600,
+    "attribution-graph-weekly": 3600,
+    "honeypot-redirect-sweep-30s": 25,
+    "honeypot-redirect-touch2-daily": 1800,
+    "honeypot-redirect-touch3-daily": 1800,
+    "honeypot-proactive-outreach-6h": 900,
+    "cluster-c2-operators-daily": 1800,
+    "hash-exfil-media-30min": 300,
+    "reconcile-topics-hourly": 600,
+    "audit-user-agent-membership-30min": 300,
+    "media-duplicate-report-daily": 1800,
+    "takeover-spike-check-15min": 300,
+    "exfil-latency-report-6hours": 900,
+    "retention-cleanup-daily": 1800,
+    "system-help-6hours": 900,
+    "validation-refresh-pending-daily": 1800,
+    "validation-backfill-scoring": 300,
+    "audit-active-topics-hourly": 600,
+    "system-self-heal-90min": 1800,
+    "system-enforce-whitelist-6hours": 900,
+    "cleanup-general-topic-hourly": 600,
+    "prune-audit-logs-weekly": 3600,
+    "cleanup-matkap-bots-hourly": 600,
+    "import-csv-5min": 240,
+    "retry-cold-12hours": 1800,
+}
+for _beat_name, _expires in _BEAT_EXPIRY_SECONDS.items():
+    app.conf.beat_schedule[_beat_name].setdefault("options", {})["expires"] = _expires
