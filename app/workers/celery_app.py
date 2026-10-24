@@ -403,6 +403,15 @@ app.conf.update(
             "task": "flow.honeypot_redirect_sweep",
             "schedule": 30.0,
         },
+        "honeypot-evidence-batch-daily": {
+            "task": "flow.honeypot_evidence_batch",
+            "schedule": crontab(minute=40, hour=3),
+            "kwargs": {"dry_run": False},
+        },
+        "membership-rotation-15min": {
+            "task": "validation.membership_rotation",
+            "schedule": crontab(minute="*/15"),
+        },
         # Level 2: Multi-touch redirect reminder sweeps (every 24h).
         # Sends second and third reminder messages to users who didn't migrate.
         # Touch 2: users who received redirect_1 but not redirect_2 (24h+ ago)
@@ -691,6 +700,8 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "cleanup-matkap-bots-hourly": 600,
     "import-csv-5min": 240,
     "retry-cold-12hours": 1800,
+    "honeypot-evidence-batch-daily": 7200,
+    "membership-rotation-15min": 1800,
 }
 for _beat_name, _expires in _BEAT_EXPIRY_SECONDS.items():
     app.conf.beat_schedule[_beat_name].setdefault("options", {})["expires"] = _expires

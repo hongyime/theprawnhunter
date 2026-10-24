@@ -151,6 +151,19 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
             return {"status": "fenced_out"}
         return {"status": "topic_failed", "error": str(topic_err)}
 
+    raw_res = await async_execute(
+        db.table("honeypot_updates")
+        .select("update_id,payload,received_at")
+        .eq("credential_id", credential_id)
+        .eq("update_id", -telegram_msg_id)
+        .limit(1)
+    )
+    raw_rows = raw_res.data or []
+    raw_record = raw_rows[0] if isinstance(raw_rows, list) and raw_rows else raw_rows
+    raw_payload = (raw_record or {}).get("payload") if isinstance(raw_record, dict) else None
+    if not isinstance(raw_payload, dict):
+        raw_payload = {}
+
     if attachment_only:
         sent_msg_id = msg.get("broadcast_message_id")
     else:
@@ -166,6 +179,8 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
                 return {"status": "fenced_out"}
             return {"status": "failed", "error": str(send_err)}
 
+        needs_individual = _needs_individual_evidence(msg, raw_payload)
+
         try:
             completed = await _update_message_broadcast_success(
                 msg["id"],
@@ -174,7 +189,9 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
                 additional_payload={
                     "file_meta": {
                         **file_meta,
-                        "honeypot_evidence_file_status": "pending",
+                        "honeypot_evidence_file_status": (
+                            "pending" if needs_individual else "deferred"
+                        ),
                     },
                 },
             )
@@ -187,6 +204,13 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
             return {"status": "fenced_out"}
         _record_broadcast_delivery_latency(msg.get("created_at"))
         logger.info(f"✅ [HoneypotBroadcast] Sent message {msg['id']} to topic {thread_id}")
+
+        if not needs_individual:
+            return {
+                "status": "sent",
+                "broadcast_message_id": sent_msg_id,
+                "evidence": "deferred",
+            }
 
         # The summary is committed first so a retry can resume only the evidence step.
         claim_time = datetime.now(UTC).isoformat()
@@ -207,15 +231,6 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
         return {"status": "fenced_out"}
 
     try:
-        raw_res = await async_execute(
-            db.table("honeypot_updates")
-            .select("update_id,payload,received_at")
-            .eq("credential_id", credential_id)
-            .eq("update_id", -telegram_msg_id)
-            .limit(1)
-        )
-        raw_rows = raw_res.data or []
-        raw_record = raw_rows[0] if isinstance(raw_rows, list) and raw_rows else raw_rows
         document, filename = _honeypot_evidence_document(msg, raw_record, meta)
         await broadcaster.send_document(group_id, thread_id, document, filename)
     except Exception as document_err:
@@ -269,6 +284,52 @@ async def _is_honeypot_evidence_claim_valid(msg_id: str, claim_token: str) -> bo
         .limit(1)
     )
     return bool(response.data)
+
+
+_NON_TEXT_UPDATE_FIELDS = frozenset(
+    {
+        "reply_to_message",
+        "forward_origin",
+        "forward_from",
+        "forward_from_chat",
+        "forward_from_message_id",
+        "poll",
+        "contact",
+        "location",
+        "venue",
+        "dice",
+        "game",
+        "invoice",
+        "successful_payment",
+        "users_shared",
+        "chat_shared",
+        "giveaway",
+        "giveaway_winners",
+        "web_app_data",
+        "video_chat_started",
+        "video_chat_ended",
+        "video_chat_scheduled",
+        "passport_data",
+    }
+)
+
+_TARGET_UPDATE_KEYS = ("message", "channel_post", "edited_message", "edited_channel_post")
+
+
+def _needs_individual_evidence(msg: dict, raw_payload: dict) -> bool:
+    if msg.get("media_type") != "text":
+        return True
+    target = next(
+        (
+            raw_payload.get(key)
+            for key in _TARGET_UPDATE_KEYS
+            if isinstance(raw_payload.get(key), dict)
+        ),
+        {},
+    )
+    if not target:
+        return False
+    return any(key in target for key in _NON_TEXT_UPDATE_FIELDS)
 
 
 def _honeypot_evidence_document(
@@ -1184,3 +1245,201 @@ async def _honeypot_redirect_one_logic(
         "credential_id": credential_id,
         "bot": redirect_bot,
     }
+
+
+_EVIDENCE_BATCH_SELECT_LIMIT = 2000
+_EVIDENCE_BATCH_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _build_evidence_batch_doc(meta: dict, credential_id: str, updates: list[dict]) -> bytes:
+    import json
+    from datetime import datetime
+
+    return json.dumps(
+        {
+            "batch": True,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "bot_id": meta.get("bot_id"),
+            "bot_username": meta.get("bot_username"),
+            "credential_id": credential_id,
+            "updates": updates,
+        },
+        ensure_ascii=False,
+        indent=2,
+    ).encode("utf-8")
+
+
+@app.task(name="flow.honeypot_evidence_batch")
+def honeypot_evidence_batch(dry_run: bool = False):
+    """Roll deferred honeypot evidence into one JSON file per bot topic per run."""
+    lock_key = "theprawnhunter:lock:honeypot_evidence_batch"
+    lock = redis_client.lock(lock_key, timeout=1800, blocking=False)
+    if not lock.acquire():
+        logger.info("[HoneypotEvidenceBatch] Skipped — previous batch still in progress or lock held")
+        return {"status": "skipped", "reason": "lock_held"}
+    try:
+        from app.workers.celery_app import get_worker_loop
+
+        return get_worker_loop().run_until_complete(_honeypot_evidence_batch_logic(dry_run))
+    finally:
+        with contextlib.suppress(Exception):
+            lock.release()
+
+
+async def _resolve_batch_topic(meta: dict, credential_id: str):
+    group_id = settings.MONITOR_GROUP_ID
+    broadcaster = get_broadcaster()
+    bot_username = meta.get("bot_username")
+    bot_id = meta.get("bot_id")
+    if bot_username and bot_username != "unknown" and bot_id:
+        topic_name = f"@{bot_username} / {bot_id}"
+    elif bot_id:
+        topic_name = f"@unknown / {bot_id}"
+    else:
+        topic_name = f"Cred-{credential_id[:8]}"
+    try:
+        thread_id = await broadcaster.ensure_topic(
+            group_id, topic_name, preferred_topic_id=meta.get("topic_id")
+        )
+        if str(meta.get("topic_id") or "") != str(thread_id):
+            await async_execute(
+                db.table("discovered_credentials")
+                .update({"meta": {**meta, "topic_id": thread_id}})
+                .eq("id", credential_id)
+            )
+        return thread_id, topic_name
+    except Exception as exc:
+        logger.error(
+            f"[HoneypotEvidenceBatch] Could not resolve topic for {credential_id[:8]}: {exc}"
+        )
+        return None, topic_name
+
+
+async def _honeypot_evidence_batch_logic(dry_run: bool) -> dict:
+    from datetime import datetime
+
+    res = await async_execute(
+        db.table("exfiltrated_messages")
+        .select("id, credential_id, telegram_msg_id, created_at, file_meta")
+        .eq("file_meta->>honeypot_evidence_file_status", "deferred")
+        .limit(_EVIDENCE_BATCH_SELECT_LIMIT)
+    )
+    rows = res.data or []
+    if not rows:
+        return {"status": "ok", "batched": 0, "files_sent": 0, "dry_run": dry_run}
+
+    by_cred: dict[str, list[dict]] = {}
+    for row in rows:
+        by_cred.setdefault(row["credential_id"], []).append(row)
+
+    stats = {"batched": 0, "files_sent": 0, "topics_failed": 0, "dry_run": dry_run}
+
+    for credential_id, msg_rows in by_cred.items():
+        cred_res = await async_execute(
+            db.table("discovered_credentials")
+            .select("meta")
+            .eq("id", credential_id)
+            .limit(1)
+        )
+        cred_data = cred_res.data or []
+        meta = (cred_data[0].get("meta") or {}) if cred_data else {}
+        thread_id, _topic_name = await _resolve_batch_topic(meta, credential_id)
+        if thread_id is None:
+            stats["topics_failed"] += 1
+            continue
+
+        update_ids = [-int(row["telegram_msg_id"]) for row in msg_rows]
+        raw_by_id: dict[int, dict] = {}
+        for start in range(0, len(update_ids), 100):
+            chunk = update_ids[start:start + 100]
+            raw_res = await async_execute(
+                db.table("honeypot_updates")
+                .select("update_id, payload, received_at")
+                .eq("credential_id", credential_id)
+                .in_("update_id", chunk)
+            )
+            for raw_row in raw_res.data or []:
+                try:
+                    raw_by_id[int(raw_row["update_id"])] = raw_row
+                except (TypeError, ValueError):
+                    continue
+
+        updates: list[dict] = []
+        for row in msg_rows:
+            uid = -int(row["telegram_msg_id"])
+            raw = raw_by_id.get(uid)
+            entry = {
+                "update_id": uid,
+                "honeypot_telegram_msg_id": row["telegram_msg_id"],
+                "received_at": (raw or {}).get("received_at") or row.get("created_at"),
+                "raw_telegram_update": (raw or {}).get("payload"),
+            }
+            if raw is None:
+                entry["raw_copy_note"] = (
+                    "The raw Telegram update has expired from honeypot_updates retention."
+                )
+            updates.append(entry)
+
+        payloads: list[bytes] = []
+        pending: list[dict] = []
+        for entry in updates:
+            pending.append(entry)
+            candidate = _build_evidence_batch_doc(meta, credential_id, pending)
+            if len(candidate) > _EVIDENCE_BATCH_MAX_BYTES and len(pending) > 1:
+                pending.pop()
+                payloads.append(_build_evidence_batch_doc(meta, credential_id, pending))
+                pending = [entry]
+        if pending:
+            payloads.append(_build_evidence_batch_doc(meta, credential_id, pending))
+
+        if dry_run:
+            stats["batched"] += len(updates)
+            stats["files_sent"] += len(payloads)
+            continue
+
+        claim_time = datetime.now(UTC).isoformat()
+        msg_ids = [row["id"] for row in msg_rows]
+        claim_res = await async_execute(
+            db.table("exfiltrated_messages")
+            .update({"broadcast_claimed_at": claim_time})
+            .in_("id", msg_ids)
+            .eq("file_meta->>honeypot_evidence_file_status", "deferred")
+        )
+        if not claim_res.data:
+            continue
+
+        bot_key = meta.get("bot_username") or f"cred-{credential_id[:8]}"
+        safe_bot_key = bot_key.replace("/", "_").replace(" ", "_").replace("@", "")
+        date_str = datetime.now(UTC).strftime("%Y%m%d")
+        broadcaster = get_broadcaster()
+        try:
+            for seq, payload in enumerate(payloads, start=1):
+                filename = f"honeypot-evidence-batch-{safe_bot_key}-{date_str}-{seq}.json"
+                await broadcaster.send_document(
+                    settings.MONITOR_GROUP_ID, thread_id, payload, filename
+                )
+                stats["files_sent"] += 1
+        except Exception as exc:
+            logger.error(
+                f"[HoneypotEvidenceBatch] Document send failed for {credential_id[:8]}: {exc}"
+            )
+            await async_execute(
+                db.table("exfiltrated_messages")
+                .update({"broadcast_claimed_at": None})
+                .in_("id", msg_ids)
+                .eq("broadcast_claimed_at", claim_time)
+            )
+            continue
+
+        for row in msg_rows:
+            fm = dict(row.get("file_meta") or {})
+            fm["honeypot_evidence_file_status"] = "batched"
+            await async_execute(
+                db.table("exfiltrated_messages")
+                .update({"file_meta": fm, "broadcast_claimed_at": None})
+                .eq("id", row["id"])
+                .eq("broadcast_claimed_at", claim_time)
+            )
+        stats["batched"] += len(updates)
+
+    return stats

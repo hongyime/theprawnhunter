@@ -70,8 +70,8 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
         SimpleNamespace(data=[{"id": message["id"]}]),
         SimpleNamespace(data=[{"meta": {**message["discovered_credentials"]["meta"], "keep": "value"}}]),
         SimpleNamespace(data=[{"id": credential_id}]),
-        SimpleNamespace(data=[{"id": message["id"]}]),
         SimpleNamespace(data=[]),
+        SimpleNamespace(data=[{"id": message["id"]}]),
         SimpleNamespace(data=[{"id": message["id"]}]),
     ])
     broadcaster = SimpleNamespace(
