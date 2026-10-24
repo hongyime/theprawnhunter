@@ -37,6 +37,40 @@ def bot_api_media_info(
             _copy_if_present(file_meta, media, "file_size")
             return key, file_meta
 
+    animation = payload.get("animation")
+    if isinstance(animation, dict):
+        _copy_if_present(file_meta, animation, "file_id")
+        _copy_if_present(file_meta, animation, "file_unique_id")
+        _copy_if_present(file_meta, animation, "file_name")
+        _copy_if_present(file_meta, animation, "mime_type", "mime")
+        _copy_if_present(file_meta, animation, "file_size")
+        _copy_if_present(file_meta, animation, "duration")
+        _copy_if_present(file_meta, animation, "width")
+        _copy_if_present(file_meta, animation, "height")
+        return "animation", file_meta
+
+    paid_media = payload.get("paid_media")
+    if isinstance(paid_media, dict):
+        star_count = paid_media.get("star_count")
+        if isinstance(star_count, int):
+            file_meta["paid_media_star_count"] = star_count
+        items = paid_media.get("paid_media_items")
+        if isinstance(items, list):
+            file_meta["paid_media_items"] = [
+                item for item in items if isinstance(item, dict)
+            ]
+        return "paid_media", file_meta
+
+    story = payload.get("story")
+    if isinstance(story, dict):
+        story_id = story.get("id")
+        if isinstance(story_id, int):
+            file_meta["story_id"] = story_id
+        story_chat = story.get("chat")
+        if isinstance(story_chat, dict) and isinstance(story_chat.get("id"), int):
+            file_meta["story_chat_id"] = story_chat["id"]
+        return "story", file_meta
+
     return "text", file_meta
 
 

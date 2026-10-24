@@ -97,6 +97,10 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
         file_meta["update_id"] = safe_update_id
         file_meta["message_id"] = chat_msg_id
         file_meta["chat_id"] = chat_id
+        file_meta["source_chat_type"] = chat_obj.get("type")
+        file_meta["source_chat_title"] = (
+            chat_obj.get("title") or chat_obj.get("username") or chat_obj.get("first_name")
+        )
         stored_content, text_metadata = prepare_stored_content(str(content))
         file_meta.update(text_metadata)
 
@@ -129,6 +133,10 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
             "update_id": safe_update_id,
             "message_id": chat_msg_id,
             "chat_id": _to_int(cb_chat.get("id")),
+            "source_chat_type": cb_chat.get("type"),
+            "source_chat_title": (
+                cb_chat.get("title") or cb_chat.get("username") or cb_chat.get("first_name")
+            ),
         }
         stored_content, text_metadata = prepare_stored_content(f"[Callback Query] {cb_data}")
         file_meta.update(text_metadata)
