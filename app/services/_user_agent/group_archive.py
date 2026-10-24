@@ -179,6 +179,125 @@ class UserAgentGroupArchive:
             finally:
                 await self._disconnect()
 
+    async def mute_topic(
+        self,
+        group_id: int | str,
+        topic_id: int | str,
+        *,
+        mute_until: datetime | None = None,
+    ) -> bool:
+        try:
+            topic_id_int = int(topic_id)
+        except (TypeError, ValueError):
+            return False
+        if topic_id_int <= 1:
+            return False
+
+        async with self.lock:
+            if not await self.start():
+                return False
+            try:
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
+                entity = await self.client.get_entity(target)
+                from telethon.tl.functions.account import UpdateNotifySettingsRequest
+                from telethon.tl.types import InputNotifyForumTopic, InputPeerNotifySettings
+
+                await self.client(
+                    UpdateNotifySettingsRequest(
+                        peer=InputNotifyForumTopic(peer=entity, top_msg_id=topic_id_int),
+                        settings=InputPeerNotifySettings(
+                            mute_until=mute_until or datetime.now(UTC) + timedelta(days=3650)
+                        ),
+                    )
+                )
+                return True
+            except errors.FloodWaitError as e:
+                await self._handle_flood_error(e)
+                return False
+            except Exception as e:
+                logger.warning(f"    ⚠️ [UserAgent] Mute topic {topic_id} failed: {e}")
+                return False
+            finally:
+                await self._disconnect()
+
+    async def mute_all_topics(
+        self,
+        group_id: int | str,
+        *,
+        mute_until: datetime | None = None,
+    ) -> int:
+        async with self.lock:
+            if not await self.start():
+                return 0
+            try:
+                target = int(group_id) if str(group_id).lstrip("-").isdigit() else group_id
+                entity = await self.client.get_entity(target)
+                from telethon.tl.functions.account import UpdateNotifySettingsRequest
+                from telethon.tl.functions.messages import GetForumTopicsRequest
+                from telethon.tl.types import (
+                    InputNotifyForumTopic,
+                    InputNotifyPeer,
+                    InputPeerNotifySettings,
+                )
+
+                notification_settings = InputPeerNotifySettings(
+                    mute_until=mute_until or datetime.now(UTC) + timedelta(days=3650)
+                )
+                await self.client(
+                    UpdateNotifySettingsRequest(
+                        peer=InputNotifyPeer(peer=entity),
+                        settings=notification_settings,
+                    )
+                )
+
+                muted = 0
+                offset_topic = 0
+                seen: set[int] = set()
+                while True:
+                    result = await self.client(
+                        GetForumTopicsRequest(
+                            peer=entity,
+                            offset_date=0,
+                            offset_id=0,
+                            offset_topic=offset_topic,
+                            limit=100,
+                            q=None,
+                        )
+                    )
+                    topics = list(getattr(result, "topics", []) or [])
+                    if not topics:
+                        break
+                    for topic in topics:
+                        topic_id = int(getattr(topic, "id", 0) or 0)
+                        if topic_id <= 1 or topic_id in seen:
+                            continue
+                        seen.add(topic_id)
+                        await self.client(
+                            UpdateNotifySettingsRequest(
+                                peer=InputNotifyForumTopic(
+                                    peer=entity,
+                                    top_msg_id=topic_id,
+                                ),
+                                settings=notification_settings,
+                            )
+                        )
+                        muted += 1
+                    if len(topics) < 100:
+                        break
+                    next_offset = int(getattr(topics[-1], "id", 0) or 0)
+                    if next_offset <= 0 or next_offset == offset_topic:
+                        break
+                    offset_topic = next_offset
+                return muted
+            except errors.FloodWaitError as e:
+                await self._handle_flood_error(e)
+                return 0
+            except Exception as e:
+                logger.warning(f"    ⚠️ [UserAgent] Mute-all topics failed: {e}")
+                return 0
+            finally:
+                await self._disconnect()
+
     async def check_membership(self, group_id: int | str, user_identifier: str | int) -> dict | None:
         async with self.lock:
             if not await self.start():

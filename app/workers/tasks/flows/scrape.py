@@ -1,5 +1,7 @@
 """Scrape flow task definitions."""
 
+import hashlib
+
 from .common import *
 
 from .broadcast import broadcast_pending
@@ -77,10 +79,77 @@ async def _hydrate_message_rows_for_index(message_rows: list[dict[str, Any]]) ->
 
     return hydrated
 
+async def _enqueue_tokens_from_messages(message_rows: list[dict[str, Any]]) -> int:
+    if not message_rows:
+        return 0
+
+    try:
+        from app.domain.tokens import extract_tokens_and_chat_ids
+        from app.workers.tasks.validation_tasks import validate_token
+    except Exception as exc:
+        logger.debug(f"[TokenDiscovery] validation import unavailable: {exc}")
+        return 0
+
+    ttl_seconds = int(os.getenv("TOKEN_DISCOVERY_DEDUP_TTL_SECONDS", str(7 * 24 * 3600)))
+    enqueued = 0
+    seen_in_batch: set[str] = set()
+
+    for row in message_rows:
+        content = row.get("content")
+        if not isinstance(content, str) or ":" not in content:
+            continue
+
+        for found in extract_tokens_and_chat_ids(content):
+            token = found.get("token")
+            if not token or token in seen_in_batch:
+                continue
+            seen_in_batch.add(token)
+
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            dedup_key = f"token_discovery:seen:{token_hash}"
+            try:
+                first_seen = bool(
+                    redis_client.set(dedup_key, "1", nx=True, ex=ttl_seconds)
+                )
+            except Exception as exc:
+                logger.debug(f"[TokenDiscovery] dedup check skipped: {exc}")
+                first_seen = True
+
+            if not first_seen:
+                continue
+
+            validate_token.apply_async(
+                args=[
+                    {
+                        "token": token,
+                        "chat_id": found.get("chat_id"),
+                        "meta": {
+                            "source": "telegram_message",
+                            "credential_id": row.get("credential_id"),
+                            "message_id": row.get("id"),
+                            "telegram_msg_id": row.get("telegram_msg_id"),
+                        },
+                    },
+                    "telegram_message",
+                ],
+                queue="validation",
+            )
+            enqueued += 1
+
+            if enqueued % 50 == 0:
+                await asyncio.sleep(0.05)
+
+    if enqueued:
+        logger.info(f"[TokenDiscovery] enqueued {enqueued} token(s) from captured messages")
+    return enqueued
+
+
 async def _index_telemetry_indicators(message_rows: list[dict[str, Any]]) -> int:
     """Best-effort structured indicator indexing for newly inserted messages."""
     if not message_rows:
         return 0
+
+    await _enqueue_tokens_from_messages(message_rows)
 
     try:
         from app.services.telemetry_parser import TelemetryEntityParser

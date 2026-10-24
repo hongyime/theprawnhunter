@@ -55,6 +55,16 @@ def _media_filename(file_meta: dict[str, Any], media_type: str) -> str | None:
     }.get(media_type)
 
 
+async def _mute_topic_best_effort(group_id: int | str, topic_id: int) -> bool:
+    if not getattr(settings, "AUTO_MUTE_TOPICS", True):
+        return False
+    try:
+        return await user_agent.mute_topic(group_id, topic_id)
+    except Exception as exc:
+        logger.warning(f"[Broadcaster] Could not mute topic {topic_id}: {exc}")
+        return False
+
+
 class BroadcastSendError(RuntimeError):
     def __init__(
         self,
@@ -342,6 +352,13 @@ class BroadcasterService:
         msg_id = msg_obj.get("telegram_msg_id", "?")
         file_meta = msg_obj.get("file_meta") or {}
         urls = file_meta.get("urls") or []
+
+        if media_type == "text" and not str(content or "").strip():
+            raise BroadcastSendError(
+                "empty_content",
+                "Message has no text, caption, or media",
+                retryable=False,
+            )
 
         header = f"[ID: {msg_id}] [From: {sender}]"
         if file_meta.get("text_preview_version") == TEXT_PREVIEW_VERSION:
@@ -778,6 +795,7 @@ class BroadcasterService:
         for attempt in range(2):
             try:
                 topic = await bot.create_forum_topic(chat_id=group_id, name=topic_name)
+                await _mute_topic_best_effort(group_id, topic.message_thread_id)
                 return topic.message_thread_id
             except Exception as e:
                 last_err = e

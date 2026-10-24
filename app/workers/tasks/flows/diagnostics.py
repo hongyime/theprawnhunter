@@ -2,6 +2,7 @@
 
 from .common import *
 
+
 @app.task(name="flow.unpin_all_webhook_messages")
 def unpin_all_webhook_messages(max_credentials: int = 500):
     """Sweep every credential with pinned_webhook_msg_id, unpin the Telegram
@@ -687,3 +688,29 @@ async def _audit_user_agent_group_membership_logic() -> dict:
         "already_promoted": already_promoted,
         "missing_user_id": len(missing_user_id),
     }
+
+
+@app.task(name="flow.mute_monitor_topics")
+def mute_monitor_topics() -> dict:
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_mute_monitor_topics_logic())
+
+
+async def _mute_monitor_topics_logic() -> dict:
+    if not getattr(settings, "AUTO_MUTE_TOPICS", True):
+        return {"status": "disabled", "muted": 0}
+    group_id = getattr(settings, "MONITOR_GROUP_ID", None)
+    if group_id is None:
+        return {"status": "missing_monitor_group", "muted": 0}
+
+    from app.services.user_agent_srv import user_agent
+
+    try:
+        muted = await user_agent.mute_all_topics(group_id)
+    except Exception as exc:
+        logger.warning(f"[TopicMute] mute_all_topics failed: {exc}")
+        return {"status": "error", "muted": 0, "error": type(exc).__name__}
+
+    logger.info(f"[TopicMute] muted {muted} external topic(s)")
+    return {"status": "ok", "muted": muted}

@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -22,6 +23,36 @@ class _Reader:
 class _Preflight:
     async def ensure_bot_in_chat(self, *_args, **_kwargs):
         return StrategyAttempt(name="bot_preflight", success=True, reason=ScrapeReason.SUCCESS)
+
+
+@pytest.mark.asyncio
+async def test_create_forum_topic_mutes_newly_created_topic(monkeypatch):
+    from app.services import scraper_srv
+
+    response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {"ok": True, "result": {"message_thread_id": 9001}},
+    )
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            return response
+
+    monkeypatch.setattr(scraper_srv.httpx, "AsyncClient", lambda: FakeClient())
+    monkeypatch.setattr(scraper_srv.settings, "AUTO_MUTE_TOPICS", True)
+    mute_topic = AsyncMock()
+
+    with patch("app.services.user_agent_srv.user_agent.mute_topic", mute_topic):
+        result = await ScraperService()._create_forum_topic("token", -100123, "topic")
+
+    assert result == 9001
+    mute_topic.assert_awaited_once_with(-100123, 9001)
 
 
 @pytest.mark.asyncio

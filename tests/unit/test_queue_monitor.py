@@ -3,7 +3,9 @@ import time
 
 from app.core.queue_monitor import (
     evaluate_queue_alerts,
+    get_delivery_latency_summary,
     get_queue_snapshot,
+    record_delivery_latency,
     record_task_enqueued,
     record_task_started,
     summarize_queue_health,
@@ -14,6 +16,7 @@ class _FakeRedis:
     def __init__(self):
         self.lists = {}
         self.zsets = {}
+        self.expirations = {}
 
     def llen(self, key):
         return len(self.lists.get(key, []))
@@ -23,6 +26,20 @@ class _FakeRedis:
         if not values:
             return None
         return values[index]
+
+    def lpush(self, key, value):
+        self.lists.setdefault(key, []).insert(0, value)
+
+    def ltrim(self, key, start, stop):
+        values = self.lists.get(key, [])
+        self.lists[key] = values[start:stop + 1]
+
+    def lrange(self, key, start, stop):
+        values = self.lists.get(key, [])
+        return values[start:stop + 1]
+
+    def expire(self, key, ttl):
+        self.expirations[key] = ttl
 
     def zadd(self, key, mapping):
         self.zsets.setdefault(key, {}).update(mapping)
@@ -108,3 +125,49 @@ def test_queue_health_summary_is_healthy_without_alerts():
 
     assert summary["status"] == "healthy"
     assert summary["alerts"] == []
+
+
+def test_delivery_latency_summary_computes_percentiles():
+    fake = _FakeRedis()
+    for value in (10, 20, 30, 40, 50, 60, 70, 80, 90, 100):
+        assert record_delivery_latency(fake, value) is True
+
+    summary = get_delivery_latency_summary(fake)
+
+    assert summary["status"] == "ok"
+    assert summary["sample_size"] == 10
+    assert summary["p50_seconds"] == 50
+    assert summary["p95_seconds"] == 100
+    assert summary["p99_seconds"] == 100
+    assert summary["mean_seconds"] == 55
+    assert summary["max_seconds"] == 100
+
+
+def test_delivery_latency_summary_keeps_only_latest_samples():
+    fake = _FakeRedis()
+    for value in (1, 2, 3):
+        assert record_delivery_latency(fake, value, sample_size=2) is True
+
+    summary = get_delivery_latency_summary(fake, sample_size=2)
+
+    assert summary["status"] == "ok"
+    assert summary["sample_size"] == 2
+    assert summary["max_seconds"] == 3
+
+
+def test_delivery_latency_rejects_invalid_values():
+    fake = _FakeRedis()
+
+    assert record_delivery_latency(fake, -1) is False
+    assert record_delivery_latency(fake, float("nan")) is False
+    assert record_delivery_latency(fake, "not-a-number") is False
+    assert get_delivery_latency_summary(fake)["status"] == "no_data"
+
+
+def test_queue_health_summary_includes_delivery_latency():
+    summary = summarize_queue_health(
+        {"validation": {"length": 1, "oldest_job_age_seconds": 10}},
+        delivery_latency={"status": "ok", "p95_seconds": 42},
+    )
+
+    assert summary["delivery_latency"] == {"status": "ok", "p95_seconds": 42}

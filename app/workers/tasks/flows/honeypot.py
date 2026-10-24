@@ -1,10 +1,14 @@
 """Honeypot flow task definitions."""
 
-from app.services.honeypot_rendering import render_honeypot_broadcast
-
+from .broadcast import (
+    _is_broadcast_claim_valid,
+    _mark_broadcast_failure,
+    _record_broadcast_delivery_latency,
+    _render_stored_honeypot_broadcast,
+    _update_message_broadcast_success,
+)
 from .common import *
 
-from .broadcast import _is_broadcast_claim_valid, _mark_broadcast_failure, _update_message_broadcast_success
 
 @app.task(name="flow.broadcast_honeypot_message")
 def broadcast_honeypot_message(credential_id: str, telegram_msg_id: int):
@@ -151,18 +155,7 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
         sent_msg_id = msg.get("broadcast_message_id")
     else:
         try:
-            broadcast_msg = msg
-            if not msg.get("content") and msg.get("media_type") == "text":
-                raw_res = await async_execute(
-                    db.table("honeypot_updates")
-                    .select("payload")
-                    .eq("credential_id", credential_id)
-                    .eq("update_id", -telegram_msg_id)
-                    .limit(1)
-                )
-                raw_rows = raw_res.data or []
-                raw_update = raw_rows[0]["payload"] if raw_rows else {}
-                broadcast_msg = render_honeypot_broadcast(msg, raw_update)
+            broadcast_msg = await _render_stored_honeypot_broadcast(msg)
             if not await _is_broadcast_claim_valid(msg["id"], claim_time, lease_minutes=5):
                 logger.warning(f"[HoneypotBroadcast] Fenced out immediately pre-send for {msg['id']}")
                 return {"status": "fenced_out"}
@@ -192,6 +185,7 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
             return {"status": "failed", "error": str(state_err)}
         if not completed:
             return {"status": "fenced_out"}
+        _record_broadcast_delivery_latency(msg.get("created_at"))
         logger.info(f"✅ [HoneypotBroadcast] Sent message {msg['id']} to topic {thread_id}")
 
         # The summary is committed first so a retry can resume only the evidence step.

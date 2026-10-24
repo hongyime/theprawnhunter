@@ -110,3 +110,26 @@ async def test_detailed_health_reports_dependency_failure_without_secrets(
             "telegram_bot": {"status": "healthy"},
         },
     }
+
+
+def test_queue_health_exposes_delivery_latency(monkeypatch):
+    class _FakeRedis:
+        def llen(self, _key):
+            return 0
+
+        def lrange(self, key, start, stop):
+            values = {
+                "queue_monitor:broadcast:delivery_latency_seconds": ["4.2", "7.5"],
+            }.get(key, [])
+            return values[start:stop + 1]
+
+        def delete(self, _key):
+            return 0
+
+    monkeypatch.setattr("redis.from_url", lambda *_args, **_kwargs: _FakeRedis())
+
+    result = health.get_queue_health()
+
+    assert result["delivery_latency"]["status"] == "ok"
+    assert result["delivery_latency"]["sample_size"] == 2
+    assert result["delivery_latency"]["max_seconds"] == 7.5

@@ -354,8 +354,51 @@ async def test_ensure_topic_does_not_create_when_topic_list_lookup_fails():
 
 
 @pytest.mark.asyncio
+async def test_ensure_topic_mutes_newly_created_topic(monkeypatch):
+    from app.services import broadcaster_srv
+
+    service = broadcaster_srv.BroadcasterService.__new__(broadcaster_srv.BroadcasterService)
+    service.bot_tokens = ["token"]
+    topic = SimpleNamespace(message_thread_id=9001)
+    fake_bot = SimpleNamespace(create_forum_topic=AsyncMock(return_value=topic))
+    monkeypatch.setattr(service, "_get_bot_instance", lambda _token: fake_bot)
+    monkeypatch.setattr(broadcaster_srv.settings, "AUTO_MUTE_TOPICS", True)
+
+    with patch.object(
+        broadcaster_srv.user_agent,
+        "find_topic_id",
+        new_callable=AsyncMock,
+        return_value=None,
+    ), patch.object(
+        broadcaster_srv.user_agent,
+        "mute_topic",
+        new_callable=AsyncMock,
+    ) as mute_topic:
+        result = await service.ensure_topic(-100123, "@ExampleBot / 123456")
+
+    assert result == 9001
+    mute_topic.assert_awaited_once_with(-100123, 9001)
+
+
+@pytest.mark.asyncio
+async def test_mute_monitor_topics_logic_mutes_all_topics(monkeypatch):
+    from app.workers.tasks.flows import diagnostics
+
+    monkeypatch.setattr(diagnostics.settings, "AUTO_MUTE_TOPICS", True)
+    monkeypatch.setattr(diagnostics.settings, "MONITOR_GROUP_ID", -100123)
+    mute_all = AsyncMock(return_value=3)
+
+    with patch("app.services.user_agent_srv.user_agent.mute_all_topics", mute_all):
+        result = await diagnostics._mute_monitor_topics_logic()
+
+    assert result == {"status": "ok", "muted": 3}
+    mute_all.assert_awaited_once_with(-100123)
+
+
+@pytest.mark.asyncio
 async def test_find_topic_id_uses_telethon_messages_request():
     from telethon.tl.functions.messages import GetForumTopicsRequest
+
     from app.services.user_agent_srv import UserAgentService
 
     service = UserAgentService()

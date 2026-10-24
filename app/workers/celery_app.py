@@ -218,7 +218,9 @@ app.conf.update(
     # ============================================
     result_expires=1800,
     task_ignore_result=True,
-    worker_max_memory_per_child=800000,  # 800MB per worker
+    # Recycle well below the container memory limit. The old 800 MB value was
+    # above the 768 MB compose limit, so the OOM killer always won the race.
+    worker_max_memory_per_child=int(os.getenv("WORKER_MAX_MEMORY_PER_CHILD_KB", "600000")),
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     task_soft_time_limit=1200,  # 20 minutes soft limit
@@ -321,6 +323,10 @@ app.conf.update(
                 "limit": int(os.getenv("REVOKED_TOPIC_CLOSE_BATCH_SIZE", 25)),
                 "dry_run": False,
             },
+        },
+        "mute-monitor-topics-daily": {
+            "task": "flow.mute_monitor_topics",
+            "schedule": crontab(minute=10, hour=4),
         },
         "canary-flow-check-30min": {
             "task": "flow.canary_flow_check",

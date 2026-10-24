@@ -196,31 +196,35 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
     if not msg_data:
         return None
 
-    # Check if this message was already recorded in exfiltrated_messages
-    existing = await execute_async(
-        db.table("exfiltrated_messages")
-        .select("id, is_broadcasted")
-        .eq("credential_id", credential_id)
-        .eq("telegram_msg_id", msg_data["telegram_msg_id"])
-        .limit(1)
+    inserted = await execute_async(
+        db.table("exfiltrated_messages").upsert(
+            msg_data,
+            on_conflict="credential_id,telegram_msg_id",
+            ignore_duplicates=True,
+        )
     )
 
-    if existing.data:
-        is_already_broadcasted = bool(existing.data[0].get("is_broadcasted"))
-        if is_already_broadcasted:
+    if not inserted.data:
+        existing = await execute_async(
+            db.table("exfiltrated_messages")
+            .select("id, is_broadcasted")
+            .eq("credential_id", credential_id)
+            .eq("telegram_msg_id", msg_data["telegram_msg_id"])
+            .limit(1)
+        )
+        if not existing.data:
+            logger.warning(
+                f"[Honeypot] Message {msg_data['telegram_msg_id']} upsert conflicted but row is not visible yet — skipping dispatch"
+            )
+            return msg_data
+        if bool(existing.data[0].get("is_broadcasted")):
             logger.info(
                 f"[Honeypot] Message {msg_data['telegram_msg_id']} already recorded and broadcasted — skipping duplicate dispatch"
             )
             return msg_data
-        # Recorded but never broadcasted (e.g. earlier dispatch failed or the
-        # broadcast task was lost): fall through and (re)dispatch below. The
-        # redis nx dedup key still prevents double-sends within 300s.
         logger.info(
             f"[Honeypot] Message {msg_data['telegram_msg_id']} recorded but not broadcasted — redispatching"
         )
-    else:
-        # Fresh insert: preserves is_broadcasted=False
-        await execute_async(db.table("exfiltrated_messages").insert(msg_data))
 
     # Trigger targeted honeypot message broadcast if enabled
     if getattr(settings, "HONEYPOT_BROADCAST_TO_TOPIC", True):

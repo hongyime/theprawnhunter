@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +22,10 @@ class _FakeQuery:
 
     def eq(self, key, value):
         self.filters.append((key, value))
+        return self
+
+    def gte(self, key, value):
+        self.filters.append(("gte", key, value))
         return self
 
     @property
@@ -140,6 +144,8 @@ async def test_fetch_pending_broadcasts_falls_back_when_next_retry_missing(monke
     assert messages == [{"id": "msg-1"}]
     assert calls[0].used_or is True
     assert calls[1].used_or is False
+    assert ("gte", "telegram_msg_id", 0) in calls[0].filters
+    assert ("gte", "telegram_msg_id", 0) in calls[1].filters
     assert flow_tasks._BROADCAST_RELIABILITY_COLUMNS_AVAILABLE is False
 
 
@@ -758,3 +764,53 @@ async def test_mark_credential_revoked_skips_topic_close_when_disabled(monkeypat
     await flow_tasks._mark_credential_revoked("cred-1", "unit_test")
 
     assert queued == []
+
+
+def test_record_broadcast_delivery_latency_persists_elapsed_seconds(monkeypatch):
+    from app.workers.tasks.flows import broadcast as broadcast_tasks
+
+    class _LatencyRedis:
+        def __init__(self):
+            self.values = []
+
+        def lpush(self, _key, value):
+            self.values.insert(0, value)
+
+        def ltrim(self, _key, _start, _stop):
+            return True
+
+        def expire(self, _key, _ttl):
+            return True
+
+    fake_redis = _LatencyRedis()
+    monkeypatch.setattr(broadcast_tasks, "redis_client", fake_redis)
+
+    created_at = (datetime.now(UTC) - timedelta(seconds=7)).isoformat()
+    broadcast_tasks._record_broadcast_delivery_latency(created_at)
+
+    assert len(fake_redis.values) == 1
+    assert 6 <= float(fake_redis.values[0]) <= 10
+
+
+def test_record_broadcast_delivery_latency_ignores_missing_timestamp(monkeypatch):
+    from app.workers.tasks.flows import broadcast as broadcast_tasks
+
+    class _LatencyRedis:
+        def __init__(self):
+            self.values = []
+
+        def lpush(self, _key, value):
+            self.values.insert(0, value)
+
+        def ltrim(self, _key, _start, _stop):
+            return True
+
+        def expire(self, _key, _ttl):
+            return True
+
+    fake_redis = _LatencyRedis()
+    monkeypatch.setattr(broadcast_tasks, "redis_client", fake_redis)
+
+    broadcast_tasks._record_broadcast_delivery_latency(None)
+
+    assert fake_redis.values == []

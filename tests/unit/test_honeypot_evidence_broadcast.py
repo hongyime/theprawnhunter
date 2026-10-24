@@ -262,8 +262,19 @@ async def test_honeypot_broadcast_sends_evidence_once_and_retry_skips_it(
         send_message=AsyncMock(return_value=9002),
         send_document=AsyncMock(return_value=9003),
     )
+    class _NoopRedis:
+        def lpush(self, *_args, **_kwargs):
+            return 1
+
+        def ltrim(self, *_args, **_kwargs):
+            return True
+
+        def expire(self, *_args, **_kwargs):
+            return True
+
     monkeypatch.setattr(flow_tasks, "db", StrictFakeDb())
     monkeypatch.setattr(flow_tasks, "async_execute", fake_async_execute)
+    monkeypatch.setattr(flow_tasks, "redis_client", _NoopRedis())
     monkeypatch.setattr(flow_tasks, "get_broadcaster", lambda: broadcaster)
     monkeypatch.setattr(flow_tasks.settings, "MONITOR_GROUP_ID", -100123)
     monkeypatch.setattr(flow_tasks, "_is_broadcast_claim_valid", AsyncMock(return_value=True))

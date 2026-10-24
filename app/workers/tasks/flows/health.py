@@ -1,8 +1,13 @@
 """Health flow task definitions."""
 
+from .broadcast import (
+    _broadcast_logic,
+    _can_use_broadcast_reliability_columns,
+    _is_missing_broadcast_reliability_column,
+    _set_broadcast_reliability_columns_available,
+)
 from .common import *
 
-from .broadcast import _broadcast_logic, _can_use_broadcast_reliability_columns, _is_missing_broadcast_reliability_column, _set_broadcast_reliability_columns_available
 
 @app.task(name="flow.system_heartbeat")
 def system_heartbeat():
@@ -31,13 +36,18 @@ def system_heartbeat():
 def queue_monitor():
     """Return queue depths and oldest tracked job age for operational monitoring."""
     try:
-        from app.core.queue_monitor import get_queue_snapshot, summarize_queue_health
+        from app.core.queue_monitor import (
+            get_delivery_latency_summary,
+            get_queue_snapshot,
+            summarize_queue_health,
+        )
 
         snapshot = get_queue_snapshot(redis_client)
         summary = summarize_queue_health(
             snapshot,
             length_threshold=settings.QUEUE_ALERT_LENGTH_THRESHOLD,
             oldest_age_threshold_seconds=settings.QUEUE_ALERT_OLDEST_AGE_SECONDS,
+            delivery_latency=get_delivery_latency_summary(redis_client),
         )
         logger.info(f"[QueueMonitor] {summary}")
         if summary["alerts"]:

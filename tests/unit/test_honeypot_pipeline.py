@@ -179,12 +179,12 @@ async def test_forward_honeypot_message_upserts_and_triggers_broadcast():
     mock_select.limit.return_value = mock_select
     mock_select.execute.return_value = types.SimpleNamespace(data=[])
 
-    mock_insert = MagicMock()
-    mock_insert.execute.return_value = types.SimpleNamespace(data=[{"id": "msg-1"}])
+    mock_upsert = MagicMock()
+    mock_upsert.execute.return_value = types.SimpleNamespace(data=[{"id": "msg-1"}])
 
     mock_table = MagicMock()
     mock_table.select.return_value = mock_select
-    mock_table.insert.return_value = mock_insert
+    mock_table.upsert.return_value = mock_upsert
     mock_redis = types.SimpleNamespace(client=types.SimpleNamespace(set=MagicMock(return_value=True)))
 
     with patch("app.services.honeypot_srv.db.table", return_value=mock_table), \
@@ -194,7 +194,7 @@ async def test_forward_honeypot_message_upserts_and_triggers_broadcast():
 
         assert result is not None
         assert result["telegram_msg_id"] == -99905
-        mock_table.insert.assert_called_once()
+        mock_table.upsert.assert_called_once()
         mock_send_task.assert_called_with(
             "flow.broadcast_honeypot_message",
             kwargs={"credential_id": "cred-uuid-5", "telegram_msg_id": -99905},
@@ -216,15 +216,19 @@ async def test_forward_honeypot_message_already_broadcasted_skips_rebroadcast():
     mock_select.limit.return_value = mock_select
     mock_select.execute.return_value = types.SimpleNamespace(data=[{"id": "msg-old", "is_broadcasted": True}])
 
+    mock_upsert = MagicMock()
+    mock_upsert.execute.return_value = types.SimpleNamespace(data=[])
+
     mock_table = MagicMock()
     mock_table.select.return_value = mock_select
+    mock_table.upsert.return_value = mock_upsert
 
     with patch("app.services.honeypot_srv.db.table", return_value=mock_table), \
          patch("app.workers.celery_app.app.send_task") as mock_send_task:
         result = await forward_honeypot_message(payload, "cred-uuid-6")
 
         assert result is not None
-        mock_table.insert.assert_not_called()
+        mock_table.upsert.assert_called_once()
         mock_send_task.assert_not_called()
 
 
@@ -815,8 +819,8 @@ async def test_multi_touch_tasks_use_atomic_claims_and_fencing(monkeypatch):
 @pytest.mark.asyncio
 async def test_receiver_and_extractor_reject_update_id_exceeding_32_bit():
     """Verify that update_id > 2_147_483_647 is rejected to ensure strictly disjoint negative namespaces."""
-    from app.services.honeypot_srv import extract_honeypot_message
     from app.api.routers import honeypot as hp_router
+    from app.services.honeypot_srv import extract_honeypot_message
 
     # Extractor rejection
     oversized_payload = {

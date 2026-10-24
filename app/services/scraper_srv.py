@@ -337,7 +337,15 @@ class ScraperService:
                 if res.status_code == 200:
                     data = res.json()
                     if data.get("ok"):
-                        return data["result"]["message_thread_id"]
+                        thread_id = data["result"]["message_thread_id"]
+                        if getattr(settings, "AUTO_MUTE_TOPICS", True):
+                            try:
+                                from app.services.user_agent_srv import user_agent
+
+                                await user_agent.mute_topic(chat_id, thread_id)
+                            except Exception as exc:
+                                logger.debug(f"    [Scraper] Topic mute skipped: {exc}")
+                        return thread_id
         except Exception as e:
             logger.warning(f"    ⚠️ Topic create failed: {e}")
         return 0

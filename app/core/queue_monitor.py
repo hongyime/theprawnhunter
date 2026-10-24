@@ -1,6 +1,7 @@
 import contextlib
 import json
 import logging
+import math
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -10,10 +11,98 @@ logger = logging.getLogger("queue_monitor")
 DEFAULT_QUEUES = ("celery", "scrape", "scanners", "validation")
 DEFAULT_QUEUE_LENGTH_ALERT_THRESHOLD = 100
 DEFAULT_QUEUE_OLDEST_AGE_ALERT_SECONDS = 900
+DELIVERY_LATENCY_KEY = "queue_monitor:broadcast:delivery_latency_seconds"
+DEFAULT_DELIVERY_LATENCY_SAMPLE_SIZE = 1000
+DELIVERY_LATENCY_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def queue_tracking_key(queue_name: str) -> str:
     return f"queue_monitor:{queue_name}:enqueued"
+
+
+def record_delivery_latency(
+    redis_client: Any,
+    latency_seconds: float,
+    *,
+    sample_size: int = DEFAULT_DELIVERY_LATENCY_SAMPLE_SIZE,
+) -> bool:
+    """Persist one created_at -> broadcasted_at latency sample in Redis."""
+    if not redis_client:
+        return False
+    try:
+        value = float(latency_seconds)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(value) or value < 0:
+        return False
+
+    limit = max(1, int(sample_size))
+    try:
+        redis_client.lpush(DELIVERY_LATENCY_KEY, f"{value:.3f}")
+        redis_client.ltrim(DELIVERY_LATENCY_KEY, 0, limit - 1)
+        redis_client.expire(DELIVERY_LATENCY_KEY, DELIVERY_LATENCY_TTL_SECONDS)
+        return True
+    except Exception as exc:
+        logger.debug("[DeliveryLatency] record failed: %s", exc)
+        return False
+
+
+def get_delivery_latency_summary(
+    redis_client: Any,
+    *,
+    sample_size: int = DEFAULT_DELIVERY_LATENCY_SAMPLE_SIZE,
+) -> dict[str, Any]:
+    """Return P50/P95/P99 delivery latency from the latest Redis samples."""
+    empty = {
+        "status": "no_data",
+        "sample_size": 0,
+        "p50_seconds": None,
+        "p95_seconds": None,
+        "p99_seconds": None,
+        "mean_seconds": None,
+        "max_seconds": None,
+    }
+    if not redis_client:
+        return {**empty, "status": "unavailable", "error": "redis_unavailable"}
+
+    limit = max(1, int(sample_size))
+    try:
+        raw_values = redis_client.lrange(DELIVERY_LATENCY_KEY, 0, limit - 1)
+    except Exception as exc:
+        logger.debug("[DeliveryLatency] read failed: %s", exc)
+        return {**empty, "status": "unavailable", "error": type(exc).__name__}
+
+    values: list[float] = []
+    for raw in raw_values or []:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and value >= 0:
+            values.append(value)
+
+    if not values:
+        return empty
+
+    values.sort()
+    return {
+        "status": "ok",
+        "sample_size": len(values),
+        "p50_seconds": _percentile(values, 50),
+        "p95_seconds": _percentile(values, 95),
+        "p99_seconds": _percentile(values, 99),
+        "mean_seconds": sum(values) / len(values),
+        "max_seconds": values[-1],
+    }
+
+
+def _percentile(sorted_values: list[float], percentile: float) -> float:
+    """Nearest-rank percentile, matching the operational latency report."""
+    idx = min(
+        len(sorted_values) - 1,
+        max(0, int(round(percentile / 100.0 * len(sorted_values))) - 1),
+    )
+    return sorted_values[idx]
 
 
 def record_task_enqueued(redis_client: Any, queue_name: str, task_id: str, timestamp: float | None = None) -> None:
@@ -119,6 +208,7 @@ def summarize_queue_health(
     *,
     length_threshold: int = DEFAULT_QUEUE_LENGTH_ALERT_THRESHOLD,
     oldest_age_threshold_seconds: int = DEFAULT_QUEUE_OLDEST_AGE_ALERT_SECONDS,
+    delivery_latency: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     alerts = evaluate_queue_alerts(
         snapshot,
@@ -128,6 +218,7 @@ def summarize_queue_health(
     return {
         "status": "warning" if alerts else "healthy",
         "queues": snapshot,
+        "delivery_latency": delivery_latency,
         "alerts": alerts,
         "thresholds": {
             "length": length_threshold,

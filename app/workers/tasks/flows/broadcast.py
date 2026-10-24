@@ -1,8 +1,60 @@
 """Broadcast flow task definitions."""
 
+from app.services.honeypot_rendering import render_honeypot_broadcast
+
 from .common import *
 
 MEDIA_ARCHIVE_SESSION_UNAVAILABLE_REASON = "media_archive_session_unavailable"
+TERMINAL_NON_RETRYABLE_BROADCAST_REASONS = frozenset(
+    {
+        "bad_request",
+        "empty_content",
+        "media_archive_invalid_source",
+        "media_archive_not_found",
+        "media_archive_too_large",
+        "media_archive_missing_access_hash",
+    }
+)
+
+
+async def _render_stored_honeypot_broadcast(message: dict[str, Any]) -> dict[str, Any]:
+    if message.get("content") or message.get("media_type") != "text":
+        return message
+    credential_id = message.get("credential_id")
+    telegram_msg_id = message.get("telegram_msg_id")
+    if not credential_id or not isinstance(telegram_msg_id, int) or telegram_msg_id >= 0:
+        return message
+    response = await async_execute(
+        db.table("honeypot_updates")
+        .select("payload")
+        .eq("credential_id", credential_id)
+        .eq("update_id", -telegram_msg_id)
+        .limit(1)
+    )
+    rows = response.data or []
+    raw_update = rows[0].get("payload") if rows else {}
+    return render_honeypot_broadcast(message, raw_update or {})
+
+
+def _record_broadcast_delivery_latency(created_at: Any) -> None:
+    """Record created_at -> successful Telegram send latency for queue health."""
+    if not created_at:
+        return
+    try:
+        from datetime import datetime
+
+        from app.core.queue_monitor import record_delivery_latency
+
+        started_at = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=UTC)
+        latency_seconds = max(0.0, (datetime.now(UTC) - started_at).total_seconds())
+        record_delivery_latency(redis_client, latency_seconds)
+    except (TypeError, ValueError):
+        return
+    except Exception as exc:
+        logger.debug("[Broadcast] delivery latency record failed: %s", exc)
+
 
 def _queue_revoked_topic_close(cred_id: str, reason: str) -> None:
     if not getattr(settings, "AUTO_CLOSE_REVOKED_TOPICS", True):
@@ -101,6 +153,7 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
         db.table("exfiltrated_messages")
         .select("*, discovered_credentials!inner(meta)")
         .eq("is_broadcasted", False)
+        .gte("telegram_msg_id", 0)
     )
 
     if _can_use_broadcast_reliability_columns():
@@ -127,6 +180,7 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
         db.table("exfiltrated_messages")
         .select("*, discovered_credentials!inner(meta)")
         .eq("is_broadcasted", False)
+        .gte("telegram_msg_id", 0)
         .order("telegram_msg_id", desc=False)
         .limit(batch_size)
     )
@@ -297,7 +351,10 @@ async def _mark_broadcast_failure(
     # stops churning on it. Row stays visible for operator triage via
     # broadcast_status='permanent_failed'.
     max_attempts = int(os.getenv("MAX_BROADCAST_ATTEMPTS", 8))
-    if not session_unavailable and attempts >= max_attempts:
+    terminal_non_retryable = (
+        not retryable and reason in TERMINAL_NON_RETRYABLE_BROADCAST_REASONS
+    )
+    if not session_unavailable and (attempts >= max_attempts or terminal_non_retryable):
         terminal_payload: dict[str, Any] = {
             "is_broadcasted": True,  # exits the retry pool
             "broadcast_claimed_at": None,
@@ -805,6 +862,7 @@ async def _broadcast_logic():
                                 metrics.inc("broadcast.sent")
                             except Exception as _swallowed:
                                 logger.debug(f"[Broadcast] metrics.inc failed: {_swallowed}")
+                            _record_broadcast_delivery_latency(msg.get("created_at"))
                         logger.info(f"    ✅ Broadcasted msg {msg_id}")
                     else:
                         logger.warning(f"    🔄 Broadcast failure recorded for retry: {msg_id}")

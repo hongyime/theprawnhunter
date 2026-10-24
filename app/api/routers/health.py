@@ -283,7 +283,11 @@ def get_queue_health():
     try:
         import redis
 
-        from app.core.queue_monitor import get_queue_snapshot, summarize_queue_health
+        from app.core.queue_monitor import (
+            get_delivery_latency_summary,
+            get_queue_snapshot,
+            summarize_queue_health,
+        )
 
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
         snapshot = get_queue_snapshot(client)
@@ -291,6 +295,7 @@ def get_queue_health():
             snapshot,
             length_threshold=settings.QUEUE_ALERT_LENGTH_THRESHOLD,
             oldest_age_threshold_seconds=settings.QUEUE_ALERT_OLDEST_AGE_SECONDS,
+            delivery_latency=get_delivery_latency_summary(client),
         )
     except Exception as e:
         logger.exception("queue health failed")
@@ -312,13 +317,18 @@ def get_operational_health():
     try:
         import redis
 
-        from app.core.queue_monitor import get_queue_snapshot, summarize_queue_health
+        from app.core.queue_monitor import (
+            get_delivery_latency_summary,
+            get_queue_snapshot,
+            summarize_queue_health,
+        )
 
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
         queue_summary = summarize_queue_health(
             get_queue_snapshot(client),
             length_threshold=settings.QUEUE_ALERT_LENGTH_THRESHOLD,
             oldest_age_threshold_seconds=settings.QUEUE_ALERT_OLDEST_AGE_SECONDS,
+            delivery_latency=get_delivery_latency_summary(client),
         )
     except Exception as exc:
         logger.warning("[OperationalHealth] Queue probe failed: %s", exc)

@@ -96,11 +96,11 @@ services:
     container_name: theprawnhunter_worker
     restart: unless-stopped
     init: true
-    cpus: "${WORKER_CPUS:-1.00}"
-    mem_limit: "${WORKER_MEM_LIMIT:-768m}"
-    mem_reservation: "${WORKER_MEM_RESERVATION:-256m}"
+    cpus: "${WORKER_CPUS:-4.00}"
+    mem_limit: "${WORKER_MEM_LIMIT:-4g}"
+    mem_reservation: "${WORKER_MEM_RESERVATION:-1g}"
     env_file: .env
-    command: celery -A app.workers.celery_app worker -Q celery,scanners,scrape,validation --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=${WORKER_CONCURRENCY:-2}
+    command: celery -A app.workers.celery_app worker -Q celery,scanners,scrape,validation --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=${WORKER_CONCURRENCY:-6}
     depends_on:
       redis:
         condition: service_healthy
