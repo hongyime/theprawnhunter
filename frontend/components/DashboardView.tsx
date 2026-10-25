@@ -104,6 +104,42 @@ function dayKey(value: string | null): string {
   return typeof value === "string" ? value.slice(0, 10) : "";
 }
 
+const TICK_MULTIPLIERS = [1, 2, 5, 10] as const;
+
+/**
+ * Pick a "nice" integer step (1, 2 or 5 × 10ⁿ) so the axis needs at most
+ * `maxIntervals` intervals. Steps below 1 are clamped to 1 because every axis
+ * in this view counts whole things (captures, messages, rate percent).
+ */
+function niceStep(max: number, maxIntervals: number): number {
+  const rough = max / maxIntervals;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  for (const multiplier of TICK_MULTIPLIERS) {
+    const step = multiplier * magnitude;
+    if (step >= 1 && Math.ceil(max / step) <= maxIntervals) return step;
+  }
+  return Math.max(1, Math.ceil(rough));
+}
+
+/**
+ * Explicit integer Y-axis ticks for a non-negative maximum. Recharts' auto
+ * ticks can emit fractional values that `allowDecimals={false}` then filters,
+ * leaving duplicate labels (e.g. `100, 100, 100`). Supplying our own unique
+ * integers avoids that and keeps the axis sane for empty/all-zero data.
+ *
+ * The result always starts at 0, ascends, contains no duplicates, and its last
+ * value is >= `max`.
+ */
+export function niceIntegerTicks(max: number, maxIntervals = 5): number[] {
+  if (!Number.isFinite(max) || max <= 0) return [0, 1];
+
+  const step = niceStep(max, Math.max(1, Math.floor(maxIntervals)));
+  const top = Math.ceil(max / step) * step;
+  const ticks: number[] = [];
+  for (let value = 0; value <= top; value += step) ticks.push(value);
+  return ticks;
+}
+
 export function buildTrendSeries(captures: CaptureRow[], volumes: VolumeRow[]) {
   const byDay = new Map<string, { day: string; captures: number; messages: number }>();
 
@@ -312,6 +348,24 @@ export default function DashboardView() {
   );
   const totals = useMemo(() => takeoverTotals(takeover), [takeover]);
 
+  const trendMax = useMemo(
+    () => trend.reduce((peak, row) => Math.max(peak, row.captures, row.messages), 0),
+    [trend],
+  );
+  const trendTicks = useMemo(() => niceIntegerTicks(trendMax), [trendMax]);
+
+  const sourceMax = useMemo(
+    () => sources.reduce((peak, row) => Math.max(peak, row.credentials), 0),
+    [sources],
+  );
+  const sourceTicks = useMemo(() => niceIntegerTicks(sourceMax), [sourceMax]);
+
+  const rateMax = useMemo(
+    () => takeover.reduce((peak, row) => Math.max(peak, row.ratePct ?? 0), 0),
+    [takeover],
+  );
+  const rateTicks = useMemo(() => niceIntegerTicks(rateMax), [rateMax]);
+
   const summary = loading
     ? "Loading metrics…"
     : error
@@ -406,7 +460,7 @@ export default function DashboardView() {
               label="Captures and messages over time"
               hasData={trend.length > 0}
             >
-              <div className="h-56 w-full">
+              <div className="h-56 w-full" data-y-ticks={trendTicks.join(",")}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
                     <CartesianGrid
@@ -419,7 +473,13 @@ export default function DashboardView() {
                       tick={axisTick}
                       tickFormatter={(value: string) => value.slice(5)}
                     />
-                    <YAxis allowDecimals={false} tick={axisTick} width={40} />
+                    <YAxis
+                      allowDecimals={false}
+                      domain={[0, trendTicks[trendTicks.length - 1]]}
+                      ticks={trendTicks}
+                      tick={axisTick}
+                      width={40}
+                    />
                     <Tooltip {...tooltipProps} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <Line
@@ -451,7 +511,7 @@ export default function DashboardView() {
               label="Captures by source"
               hasData={sources.length > 0}
             >
-              <div className="h-56 w-full">
+              <div className="h-56 w-full" data-y-ticks={sourceTicks.join(",")}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={sources} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
                     <CartesianGrid
@@ -466,7 +526,13 @@ export default function DashboardView() {
                         value.length > 9 ? `${value.slice(0, 8)}…` : value
                       }
                     />
-                    <YAxis allowDecimals={false} tick={axisTick} width={40} />
+                    <YAxis
+                      allowDecimals={false}
+                      domain={[0, sourceTicks[sourceTicks.length - 1]]}
+                      ticks={sourceTicks}
+                      tick={axisTick}
+                      width={40}
+                    />
                     <Tooltip {...tooltipProps} />
                     <Bar
                       dataKey="credentials"
@@ -528,7 +594,7 @@ export default function DashboardView() {
                   value={totals.ratePct === null ? "—" : `${totals.ratePct}%`}
                 />
               </dl>
-              <div className="h-40 w-full">
+              <div className="h-40 w-full" data-y-ticks={rateTicks.join(",")}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={takeover}
@@ -545,8 +611,8 @@ export default function DashboardView() {
                       tickFormatter={(value: string) => value.slice(5)}
                     />
                     <YAxis
-                      domain={[0, 100]}
-                      ticks={[0, 25, 50, 75, 100]}
+                      domain={[0, rateTicks[rateTicks.length - 1]]}
+                      ticks={rateTicks}
                       tick={axisTick}
                       width={40}
                       tickFormatter={(value: number) => `${value}%`}
