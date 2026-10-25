@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import {
@@ -22,6 +22,14 @@ import { HighlightedSnippet, type EvidenceSearchRow } from "./SearchView";
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_RESULT_LIMIT = 50;
 const SEARCH_MIN_QUERY = 2;
+const PAGE_SIZE = 50;
+const POLL_INTERVAL_MS = 3000;
+const POLL_ENABLED = process.env.NEXT_PUBLIC_CHAT_POLL_ENABLED !== "false";
+const SCROLL_TOP_THRESHOLD = 40;
+const AUTO_SCROLL_BOTTOM_THRESHOLD = 120;
+
+const useIsomorphicLayoutEffect =
+    typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 export default function ChatWindow({ credential }: { credential: Credential | null }) {
     const { session } = useAuth();
@@ -35,8 +43,18 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     const [searchError, setSearchError] = useState<string | null>(null);
     const [searchHasSearched, setSearchHasSearched] = useState(false);
     const [retryToken, setRetryToken] = useState(0);
+    const [loadingOlder, setLoadingOlder] = useState(false);
+    const [olderError, setOlderError] = useState<string | null>(null);
+    const [hasMore, setHasMore] = useState(true);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const nextOffsetRef = useRef(0);
+    const hasMoreRef = useRef(true);
+    const loadingOlderRef = useRef(false);
+    const loadingInitialRef = useRef(false);
+    const pendingPrependScrollRef = useRef<number | null>(null);
+    const lastNewestIdRef = useRef<string | null>(null);
     const credentialId = credential?.id;
 
     const trimmedQuery = searchQuery.trim();
@@ -59,80 +77,149 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
         if (!credentialId) return;
 
         let cancelled = false;
+        loadingInitialRef.current = true;
+        nextOffsetRef.current = 0;
+        hasMoreRef.current = true;
+        setHasMore(true);
+        setOlderError(null);
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
 
-        async function fetchMsgs(isPolling = false) {
+        async function fetchNewestPage(isPolling: boolean) {
             if (!isPolling) {
                 setLoading(true);
                 setAuthError(null);
                 setMessages([]);
+                lastNewestIdRef.current = null;
             }
-            
+
             // Gate: must be authenticated to read evidence
             if (!session) {
                 setAuthError("Sign in required to view exfiltrated messages.");
-                if (!isPolling) setLoading(false);
+                if (!isPolling) {
+                    setLoading(false);
+                    loadingInitialRef.current = false;
+                }
                 return;
             }
-            
-            // Authenticated query to evidence_redacted view (truncated + masked content)
+
+            // Authenticated query to evidence_redacted view (truncated + masked content).
+            // Newest-first page; the render order is restored by mergeMessages().
             const { data, error } = await supabase
                 .from("evidence_redacted")
                 .select("*")
                 .eq("credential_id", credentialId)
                 .order("created_at", { ascending: false })
+                .range(0, PAGE_SIZE - 1);
 
             if (cancelled) return;
 
             if (error) {
-                const code = (error as { code?: string; status?: number }).code;
-                const status = (error as { status?: number }).status;
-                const isAuth =
-                    status === 401 ||
-                    status === 403 ||
-                    code === "PGRST301" ||
-                    code === "42501" ||
-                    /permission|denied|jwt|auth|rls/i.test(error.message);
-                setAuthError(
-                    isAuth
-                        ? "Sign in required to view exfiltrated messages."
-                        : `Failed to load messages: ${error.message}`
-                );
-                if (!isPolling) setLoading(false);
+                // A failed poll is silent; a failed first page is explicit.
+                if (isPolling) return;
+                setAuthError(describeLoadError(error as QueryFailure));
+                setLoading(false);
+                loadingInitialRef.current = false;
                 return;
             }
 
-            if (data) setMessages((data as ChatMessage[]).reverse());
-            if (!isPolling) setLoading(false);
+            const rows = (data as ChatMessage[] | null) ?? [];
+
+            if (isPolling) {
+                // Refresh only the newest page and merge by id so paginated
+                // history is never clobbered.
+                setMessages((previous) => mergeMessages(previous, rows));
+                return;
+            }
+
+            setMessages(mergeMessages([], rows));
+            nextOffsetRef.current = rows.length;
+            const more = rows.length === PAGE_SIZE;
+            hasMoreRef.current = more;
+            setHasMore(more);
+            setLoading(false);
+            loadingInitialRef.current = false;
         }
 
-        fetchMsgs(false);
+        void fetchNewestPage(false);
 
-        // Active polling: refresh every 3 seconds for chat freshness when visible
-        const intervalId = setInterval(() => {
-            if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-                return;
+        // Active polling is behind NEXT_PUBLIC_CHAT_POLL_ENABLED until the
+        // realtime/replacement path lands.
+        let intervalId: ReturnType<typeof setInterval> | undefined;
+        let handleVisibilityChange: (() => void) | undefined;
+
+        if (POLL_ENABLED) {
+            intervalId = setInterval(() => {
+                if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+                    return;
+                }
+                void fetchNewestPage(true);
+            }, POLL_INTERVAL_MS);
+
+            handleVisibilityChange = () => {
+                if (typeof document !== "undefined" && document.visibilityState === "visible") {
+                    void fetchNewestPage(true);
+                }
+            };
+
+            if (typeof document !== "undefined") {
+                document.addEventListener("visibilitychange", handleVisibilityChange);
             }
-            fetchMsgs(true);
-        }, 3000);
-
-        const handleVisibilityChange = () => {
-            if (typeof document !== "undefined" && document.visibilityState === "visible") {
-                fetchMsgs(true);
-            }
-        };
-
-        if (typeof document !== "undefined") {
-            document.addEventListener("visibilitychange", handleVisibilityChange);
         }
 
         return () => {
             cancelled = true;
-            clearInterval(intervalId);
-            if (typeof document !== "undefined") {
+            if (intervalId) clearInterval(intervalId);
+            if (handleVisibilityChange && typeof document !== "undefined") {
                 document.removeEventListener("visibilitychange", handleVisibilityChange);
             }
         };
     }, [credentialId, session]);
+
+    const loadOlderPage = useCallback(async () => {
+        if (!credentialId || !session) return;
+        if (loadingOlderRef.current || loadingInitialRef.current || !hasMoreRef.current) return;
+
+        loadingOlderRef.current = true;
+        setLoadingOlder(true);
+        setOlderError(null);
+
+        const offset = nextOffsetRef.current;
+        const { data, error } = await supabase
+            .from("evidence_redacted")
+            .select("*")
+            .eq("credential_id", credentialId)
+            .order("created_at", { ascending: false })
+            .range(offset, offset + PAGE_SIZE - 1);
+
+        if (error) {
+            setOlderError(`Failed to load older messages: ${error.message}`);
+            setLoadingOlder(false);
+            loadingOlderRef.current = false;
+            return;
+        }
+
+        const rows = (data as ChatMessage[] | null) ?? [];
+        nextOffsetRef.current = offset + rows.length;
+        const more = rows.length === PAGE_SIZE;
+        hasMoreRef.current = more;
+        setHasMore(more);
+        setLoadingOlder(false);
+        loadingOlderRef.current = false;
+
+        if (rows.length > 0) {
+            const container = listRef.current;
+            pendingPrependScrollRef.current = container ? container.scrollHeight : null;
+            setMessages((previous) => mergeMessages(previous, rows));
+        }
+    }, [credentialId, session]);
+
+    const handleScroll = useCallback(() => {
+        if (searchActive) return;
+        const container = listRef.current;
+        if (!container || container.scrollTop > SCROLL_TOP_THRESHOLD) return;
+        void loadOlderPage();
+    }, [searchActive, loadOlderPage]);
 
     useEffect(() => {
         if (!searchActive || !credentialId) {
@@ -200,8 +287,28 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
 
     useEffect(() => {
         if (searchActive) return;
-        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        const newestId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        if (!newestId || newestId === lastNewestIdRef.current) return;
+        lastNewestIdRef.current = newestId;
+
+        const container = listRef.current;
+        const nearBottom =
+            !container ||
+            container.scrollHeight - container.scrollTop - container.clientHeight <
+                AUTO_SCROLL_BOTTOM_THRESHOLD;
+        if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, searchActive]);
+
+    useIsomorphicLayoutEffect(() => {
+        const previousHeight = pendingPrependScrollRef.current;
+        if (previousHeight === null) return;
+        pendingPrependScrollRef.current = null;
+
+        const container = listRef.current;
+        if (!container) return;
+        const delta = container.scrollHeight - previousHeight;
+        if (delta > 0) container.scrollTop += delta;
+    }, [messages]);
 
     if (!credential) {
         return (
@@ -400,6 +507,10 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 )}
             </div>
             <div
+                ref={listRef}
+                role="log"
+                aria-label="Message history"
+                onScroll={handleScroll}
                 className="flex-1 overflow-y-auto p-4 space-y-2"
                 aria-busy={searchActive && searchLoading}
             >
@@ -415,6 +526,37 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                     />
                 ) : (
                     <>
+                        {olderError ? (
+                            <div
+                                role="alert"
+                                className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+                            >
+                                <TriangleAlert aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                                <span className="min-w-0 flex-1">{olderError}</span>
+                                <button
+                                    type="button"
+                                    onClick={() => void loadOlderPage()}
+                                    className="flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                >
+                                    <RefreshCw className="h-3 w-3" aria-hidden="true" /> Retry
+                                </button>
+                            </div>
+                        ) : loadingOlder ? (
+                            <div
+                                role="status"
+                                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600"
+                            >
+                                <span
+                                    aria-hidden="true"
+                                    className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-[#197e74] motion-reduce:animate-none"
+                                />
+                                Loading earlier messages…
+                            </div>
+                        ) : !hasMore && messages.length > 0 ? (
+                            <p className="py-1 text-center font-mono text-[11px] uppercase tracking-wide text-slate-500">
+                                Beginning of history
+                            </p>
+                        ) : null}
                         {messages.filter(m => m.content).map((message, i) => (
                             <div key={message.id || i} className="bg-white rounded-lg p-2 shadow-sm">
                                 <div className="flex items-center gap-2 mb-1">
@@ -586,6 +728,35 @@ function collectInfrastructureEndpoints(context: InfrastructureContext | undefin
         endpoints.push(...context.webhook_urls.filter((u): u is string => typeof u === 'string' && u.length > 0));
     }
     return [...new Set(endpoints)];
+}
+
+interface QueryFailure {
+    message: string;
+    code?: string;
+    status?: number;
+}
+
+function describeLoadError(error: QueryFailure): string {
+    const isAuth =
+        error.status === 401 ||
+        error.status === 403 ||
+        error.code === "PGRST301" ||
+        error.code === "42501" ||
+        /permission|denied|jwt|auth|rls/i.test(error.message);
+    return isAuth
+        ? "Sign in required to view exfiltrated messages."
+        : `Failed to load messages: ${error.message}`;
+}
+
+function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+    if (incoming.length === 0) return current;
+    const byId = new Map<string, ChatMessage>();
+    for (const message of current) byId.set(message.id, message);
+    for (const message of incoming) byId.set(message.id, message);
+    return Array.from(byId.values()).sort((left, right) => {
+        const delta = new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
+        return delta !== 0 ? delta : left.id.localeCompare(right.id);
+    });
 }
 
 interface ChatMessage {

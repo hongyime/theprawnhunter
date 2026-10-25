@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +17,9 @@ vi.mock("@/lib/auth", () => ({
 import type { Credential } from "@/app/page";
 import ChatWindow from "./ChatWindow";
 
+const PAGE_SIZE = 50;
+const BASE_TIME = Date.parse("2026-09-05T12:00:00Z");
+
 const credential = {
   id: "30000000-0000-0000-0000-000000000001",
   source: "test",
@@ -24,14 +27,30 @@ const credential = {
   meta: {},
 } as Credential;
 
+function makeMessage(id: string, content: string, created_at: string) {
+  return {
+    id,
+    credential_id: credential.id,
+    sender_pseudonym: `user_${id}`,
+    content,
+    media_type: "text",
+    is_broadcasted: false,
+    created_at,
+  };
+}
+
+function makePage(prefix: string, count: number, startMs = BASE_TIME) {
+  return Array.from({ length: count }, (_, index) =>
+    makeMessage(
+      `${prefix}-${index}`,
+      `${prefix}-msg-${index}`,
+      new Date(startMs - index * 60_000).toISOString(),
+    ),
+  );
+}
+
 const liveMessage = {
-  id: "message-live",
-  credential_id: credential.id,
-  sender_pseudonym: "user_live",
-  content: "live feed message",
-  media_type: "text",
-  is_broadcasted: false,
-  created_at: "2026-09-05T02:00:00Z",
+  ...makeMessage("message-live", "live feed message", "2026-09-05T02:00:00Z"),
 };
 
 const searchRow = {
@@ -44,20 +63,34 @@ const searchRow = {
   created_at: new Date(Date.now() - 90 * 60_000).toISOString(),
 };
 
-function messageBuilder(result: { data: unknown[]; error: unknown }) {
+function messageBuilder(result: { data: unknown[] | null; error: unknown }) {
   const builder = {
     select: vi.fn(),
     eq: vi.fn(),
     order: vi.fn(),
+    range: vi.fn(),
   };
   builder.select.mockReturnValue(builder);
   builder.eq.mockReturnValue(builder);
-  builder.order.mockResolvedValue(result);
+  builder.order.mockReturnValue(builder);
+  builder.range.mockResolvedValue(result);
   return builder;
 }
 
 function mockFeed(messages: unknown[] = [liveMessage]) {
   mockFrom.mockReturnValue(messageBuilder({ data: messages, error: null }));
+}
+
+function messageLog() {
+  return screen.getByRole("log", { name: /message history/i });
+}
+
+function triggerPoll() {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => "visible",
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
 }
 
 function searchInput() {
@@ -84,28 +117,12 @@ describe("ChatWindow", () => {
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it("fetches the newest 200 messages then renders them chronologically", async () => {
+  it("fetches one newest-first page with a bounded range and renders it chronologically", async () => {
     mockUseAuth.mockReturnValue({ session: { user: { id: "operator" } } });
     const builder = messageBuilder({
       data: [
-        {
-          id: "new",
-          credential_id: credential.id,
-          sender_pseudonym: "user_new",
-          content: "newest message",
-          media_type: "text",
-          is_broadcasted: false,
-          created_at: "2026-09-05T02:00:00Z",
-        },
-        {
-          id: "old",
-          credential_id: credential.id,
-          sender_pseudonym: "user_old",
-          content: "older message",
-          media_type: "text",
-          is_broadcasted: false,
-          created_at: "2026-09-05T01:00:00Z",
-        },
+        makeMessage("new", "newest message", "2026-09-05T02:00:00Z"),
+        makeMessage("old", "older message", "2026-09-05T01:00:00Z"),
       ],
       error: null,
     });
@@ -114,7 +131,9 @@ describe("ChatWindow", () => {
 
     await screen.findByText("newest message");
     expect(mockFrom).toHaveBeenCalledWith("evidence_redacted");
+    expect(builder.select).toHaveBeenCalledWith("*");
     expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(builder.range).toHaveBeenCalledWith(0, PAGE_SIZE - 1);
     const messages = screen.getAllByText(/(older|newest) message/);
     expect(messages.map((node) => node.textContent)).toEqual([
       "older message",
@@ -132,6 +151,152 @@ describe("ChatWindow", () => {
     await waitFor(() => {
       expect(screen.getByText("Sign in required to view exfiltrated messages.")).toBeInTheDocument();
     });
+  });
+
+  it("prepends an older page, deduped by id, and keeps the feed chronological", async () => {
+    const firstPage = makePage("page1", PAGE_SIZE);
+    const olderPage = [
+      firstPage[PAGE_SIZE - 1],
+      makeMessage("older-b", "older message b", new Date(BASE_TIME - 51 * 60_000).toISOString()),
+      makeMessage("older-a", "older message a", new Date(BASE_TIME - 52 * 60_000).toISOString()),
+    ];
+    const builder = messageBuilder({ data: firstPage, error: null });
+    builder.range
+      .mockResolvedValueOnce({ data: firstPage, error: null })
+      .mockResolvedValueOnce({ data: olderPage, error: null });
+    mockFrom.mockReturnValue(builder);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("page1-msg-0");
+    expect(screen.queryByText("Beginning of history")).not.toBeInTheDocument();
+
+    fireEvent.scroll(messageLog());
+
+    await screen.findByText("older message a");
+    expect(builder.range).toHaveBeenLastCalledWith(PAGE_SIZE, PAGE_SIZE * 2 - 1);
+    expect(screen.getAllByText("page1-msg-49")).toHaveLength(1);
+
+    const rendered = screen.getAllByText(/page1-msg-\d+|older message [ab]/);
+    expect(rendered[0].textContent).toBe("older message a");
+    expect(rendered[1].textContent).toBe("older message b");
+    expect(rendered[2].textContent).toBe("page1-msg-49");
+  });
+
+  it("marks the beginning of history when a page returns fewer than the page size", async () => {
+    mockFeed([liveMessage]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("live feed message");
+    expect(await screen.findByText("Beginning of history")).toBeInTheDocument();
+    expect(mockFrom).toHaveBeenCalledTimes(1);
+
+    fireEvent.scroll(messageLog());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(mockFrom).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses rapid top-scroll triggers into one in-flight page request", async () => {
+    const firstPage = makePage("page1", PAGE_SIZE);
+    let resolveOlder: ((value: unknown) => void) | undefined;
+    const builder = messageBuilder({ data: firstPage, error: null });
+    builder.range
+      .mockResolvedValueOnce({ data: firstPage, error: null })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOlder = resolve;
+          }),
+      );
+    mockFrom.mockReturnValue(builder);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("page1-msg-0");
+
+    fireEvent.scroll(messageLog());
+    fireEvent.scroll(messageLog());
+    fireEvent.scroll(messageLog());
+
+    await waitFor(() => expect(builder.range).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(builder.range).toHaveBeenCalledTimes(2);
+
+    resolveOlder?.({ data: [], error: null });
+    expect(await screen.findByText("Beginning of history")).toBeInTheDocument();
+  });
+
+  it("refreshes only the newest page on poll and merges new messages by id", async () => {
+    const firstPage = [
+      makeMessage("base-b", "base message b", "2026-09-05T02:00:00Z"),
+      makeMessage("base-a", "base message a", "2026-09-05T01:00:00Z"),
+    ];
+    const polledPage = [
+      makeMessage("fresh", "brand new message", "2026-09-05T03:00:00Z"),
+      ...firstPage,
+    ];
+    const builder = messageBuilder({ data: firstPage, error: null });
+    builder.range
+      .mockResolvedValueOnce({ data: firstPage, error: null })
+      .mockResolvedValueOnce({ data: polledPage, error: null });
+    mockFrom.mockReturnValue(builder);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("base message b");
+    expect(builder.range).toHaveBeenCalledTimes(1);
+
+    const scrollSpy = Element.prototype.scrollIntoView as unknown as { mockClear: () => void };
+    scrollSpy.mockClear();
+
+    triggerPoll();
+
+    expect(await screen.findByText("brand new message")).toBeInTheDocument();
+    expect(builder.range).toHaveBeenLastCalledWith(0, PAGE_SIZE - 1);
+    expect(screen.getAllByText("base message b")).toHaveLength(1);
+    expect(screen.getAllByText("base message a")).toHaveLength(1);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("shows an inline retry row after a page error and recovers on retry", async () => {
+    const firstPage = makePage("page1", PAGE_SIZE);
+    const olderPage = makePage("page2", 2, BASE_TIME - PAGE_SIZE * 60_000);
+    const builder = messageBuilder({ data: firstPage, error: null });
+    builder.range
+      .mockResolvedValueOnce({ data: firstPage, error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: "boom" } })
+      .mockResolvedValueOnce({ data: olderPage, error: null });
+    mockFrom.mockReturnValue(builder);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("page1-msg-0");
+    fireEvent.scroll(messageLog());
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Failed to load older messages: boom");
+    expect(screen.queryByText("Loading earlier messages…")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    expect(await screen.findByText("page2-msg-0")).toBeInTheDocument();
+    expect(builder.range).toHaveBeenCalledTimes(3);
+    expect(builder.range).toHaveBeenLastCalledWith(PAGE_SIZE, PAGE_SIZE * 2 - 1);
+  });
+
+  it("restores the paginated feed after clearing the search", async () => {
+    const firstPage = makePage("page1", PAGE_SIZE);
+    mockFeed(firstPage);
+    mockRpc.mockResolvedValue({ data: [searchRow], error: null });
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("page1-msg-0");
+    expect(screen.queryByText("Beginning of history")).not.toBeInTheDocument();
+
+    await typeQuery("bitcoin");
+    await screen.findByText("bitcoin", undefined, { timeout: 2000 });
+    expect(screen.queryByText("page1-msg-0")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /clear search/i }));
+
+    expect(await screen.findByText("page1-msg-0")).toBeInTheDocument();
+    expect(screen.queryByText("bitcoin")).not.toBeInTheDocument();
   });
 
   it("debounces typing into a single chat-scoped search_evidence call", async () => {
