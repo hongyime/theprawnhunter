@@ -1,5 +1,7 @@
 """Scanner client for CommonCrawl."""
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
 
 class CommonCrawlService:
@@ -88,7 +90,8 @@ class CommonCrawlService:
                     logger.debug(f"[suppressed] {_swallowed}")
                     continue
                 url = rec.get("url")
-                if not url:
+                if not isinstance(url, str) or not url:
+                    logger.debug("[CommonCrawl] Skipping non-text indexed URL")
                     continue
 
                 url_hash = hashlib.sha256(url.encode("utf-8", errors="replace")).hexdigest()[:16]
@@ -104,12 +107,9 @@ class CommonCrawlService:
                     logger.debug(f"[suppressed] {_swallowed}")
 
                 # Extract tokens directly from URL
-                url_tokens = TOKEN_PATTERN.findall(url)
-                for tok in url_tokens:
-                    if not _is_valid_token(tok):
-                        continue
+                for hit in sweep_text_for_tokens(url, "commoncrawl"):
                     results.append({
-                        "token": tok,
+                        "token": hit["token"],
                         "meta": {
                             "commoncrawl_url": url,
                             "commoncrawl_timestamp": rec.get("timestamp"),

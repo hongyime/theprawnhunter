@@ -1,5 +1,7 @@
 """Scanner client for Postman."""
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
 
 class PostmanService:
@@ -48,7 +50,6 @@ class PostmanService:
     async def search(self, query: str = None) -> list[dict[str, Any]]:
         import hashlib
 
-        from app.services.scanners import TOKEN_PATTERN, _is_valid_token
         from app.workers.tasks.flow_tasks import redis_client
 
         if not self.api_key:
@@ -135,9 +136,9 @@ class PostmanService:
                         continue
 
                     col_text = str(col_data)
-                    tokens = set(TOKEN_PATTERN.findall(col_text))
-                    for tok in tokens:
-                        if tok in seen_tokens or not _is_valid_token(tok):
+                    for hit in sweep_text_for_tokens(col_text, "postman"):
+                        tok = hit["token"]
+                        if tok in seen_tokens:
                             continue
                         seen_tokens.add(tok)
                         results.append({

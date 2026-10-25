@@ -7,6 +7,8 @@ import json
 import re
 from urllib.parse import urlparse
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
 
 
@@ -234,7 +236,6 @@ class HastebinService:
         return None, f"fetch ended after {self.MAX_FETCH_ATTEMPTS} requests", False
 
     async def _scan_paste(self, client, paste_id: str, url: str) -> tuple[list[dict[str, Any]], bool]:
-        from app.services.scanners import TOKEN_PATTERN, _is_valid_token
         from app.workers.tasks.flow_tasks import redis_client
 
         try:
@@ -277,14 +278,22 @@ class HastebinService:
                     await asyncio.sleep(1)
                 return [], rate_limited
 
-            found_tokens = TOKEN_PATTERN.findall(response.text)
-            valid_tokens = [token for token in found_tokens if _is_valid_token(token)]
+            paste_text = response.text
+            if not isinstance(paste_text, str) or not paste_text:
+                logger.debug(
+                    "[Hastebin] Paste %s returned no text; marking it read.",
+                    paste_id,
+                )
+                self._mark_complete(paste_id)
+                await asyncio.sleep(1)
+                return [], False
+
             results = [
                 {
-                    "token": token,
+                    "token": hit["token"],
                     "meta": {"source": "hastebin", "paste_id": paste_id, "url": url},
                 }
-                for token in valid_tokens
+                for hit in sweep_text_for_tokens(paste_text, "hastebin")
             ]
             if not results:
                 self._mark_complete(paste_id)

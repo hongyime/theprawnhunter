@@ -1,6 +1,9 @@
 """Scanner client for Bitbucket."""
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
+
 
 class BitbucketService:
     """
@@ -14,8 +17,6 @@ class BitbucketService:
         self.token = settings.BITBUCKET_API_TOKEN
 
     async def search(self) -> list[dict[str, Any]]:
-        from app.services.scanners import TOKEN_PATTERN, _is_valid_token
-
         if not self.token:
             logger.warning("    [Bitbucket] No BITBUCKET_API_TOKEN configured")
             return []
@@ -79,18 +80,21 @@ class BitbucketService:
                                 for match in item.get("content_matches", []):
                                     for line in match.get("lines", []):
                                         text = line.get("line", "")
-                                        for t in TOKEN_PATTERN.findall(text):
-                                            if _is_valid_token(t):
-                                                file_path = item.get("file", {}).get("path", "")
-                                                local_res.append({
-                                                    "token": t,
-                                                    "meta": {
-                                                        "source": "bitbucket_code",
-                                                        "workspace": ws,
-                                                        "file": file_path,
-                                                        "search_term": term,
-                                                    },
-                                                })
+                                        if not isinstance(text, str) or not text:
+                                            continue
+                                        for hit in sweep_text_for_tokens(
+                                            text, "bitbucket_code"
+                                        ):
+                                            file_path = item.get("file", {}).get("path", "")
+                                            local_res.append({
+                                                "token": hit["token"],
+                                                "meta": {
+                                                    "source": "bitbucket_code",
+                                                    "workspace": ws,
+                                                    "file": file_path,
+                                                    "search_term": term,
+                                                },
+                                            })
                             return local_res
                         except Exception as e:
                             logger.debug(f"    [Bitbucket] {ws}/{term}: {e}")

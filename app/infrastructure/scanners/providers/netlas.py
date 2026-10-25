@@ -1,5 +1,7 @@
 """Scanner client for Netlas."""
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
 
 
@@ -90,8 +92,6 @@ class NetlasService:
         usable response is available so the task does not treat failure as an
         empty result.
         """
-        from app.services.scanners import CHAT_ID_PATTERN, TOKEN_PATTERN, _is_valid_token
-
         if not self.keys:
             raise NetlasMissingApiKey(
                 "No Netlas API key is configured (NETLAS_API_KEY_1 / _2)"
@@ -182,24 +182,23 @@ class NetlasService:
                 port = d.get("port", "")
                 protocol = d.get("protocol", "http")
 
-                tokens = TOKEN_PATTERN.findall(body)
-                chat_ids = CHAT_ID_PATTERN.findall(body)
-                cid = chat_ids[0] if chat_ids else None
+                if not isinstance(body, str) or not body:
+                    logger.debug("[Netlas] Skipping empty or non-text response body for %s", ip)
+                    continue
 
-                for t in set(tokens):
-                    if _is_valid_token(t):
-                        results.append({
-                            "token": t,
-                            "chat_id": cid,
-                            "meta": {
-                                "source": "netlas",
-                                "ip": ip,
-                                "port": port,
-                                "protocol": protocol,
-                                "query": query,
-                                "account": account_num,
-                            },
-                        })
+                for hit in sweep_text_for_tokens(body, "netlas"):
+                    results.append({
+                        "token": hit["token"],
+                        "chat_id": hit["chat_id"],
+                        "meta": {
+                            "source": "netlas",
+                            "ip": ip,
+                            "port": port,
+                            "protocol": protocol,
+                            "query": query,
+                            "account": account_num,
+                        },
+                    })
 
             return results
 

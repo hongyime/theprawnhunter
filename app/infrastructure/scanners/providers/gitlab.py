@@ -1,6 +1,9 @@
 """Scanner client for Gitlab."""
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
+
 
 class GitlabService:
     def __init__(self):
@@ -37,7 +40,6 @@ class GitlabService:
                 sem = asyncio.Semaphore(10)
 
                 async def fetch_raw(item):
-                    from app.services.scanners import TOKEN_PATTERN, _is_valid_token
                     async with sem:
                         project_id = item.get("project_id")
                         filename = item.get("filename")
@@ -47,16 +49,15 @@ class GitlabService:
                         try:
                             raw_res = await raw_client.get(raw_url, headers=headers)
                             content = raw_res.text
-                            found = TOKEN_PATTERN.findall(content)
-                            local_res = []
-                            for t in found:
-                                if not _is_valid_token(t):
-                                    continue
-                                local_res.append({
-                                    "token": t,
-                                    "meta": {"source": "gitlab", "project_id": project_id, "file": filename}
-                                })
-                            return local_res
+                            if not isinstance(content, str) or not content:
+                                return []
+                            return [
+                                {
+                                    "token": hit["token"],
+                                    "meta": {"source": "gitlab", "project_id": project_id, "file": filename},
+                                }
+                                for hit in sweep_text_for_tokens(content, "gitlab")
+                            ]
                         except Exception as _swallowed:
                             logger.debug(f"[suppressed] {_swallowed}")
                             return []

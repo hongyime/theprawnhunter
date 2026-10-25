@@ -1,5 +1,7 @@
 """Scanner task implementations for telegram search."""
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
 
 @app.task(name="scanner.scan_telegram_search", autoretry_for=(Exception,), retry_backoff=True, max_retries=1)
@@ -21,7 +23,6 @@ async def _scan_telegram_search_async(query: str = None):
     # users keep the service's existing empty-list behavior.
     from telethon.errors import FloodWaitError
     from app.services._user_agent.session_lifecycle import UserAgentSessionUnavailableError
-    from app.services.scanners import _is_valid_token
     from app.services.user_agent_srv import user_agent
 
     async def report_failure(message: str, *, warning: bool = False) -> None:
@@ -45,9 +46,6 @@ async def _scan_telegram_search_async(query: str = None):
         "TELEGRAM_BOT_TOKEN",
         "bot_token leaked",
     ]
-
-    # Strict token regex — same shape as TOKEN_PATTERN but inline-safe
-    token_re = re.compile(r"\b\d{8,15}:[A-Za-z0-9_-]{35}\b")
 
     all_results = []
     try:
@@ -90,14 +88,15 @@ async def _scan_telegram_search_async(query: str = None):
                 try:
                     for msg in messages:
                         text = msg.get("text", "")
-                        if not text:
+                        if not isinstance(text, str) or not text:
+                            logger.debug(
+                                "[TelegramSearch] Skipping message without scannable text in %r",
+                                q,
+                            )
                             continue
-                        tokens = token_re.findall(text)
-                        for tok in tokens:
-                            if not _is_valid_token(tok):
-                                continue
+                        for hit in sweep_text_for_tokens(text, "telegram_search"):
                             all_results.append({
-                                "token": tok,
+                                "token": hit["token"],
                                 "chat_id": msg.get("chat_id"),
                                 "meta": {
                                     "telegram_chat_name": msg.get("chat_name"),

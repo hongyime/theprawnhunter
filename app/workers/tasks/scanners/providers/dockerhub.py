@@ -1,5 +1,7 @@
 """Scanner task implementations for dockerhub."""
 
+from app.domain.tokens import sweep_text_for_tokens
+
 from ..common import *
 
 @app.task(name="scanner.scan_dockerhub", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
@@ -15,8 +17,6 @@ async def _scan_dockerhub_async():
         return "System Paused"
 
     import httpx
-
-    from app.services.scanners import TOKEN_PATTERN, _is_valid_token
 
     logger.info("🐳 [DockerHub] starting image manifest scan...")
     await _send_log_async("🐳 [DockerHub] scanning public image manifests for ENV leaks...")
@@ -96,15 +96,17 @@ async def _scan_dockerhub_async():
                 env_vars = container_config.get("Env", [])
                 cmds = container_config.get("Cmd", [])
 
-                text_to_scan = "\n".join(env_vars + cmds)
-                found = TOKEN_PATTERN.findall(text_to_scan)
+                text_to_scan = "\n".join(
+                    part
+                    for part in (env_vars or []) + (cmds or [])
+                    if isinstance(part, str) and part
+                )
 
-                for t in found:
-                    if _is_valid_token(t):
-                        results.append({
-                            "token": t,
-                            "meta": {"source": "dockerhub", "image": img_name}
-                        })
+                for hit in sweep_text_for_tokens(text_to_scan, "dockerhub"):
+                    results.append({
+                        "token": hit["token"],
+                        "meta": {"source": "dockerhub", "image": img_name}
+                    })
 
                 with contextlib.suppress(Exception):
                     redis_client.setex(seen_key, 7 * 86400, "1")
