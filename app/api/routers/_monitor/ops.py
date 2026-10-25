@@ -93,9 +93,12 @@ def _read_redis_state() -> dict[str, Any]:
         queue_lengths = _empty_queue_lengths()
 
     try:
-        bot_count: int | None = sum(
+        locked_bots = sum(
             1 for _ in client.scan_iter(match=_BOT_LOCK_PATTERN, count=100)
         )
+        # The API process never holds bot locks; zero means "not observable here",
+        # not "no bots", so report unknown instead of a misleading 0.
+        bot_count: int | None = locked_bots or None
     except Exception as exc:
         logger.warning("monitor/ops status: bot lock scan failed (%s)", type(exc).__name__)
         bot_count = None
