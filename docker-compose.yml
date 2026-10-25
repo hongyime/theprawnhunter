@@ -198,7 +198,12 @@ services:
     mem_limit: "${EMBED_API_MEM_LIMIT:-2g}"
     mem_reservation: "${EMBED_API_MEM_RESERVATION:-512m}"
     env_file: .env
-    command: uvicorn app.services.embed_api:app --host 127.0.0.1 --port 8020
+    # Bind 0.0.0.0 INSIDE the container so sibling containers can reach
+    # http://embed-api:8020; the host publish below keeps it loopback-only, so it
+    # is never exposed publicly.
+    command: uvicorn app.services.embed_api:app --host 0.0.0.0 --port 8020
+    ports:
+      - "127.0.0.1:8020:8020"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/health', timeout=5)"]
       interval: 30s
