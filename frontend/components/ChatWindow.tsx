@@ -33,7 +33,7 @@ import { HighlightedSnippet, type EvidenceSearchRow } from "./SearchView";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_RESULT_LIMIT = 50;
-const SEARCH_MIN_QUERY = 2;
+const SEARCH_MIN_QUERY = 3;
 const PAGE_SIZE = 50;
 const POLL_INTERVAL_MS = 3000;
 const REALTIME_FALLBACK_POLL_INTERVAL_MS = 60000;
@@ -650,7 +650,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 : searchActive
                     ? "Searching this chat…"
                     : trimmedQuery
-                        ? "Type one more character to search."
+                        ? "Type at least 3 characters to search this chat."
                         : "Press / to search this chat.";
 
     const galleryItems: GalleryItem[] = messages

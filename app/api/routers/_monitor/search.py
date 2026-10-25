@@ -12,8 +12,9 @@ from .common import *
 
 router = APIRouter()
 
-# Queries at or above this length use the FTS RPC; shorter ones keep using the
-# legacy ILIKE path (single/short tokens are noise for websearch_to_tsquery).
+# Queries at or above this length use the FTS RPC. Shorter queries are rejected:
+# the legacy ILIKE scan is unusably slow at 2 characters, so the minimum accepted
+# length and the FTS threshold are the same value.
 _FTS_MIN_QUERY_LEN = 3
 
 # /monitor/search used to cap at 500; the committed search_evidence RPC clamps
@@ -160,9 +161,10 @@ async def search_messages(
 ):
     """Search exfiltrated evidence.
 
-    Uses the ``search_evidence`` FTS RPC (highlighted snippets) when the query
-    is at least 3 characters; falls back to the legacy case-insensitive ILIKE
-    over content/sender_name for short queries or when the RPC is unavailable.
+    Uses the ``search_evidence`` FTS RPC (highlighted snippets) for every
+    accepted query (at least 3 characters); falls back to the legacy
+    case-insensitive ILIKE over content/sender_name only when the RPC is
+    unavailable.
 
     Params:
     - q: search term
@@ -172,8 +174,11 @@ async def search_messages(
     - credential_id: only rows for the given credential
     """
     query = q.strip()
-    if len(query) < 2:
-        raise HTTPException(status_code=400, detail="query must be at least 2 chars")
+    if len(query) < _FTS_MIN_QUERY_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"query must be at least {_FTS_MIN_QUERY_LEN} chars",
+        )
 
     # Whitelist: only allow alphanumeric + space + safe punctuation. This
     # blocks PostgREST metacharacters that could smuggle extra .or_() clauses
@@ -181,10 +186,10 @@ async def search_messages(
     # explicitly rejected.
     import re as _re
 
-    if not _re.fullmatch(r"[A-Za-z0-9 _.@\-]{2,80}", query):
+    if not _re.fullmatch(r"[A-Za-z0-9 _.@\-]{3,80}", query):
         raise HTTPException(
             status_code=400,
-            detail="query must match [A-Za-z0-9 _.@-]{2,80} — no wildcards, punctuation, or spaces at limits",
+            detail="query must match [A-Za-z0-9 _.@-]{3,80} — no wildcards, punctuation, or spaces at limits",
         )
 
     limit = min(max(limit, 1), _SEARCH_LIMIT_MAX)

@@ -368,16 +368,40 @@ describe("ChatWindow", () => {
     });
   });
 
-  it("does not search until the query reaches two characters", async () => {
+  it("does not search until the query reaches three characters", async () => {
     mockFeed();
     render(<ChatWindow credential={credential} />);
     await screen.findByText("live feed message");
 
-    await typeQuery("b");
+    await typeQuery("ab");
     await new Promise((resolve) => setTimeout(resolve, 450));
 
     expect(mockRpc).not.toHaveBeenCalled();
     expect(screen.getByText("live feed message")).toBeInTheDocument();
+    expect(
+      screen.getByText("Type at least 3 characters to search this chat."),
+    ).toBeInTheDocument();
+  });
+
+  it("searches once the query reaches three characters", async () => {
+    mockFeed();
+    mockRpc.mockResolvedValue({ data: [searchRow], error: null });
+    render(<ChatWindow credential={credential} />);
+    await screen.findByText("live feed message");
+
+    await typeQuery("abc");
+
+    await waitFor(
+      () => {
+        expect(mockRpc).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 2000 },
+    );
+    expect(mockRpc).toHaveBeenCalledWith("search_evidence", {
+      q: "abc",
+      credential_id: credential.id,
+      lim: 50,
+    });
   });
 
   it("renders search results in place of the feed with sender, time, and highlights", async () => {

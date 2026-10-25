@@ -23,6 +23,8 @@ export type EvidenceSearchRow = {
 
 export const SEARCH_DEBOUNCE_MS = 300;
 export const SEARCH_RESULT_LIMIT = 50;
+export const SEARCH_MIN_QUERY = 3;
+export const SEARCH_MIN_QUERY_HINT = "Type at least 3 characters";
 export const SEMANTIC_NOTICE = "Semantic unavailable — showing keyword results";
 
 type SearchMode = "fts" | "semantic";
@@ -280,6 +282,8 @@ export default function SearchView({
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmedQuery = query.trim();
+  const queryTooShort =
+    trimmedQuery.length > 0 && trimmedQuery.length < SEARCH_MIN_QUERY;
 
   // Keyboard shortcut: `/` focuses the search box while this view is mounted.
   useEffect(() => {
@@ -303,7 +307,7 @@ export default function SearchView({
   }, []);
 
   useEffect(() => {
-    if (!trimmedQuery) {
+    if (trimmedQuery.length < SEARCH_MIN_QUERY) {
       setResults([]);
       setLoading(false);
       setError(null);
@@ -396,11 +400,13 @@ export default function SearchView({
     ? "Searching evidence…"
     : error
       ? "Search error"
-      : hasSearched
-        ? `${results.length} ${results.length === 1 ? "match" : "matches"} ${
-            resultMode === "semantic" ? "(semantic) " : ""
-          }for “${trimmedQuery}”`
-        : "Search captured evidence across every bot.";
+      : queryTooShort
+        ? SEARCH_MIN_QUERY_HINT
+        : hasSearched
+          ? `${results.length} ${results.length === 1 ? "match" : "matches"} ${
+              resultMode === "semantic" ? "(semantic) " : ""
+            }for “${trimmedQuery}”`
+          : "Search captured evidence across every bot.";
 
   return (
     <section className="h-full overflow-y-auto bg-[#f4f7fa]" aria-label="Evidence search">
@@ -502,7 +508,9 @@ export default function SearchView({
             <SearchIcon aria-hidden="true" className="mx-auto h-7 w-7 text-[#197e74]" />
             <h2 className="mt-3 font-bold text-slate-900">Search every captured chat</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Results are ranked newest first. Press <kbd className="font-mono">/</kbd> to jump to the box.
+              {queryTooShort
+                ? `${SEARCH_MIN_QUERY_HINT} to search captured evidence.`
+                : <>Results are ranked newest first. Press <kbd className="font-mono">/</kbd> to jump to the box.</>}
             </p>
           </div>
         )}

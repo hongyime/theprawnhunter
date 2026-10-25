@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from postgrest.exceptions import APIError
 
 from app.api.routers._monitor import search as search_mod
@@ -168,19 +169,38 @@ def test_limit_is_clamped_to_one_and_two_hundred(monkeypatch, requested, expecte
     assert body["limit"] == expected
 
 
-def test_short_query_uses_legacy_ilike(monkeypatch):
-    fake_db = _FakeDB(table_rows=LEGACY_ROWS)
+def test_two_char_query_is_rejected(monkeypatch):
+    fake_db = _FakeDB()
     _use_db(monkeypatch, fake_db)
 
-    body = _call(q="ab", limit=50, credential_id=CREDENTIAL_ID)
+    with pytest.raises(HTTPException) as excinfo:
+        _call(q="ab", limit=50, credential_id=CREDENTIAL_ID)
 
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "query must be at least 3 chars"
     assert fake_db.rpc_calls == []
-    assert fake_db.table_calls == ["exfiltrated_messages"]
-    query = fake_db.last_table_query
-    assert ("or_", "content.ilike.%ab%,sender_name.ilike.%ab%") in query.calls
-    assert ("eq", "credential_id", str(CREDENTIAL_ID)) in query.calls
-    assert query.limit_value == 50
-    assert body["matches"] == LEGACY_ROWS
+    assert fake_db.table_calls == []
+
+
+def test_three_char_query_uses_fts(monkeypatch):
+    fake_db = _FakeDB(rpc_rows=FTS_ROWS)
+    _use_db(monkeypatch, fake_db)
+
+    body = _call(q="abc", limit=50, credential_id=CREDENTIAL_ID)
+
+    assert fake_db.rpc_calls == [
+        (
+            "search_evidence",
+            {
+                "q": "abc",
+                "credential_id": str(CREDENTIAL_ID),
+                "lim": 50,
+            },
+        )
+    ]
+    assert fake_db.table_calls == []
+    assert body["match_count"] == 1
+    assert body["matches"][0]["snippet"] == "<b>bitcoin</b> wallet dump"
 
 
 def test_fts_error_falls_back_to_ilike_without_500(monkeypatch):
@@ -310,3 +330,10 @@ def test_route_serializes_snippet_without_dropping_existing_fields(client, monke
     assert body["match_count"] == 1
     assert body["matches"][0]["snippet"] == "<b>bitcoin</b> wallet dump"
     assert body["matches"][0]["id"] == HIT_ID
+
+
+def test_route_rejects_two_char_query_with_400(client):
+    response = client.get("/monitor/search?q=ab", headers=AUTH)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "query must be at least 3 chars"

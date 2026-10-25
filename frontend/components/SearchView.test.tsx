@@ -69,6 +69,38 @@ describe("SearchView", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("waits for three characters and shows the minimum-length hint", async () => {
+    render(<SearchView onOpenChat={vi.fn()} />);
+
+    await userEvent.type(searchInput(), "ab");
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByText(/Type at least 3 characters/).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("searches once the query reaches three characters", async () => {
+    mockRpc.mockResolvedValue({ data: [row], error: null });
+    render(<SearchView onOpenChat={vi.fn()} />);
+
+    await userEvent.type(searchInput(), "abc");
+
+    await waitFor(
+      () => {
+        expect(mockRpc).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 2000 },
+    );
+    expect(mockRpc).toHaveBeenCalledWith("search_evidence", {
+      q: "abc",
+      credential_id: null,
+      lim: 50,
+    });
+  });
+
   it("shows an FTS mode label on keyword results", async () => {
     mockRpc.mockResolvedValue({ data: [row], error: null });
     render(<SearchView onOpenChat={vi.fn()} />);
