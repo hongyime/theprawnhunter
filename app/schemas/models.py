@@ -159,6 +159,43 @@ class FindingFeedbackOut(BaseModel):
     status: FindingStatus | None = None
 
 
+class OutpostCandidateOut(BaseModel):
+    """One decrypted validation candidate handed to a remote outpost.
+
+    ``token`` is plaintext only in transit; rows stay encrypted in
+    ``validation_queue.token_ciphertext`` and are decrypted per lease.
+    """
+
+    queue_row_id: str
+    token: str
+    source: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class OutpostLeaseOut(BaseModel):
+    """Batch handed to an outpost; empty when the queue has no work."""
+
+    lease_id: str | None = None
+    expires_at: datetime | None = None
+    candidates: list[OutpostCandidateOut] = Field(default_factory=list)
+
+
+class OutpostResultIn(BaseModel):
+    lease_id: str = Field(min_length=1)
+    queue_row_id: str = Field(min_length=1)
+    ok: bool
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class OutpostResultOut(BaseModel):
+    """``completed`` applied the result; ``duplicate`` was a no-op replay."""
+
+    lease_id: str
+    queue_row_id: str
+    status: Literal["completed", "duplicate"]
+
+
 class EngagementLifecycleIn(BaseModel):
     owned_bot_id: int = Field(gt=0)
     subject_reference: str = Field(min_length=1, max_length=256)

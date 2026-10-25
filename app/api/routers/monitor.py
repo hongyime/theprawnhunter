@@ -16,6 +16,7 @@ from app.api.routers._monitor import webhooks as _webhooks
 from app.api.routers._monitor import targets as _targets
 from app.api.routers._monitor import search as _search
 from app.api.routers._monitor import operators as _operators
+from app.api.routers._monitor import outposts as _outposts
 
 router = APIRouter(
     prefix="/monitor",
@@ -34,6 +35,7 @@ router.include_router(_webhooks.router)
 router.include_router(_targets.router)
 router.include_router(_search.router)
 router.include_router(_operators.router)
+router.include_router(_outposts.router)
 
 _IMPLEMENTATIONS = (_common,
     _stats,
@@ -47,7 +49,8 @@ _IMPLEMENTATIONS = (_common,
     _webhooks,
     _targets,
     _search,
-    _operators)
+    _operators,
+    _outposts)
 for _implementation in _IMPLEMENTATIONS:
     for _name, _value in vars(_implementation).items():
         if not _name.startswith("__"):
