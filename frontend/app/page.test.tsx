@@ -184,8 +184,9 @@ describe('Dashboard Gate (Production page.tsx)', () => {
       expect(screen.getByTestId('findings-queue')).toBeDefined();
     });
 
-    // Should show user email
-    expect(screen.getByText('test@example.com')).toBeDefined();
+    expect(screen.queryByText('test@example.com')).toBeNull();
+    expect(screen.getByText('Operator session')).toBeDefined();
+    expect(screen.getByText('OPERATOR')).toBeDefined();
     // Should NOT show sign-in prompt
     expect(screen.queryByText('The Prawn Hunter')).toBeNull();
   });

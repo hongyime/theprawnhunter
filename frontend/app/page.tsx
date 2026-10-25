@@ -65,6 +65,8 @@ export default function Home() {
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const showTargetsPanel = activeView === "botTelemetry" || activeView === "chat";
+
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768);
@@ -183,10 +185,12 @@ export default function Home() {
       <div
         className={
           isMobile
-            ? `fixed inset-y-0 left-0 z-30 w-4/5 max-w-xs transform bg-white shadow-xl transition-transform duration-200 ${
-                sidebarOpen ? "translate-x-0" : "-translate-x-full"
-              }`
-            : "w-1/3 min-w-75 shrink-0"
+            ? `fixed inset-y-0 left-0 z-30 flex transform bg-white shadow-xl transition-transform duration-200 ${
+                showTargetsPanel ? "w-[88vw] max-w-sm" : "w-auto"
+              } ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`
+            : showTargetsPanel
+            ? "w-1/3 min-w-75 shrink-0"
+            : "shrink-0"
         }
       >
         <Sidebar
@@ -209,9 +213,17 @@ export default function Home() {
         {/* Desktop header with sign-out */}
         {!isMobile && (
           <div className="flex items-center justify-between border-b px-4 py-2 bg-slate-50">
-            <span className="text-sm text-slate-600">
-              Signed in as <strong>{session.user?.email}</strong>
-            </span>
+            <div
+              className="flex items-center gap-2"
+              title="Authenticated operator session"
+            >
+              <span className="text-sm font-medium text-slate-700">
+                Operator session
+              </span>
+              <span className="rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">
+                OPERATOR
+              </span>
+            </div>
             <button
               onClick={handleSignOut}
               className="flex items-center gap-2 rounded px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-200"

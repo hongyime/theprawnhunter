@@ -12,6 +12,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 import Sidebar, {
+  NAV_RAIL_STORAGE_KEY,
   SEARCH_DEBOUNCE_MS,
   SERVER_SEARCH_LIMIT,
   TARGET_FETCH_LIMIT,
@@ -114,7 +115,7 @@ function installRpcMock() {
 function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   const props = {
     selected: null,
-    activeView: "findings" as DashboardView,
+    activeView: "chat" as DashboardView,
     onViewChange: vi.fn(),
     onSelect: vi.fn(),
     ...overrides,
@@ -130,6 +131,7 @@ async function flushAsync() {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   mockFrom.mockReset();
   mockRpc.mockReset();
   rows = ROWS;
@@ -147,7 +149,7 @@ afterEach(() => {
 
 describe("Sidebar", () => {
   it("keeps the nav entries and fetches targets with the explicit 2000-row bound", async () => {
-    renderSidebar({ activeView: "dashboard" });
+    renderSidebar({ activeView: "chat" });
 
     expect(await screen.findByText("3 of 3 targets")).toBeInTheDocument();
 
@@ -167,7 +169,7 @@ describe("Sidebar", () => {
     expect(selectArgs[0]).toContain("status");
     expect(selectArgs[0]).toContain("chat_type");
     expect(mockRpc).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Dashboard" })).toHaveClass("bg-white");
+    expect(screen.getByRole("button", { name: "Chat Feed" })).toHaveClass("bg-white");
   });
 
   it("filters by bot username, chat name and chat title case-insensitively", async () => {
@@ -370,5 +372,98 @@ describe("Sidebar", () => {
 
     expect(await screen.findByText("3 of 3 targets")).toBeInTheDocument();
     expect(screen.queryByText("Loading targets…")).not.toBeInTheDocument();
+  });
+
+  it("collapses by default and exposes all seven destinations without visible labels", async () => {
+    renderSidebar();
+    await screen.findByText("3 of 3 targets");
+
+    for (const label of [
+      "Findings",
+      "Search",
+      "Watchlists",
+      "Chat Feed",
+      "Bot Intel",
+      "All Telemetry",
+      "Dashboard",
+    ]) {
+      const button = screen.getByRole("button", { name: label });
+      expect(button).toHaveAttribute("title", label);
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
+
+    expect(
+      screen.getByRole("button", { name: "Expand navigation" }),
+    ).toBeInTheDocument();
+  });
+
+  it("expands to show labels and persists the state across a remount", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderSidebar();
+    await screen.findByText("3 of 3 targets");
+
+    await user.click(screen.getByRole("button", { name: "Expand navigation" }));
+
+    expect(screen.getByText("Findings")).toBeInTheDocument();
+    expect(window.localStorage.getItem(NAV_RAIL_STORAGE_KEY)).toBe("expanded");
+
+    unmount();
+    renderSidebar();
+
+    expect(await screen.findByText("Findings")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Collapse navigation" }),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["chat", "botTelemetry"] as const)(
+    "renders the targets panel for the %s view",
+    async (view) => {
+      renderSidebar({ activeView: view });
+
+      expect(await screen.findByText("Drill-down targets")).toBeInTheDocument();
+      expect(
+        screen.getByRole("searchbox", { name: "Search targets" }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    "findings",
+    "search",
+    "watchlists",
+    "dashboard",
+    "globalTelemetry",
+  ] as const)("omits the targets panel for the %s view", async (view) => {
+    renderSidebar({ activeView: view });
+    await flushAsync();
+
+    expect(screen.queryByText("Drill-down targets")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("searchbox", { name: "Search targets" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps the target filter text when switching views and back", async () => {
+    const user = userEvent.setup();
+    const props = { selected: null, onViewChange: vi.fn(), onSelect: vi.fn() };
+    const { rerender } = render(<Sidebar {...props} activeView="chat" />);
+    await screen.findByText("3 of 3 targets");
+
+    const input = screen.getByRole("searchbox", { name: "Search targets" });
+    await user.type(input, "alpha");
+    expect(await screen.findByText("1 of 1 targets")).toBeInTheDocument();
+
+    rerender(<Sidebar {...props} activeView="findings" />);
+    expect(
+      screen.queryByRole("searchbox", { name: "Search targets" }),
+    ).not.toBeInTheDocument();
+
+    rerender(<Sidebar {...props} activeView="chat" />);
+    expect(screen.getByRole("searchbox", { name: "Search targets" })).toHaveValue(
+      "alpha",
+    );
+    expect(await screen.findByText("1 of 1 targets")).toBeInTheDocument();
   });
 });
