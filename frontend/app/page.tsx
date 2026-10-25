@@ -7,6 +7,7 @@ import FindingsQueue from "@/components/FindingsQueue";
 import SearchView from "@/components/SearchView";
 import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
 import WatchlistView from "@/components/WatchlistView";
+import DashboardView from "@/components/DashboardView";
 import { LucideMenu, LucideX, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
@@ -18,7 +19,8 @@ export type DashboardView =
   | "watchlists"
   | "chat"
   | "botTelemetry"
-  | "globalTelemetry";
+  | "globalTelemetry"
+  | "dashboard";
 
 export type GatewayTelemetry = {
   configured_webhook_url?: string | null;
@@ -153,6 +155,8 @@ export default function Home() {
                 ? "Search evidence"
                 : activeView === "watchlists"
                 ? "Watchlists"
+                : activeView === "dashboard"
+                ? "Dashboard"
                 : selected?.meta?.bot_username
                 ? `@${selected.meta.bot_username}`
                 : "The Prawn Hunter"}
@@ -228,6 +232,8 @@ export default function Home() {
           />
         ) : activeView === "watchlists" ? (
           <WatchlistView />
+        ) : activeView === "dashboard" ? (
+          <DashboardView />
         ) : activeView === "globalTelemetry" ? (
           <TelemetryAnalyticsView scope="global" />
         ) : activeView === "botTelemetry" ? (

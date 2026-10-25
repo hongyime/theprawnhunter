@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { BarChart3, BellRing, ListChecks, MessageSquareText, LucideTarget, Radar, Search } from "lucide-react";
+import { BarChart3, BellRing, LayoutDashboard, ListChecks, MessageSquareText, LucideTarget, Radar, Search } from "lucide-react";
 import type { Credential, DashboardView } from "@/app/page";
 
 function ConfidenceBadge({ score }: { score: number | null }) {
@@ -184,6 +184,18 @@ export default function Sidebar({
                     >
                         <BarChart3 className="h-3.5 w-3.5 shrink-0" />
                         <span className="truncate">All Telemetry</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onViewChange("dashboard")}
+                        className={`flex min-w-0 items-center justify-center gap-1 rounded px-1.5 py-1.5 text-xs font-semibold transition-colors ${
+                            activeView === "dashboard"
+                                ? "bg-white text-slate-900 shadow-sm"
+                                : "text-slate-500 hover:text-slate-800"
+                        }`}
+                    >
+                        <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">Dashboard</span>
                     </button>
                 </div>
             </div>
