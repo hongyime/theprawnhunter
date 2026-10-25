@@ -17,6 +17,8 @@ from app.api.routers._monitor import targets as _targets
 from app.api.routers._monitor import search as _search
 from app.api.routers._monitor import operators as _operators
 from app.api.routers._monitor import outposts as _outposts
+from app.api.routers._monitor import ops as _ops
+from app.api.routers._monitor import watchlist_hits as _watchlist_hits
 
 router = APIRouter(
     prefix="/monitor",
@@ -36,6 +38,8 @@ router.include_router(_targets.router)
 router.include_router(_search.router)
 router.include_router(_operators.router)
 router.include_router(_outposts.router)
+router.include_router(_ops.router)
+router.include_router(_watchlist_hits.router)
 
 _IMPLEMENTATIONS = (_common,
     _stats,
@@ -50,7 +54,9 @@ _IMPLEMENTATIONS = (_common,
     _targets,
     _search,
     _operators,
-    _outposts)
+    _outposts,
+    _ops,
+    _watchlist_hits)
 for _implementation in _IMPLEMENTATIONS:
     for _name, _value in vars(_implementation).items():
         if not _name.startswith("__"):
