@@ -12,6 +12,7 @@ Failures are recorded in ``file_meta`` instead of raised: these are enrichment
 tasks, and a retry storm on a corrupt/oversized/absent attachment is useless.
 """
 
+import contextlib
 import io
 import threading
 from datetime import datetime
@@ -443,10 +444,8 @@ def enqueue_enrichment_for_message(
             credential_id,
             exc,
         )
-        try:
+        with contextlib.suppress(Exception):  # best-effort dedupe cleanup
             redis_client.delete(dedupe_key)
-        except Exception:  # noqa: BLE001 - best-effort dedupe cleanup
-            pass
         return False
 
     _run_enqueued += 1

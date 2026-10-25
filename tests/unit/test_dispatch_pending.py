@@ -8,6 +8,7 @@ without a plaintext token.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -129,7 +130,13 @@ async def test_batch_limit_preserves_priority_order_from_lease(monkeypatch, queu
     assert ("lease", 5, 300) in queue_calls
     # lease() returns rows highest-priority first; the dispatcher must preserve
     # that order instead of re-sorting or fanning out concurrently.
-    assert [message["args"][0]["meta"]["index"] for message in sent] == [0, 1, 2, 3, 4]
+    assert [message["kwargs"]["queue_row_id"] for message in sent] == [
+        "row-0",
+        "row-1",
+        "row-2",
+        "row-3",
+        "row-4",
+    ]
 
 
 @pytest.mark.asyncio
@@ -189,7 +196,7 @@ async def test_empty_queue_no_send_no_error(monkeypatch, queue_calls, sent):
 
 
 @pytest.mark.asyncio
-async def test_enqueue_payload_carries_queue_row_id_and_no_plaintext_kwargs(
+async def test_enqueue_payload_carries_queue_row_id_and_no_plaintext_token(
     monkeypatch, queue_calls, sent
 ):
     _set_batch(monkeypatch, 1)
@@ -203,11 +210,12 @@ async def test_enqueue_payload_carries_queue_row_id_and_no_plaintext_kwargs(
     message = sent[0]
     assert message["queue"] == "validation"
     assert message["kwargs"] == {"queue_row_id": "row-0"}
-    assert "token" not in message["kwargs"]
-    # The positional token keeps the legacy task contract; the queue row id is
-    # what makes the encrypted row authoritative inside validate_token.
-    assert message["args"][0]["token"] == row["token"]
-    assert message["args"][1] == "github:code_search"
+    # F2 7.7: the broker payload is empty; only the queue row id travels.
+    assert message["args"] == [{}]
+    serialized = json.dumps(message["args"]) + json.dumps(message["kwargs"])
+    assert row["token"] not in serialized
+    assert "token" not in serialized
+    assert "row-0" in serialized
 
 
 @pytest.mark.asyncio

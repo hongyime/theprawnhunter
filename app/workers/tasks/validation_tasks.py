@@ -117,13 +117,15 @@ def _calculate_hash(token: str) -> str:
     # allows 4 × 60 = 240 calls/min to escape the Redis gate simultaneously, defeating
     # the global limit entirely.  The Redis bucket is the single source of truth.
 )
-def validate_token(item: dict, source_name: str, queue_row_id: str | None = None):
+def validate_token(item: dict, source_name: str = "", queue_row_id: str | None = None):
     """
     Validate a single token from a scanner result.
 
     Args:
         item: dict with at least {"token": str}, optionally {"chat_id", "meta"}
-        source_name: scanner that found this token (for provenance)
+        source_name: scanner that found this token (for provenance). May be
+            empty: when ``queue_row_id`` is supplied the row's ``source`` is
+            used instead, because the dispatcher never sends plaintext.
         queue_row_id: optional ``validation_queue`` row this task was dispatched
             for. When present the row is the authority for the token (so a
             replay after a dispatcher crash still works) and the row is closed
@@ -201,6 +203,11 @@ async def _validate_token_async(
                 logger.warning(
                     f"[Validate] queue row {row_id} is not leased; skipping completion"
                 )
+            # Provenance lives on the row too: the dispatcher sends an empty
+            # payload (no plaintext token, no source) so the row is the only
+            # source of truth for both the token and its scanner label.
+            if not source_name:
+                source_name = row.get("source") or "validation_queue"
             row_token = None
             ciphertext = row.get("token_ciphertext")
             if ciphertext:
@@ -214,7 +221,6 @@ async def _validate_token_async(
                 item = {**(item or {}), "token": row_token}
                 if not item.get("meta"):
                     item["meta"] = row.get("meta") or {}
-                source_name = source_name or row.get("source") or "validation_queue"
             elif not (item or {}).get("token"):
                 logger.warning(f"[Validate] queue row {row_id} has no usable token; failing row")
                 if lease_id:
@@ -571,21 +577,20 @@ async def _dispatch_pending_async() -> str:
         if not row_id:
             continue
         if not token:
-            # lease() already drops undecryptable rows; defence in depth so a
-            # malformed row can never be enqueued with a garbage token.
+            # lease() only returns rows whose ciphertext it could decrypt, so a
+            # token-less row here is malformed: fail it instead of leaving it
+            # leased until the lease expires.
             logger.warning(f"[Dispatch] queue row {row_id} has no plaintext token; failing row")
             if lease_id:
                 await _complete_queue_row(lease_id, row_id, False)
             continue
         try:
             validate_token.apply_async(
-                # Positional token + source preserve the legacy task contract;
-                # queue_row_id (kwargs, never plaintext) makes the encrypted row
-                # authoritative inside the task.
-                args=[
-                    {"token": token, "meta": row.get("meta") or {}},
-                    row.get("source") or "validation_queue",
-                ],
+                # SECURITY (F2 7.7): the broker payload must never carry the
+                # plaintext token. The task resolves token, meta and source
+                # exclusively from the encrypted validation_queue row via
+                # queue_row_id; the row is the single source of truth.
+                args=[{}],
                 kwargs={"queue_row_id": row_id},
                 queue="validation",
             )

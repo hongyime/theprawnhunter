@@ -181,13 +181,13 @@ async def _enqueue_tokens_from_messages(message_rows: list[dict[str, Any]]) -> i
 
     try:
         from app.domain.tokens import extract_tokens_and_chat_ids
-        from app.workers.tasks.validation_tasks import validate_token
+        from app.workers.tasks.scanners.common import _save_credentials_async
     except Exception as exc:
         logger.debug(f"[TokenDiscovery] validation import unavailable: {exc}")
         return 0
 
     ttl_seconds = int(os.getenv("TOKEN_DISCOVERY_DEDUP_TTL_SECONDS", str(7 * 24 * 3600)))
-    enqueued = 0
+    discovered: list[dict[str, Any]] = []
     seen_in_batch: set[str] = set()
 
     for row in message_rows:
@@ -214,30 +214,30 @@ async def _enqueue_tokens_from_messages(message_rows: list[dict[str, Any]]) -> i
             if not first_seen:
                 continue
 
-            validate_token.apply_async(
-                args=[
-                    {
-                        "token": token,
-                        "chat_id": found.get("chat_id"),
-                        "meta": {
-                            "source": "telegram_message",
-                            "credential_id": row.get("credential_id"),
-                            "message_id": row.get("id"),
-                            "telegram_msg_id": row.get("telegram_msg_id"),
-                        },
+            discovered.append(
+                {
+                    "token": token,
+                    "chat_id": found.get("chat_id"),
+                    "meta": {
+                        "source": "telegram_message",
+                        "credential_id": row.get("credential_id"),
+                        "message_id": row.get("id"),
+                        "telegram_msg_id": row.get("telegram_msg_id"),
                     },
-                    "telegram_message",
-                ],
-                queue="validation",
+                }
             )
-            enqueued += 1
 
-            if enqueued % 50 == 0:
-                await asyncio.sleep(0.05)
+    if not discovered:
+        return 0
 
-    if enqueued:
-        logger.info(f"[TokenDiscovery] enqueued {enqueued} token(s) from captured messages")
-    return enqueued
+    # SECURITY (F2 7.7): stage through the encrypted validation_queue instead of
+    # putting the plaintext token on the Celery broker. The staging helper
+    # encrypts, dedupes, and raises once staging attempts fail, so this task
+    # keeps its existing retry path.
+    staged = await _save_credentials_async(discovered, "telegram_message")
+    if staged:
+        logger.info(f"[TokenDiscovery] staged {staged} token(s) from captured messages")
+    return staged
 
 
 async def _index_telemetry_indicators(message_rows: list[dict[str, Any]]) -> int:

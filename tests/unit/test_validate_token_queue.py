@@ -214,6 +214,39 @@ async def test_not_leased_row_validates_without_completion(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_style_empty_payload_resolves_token_and_source_from_row(monkeypatch):
+    row = _queue_row(source="github:code_search")
+    store = _install_real_complete(monkeypatch, row)
+    captured: dict = {}
+    monkeypatch.setattr(validation_tasks, "_load_queue_row", _loads(row))
+    monkeypatch.setattr(validation_tasks, "_validate_token_core", _core(captured, 1))
+
+    result = await validation_tasks._validate_token_async({}, "", queue_row_id="row-1")
+
+    assert result == 1
+    # F2 7.7: the dispatcher sends args=[{}]; everything comes from the row.
+    assert captured["item"]["token"] == TOKEN
+    assert captured["item"]["meta"] == {"repo": "owner/repo"}
+    assert captured["source_name"] == "github:code_search"
+    assert store.row["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_unknown_queue_row_with_empty_payload_is_clean_noop(monkeypatch, caplog):
+    store = _install_real_complete(monkeypatch, _queue_row())
+    monkeypatch.setattr(validation_tasks, "_load_queue_row", _loads(None))
+    caplog.set_level("WARNING", logger="validation.tasks")
+
+    result = await validation_tasks._validate_token_async({}, "", queue_row_id="gone-row")
+
+    assert result == 0
+    assert "not found" in caplog.text
+    # No lease handle exists, so the unknown row is never completed.
+    assert store.row["status"] == "leased"
+    assert store.row["attempts"] == 0
+
+
+@pytest.mark.asyncio
 async def test_legacy_path_does_not_touch_the_queue(monkeypatch):
     completes: list = []
 
@@ -261,3 +294,23 @@ def test_sync_wrapper_forwards_optional_queue_row_id(monkeypatch):
         "source_name": "github",
         "queue_row_id": "row-1",
     }
+
+
+def test_sync_wrapper_accepts_empty_payload_and_default_source(monkeypatch):
+    seen: dict = {}
+
+    async def fake_async(item, source_name, queue_row_id=None):
+        seen.update(item=item, source_name=source_name, queue_row_id=queue_row_id)
+        return 1
+
+    class InlineLoop:
+        def run_until_complete(self, coroutine):
+            return asyncio.run(coroutine)
+
+    import app.workers.celery_app as celery_app_module
+
+    monkeypatch.setattr(validation_tasks, "_validate_token_async", fake_async)
+    monkeypatch.setattr(celery_app_module, "get_worker_loop", lambda: InlineLoop())
+
+    assert validation_tasks.validate_token({}, queue_row_id="row-1") == 1
+    assert seen == {"item": {}, "source_name": "", "queue_row_id": "row-1"}
