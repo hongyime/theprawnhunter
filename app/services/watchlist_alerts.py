@@ -3,14 +3,15 @@
 The capture lane stores a message, then calls :func:`alert_on_matches`. This
 module evaluates the content through :func:`app.services.watchlists.evaluate`
 (which records hits and enforces duplicate suppression and cooldowns) and
-sends one compact Telegram alert per emitted hit to the control channel.
+sends one compact Telegram alert per emitted hit to the Watchlist Hits topic
+(with General as the fallback).
 
 Contract:
 * Best-effort only. Every failure path logs and returns ``0``; capture must
   never break because alerting failed.
 * Never log message content, matched text, or tokens.
 * Matching and delivery are reused from ``watchlists`` and
-  ``BroadcasterService.send_alert`` — nothing is reimplemented here.
+  ``BroadcasterService.send_watchlist_alert`` — nothing is reimplemented here.
 """
 
 from __future__ import annotations
@@ -18,13 +19,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from app.core.config import settings
+from app.core.database import db
 from app.core.logger import get_logger
+from app.infrastructure.database import execute_async
 from app.services import watchlists
 
 logger = get_logger(__name__)
 
 SNIPPET_LIMIT = 300
 CREDENTIAL_PREFIX_LENGTH = 8
+DEEPLINK_PREFIX = "📎 Open in Telegram: "
+DEEPLINK_TEMPLATE = "https://t.me/c/{internal_group_id}/{thread_id}/{msg_id}"
 
 
 def _short_credential(credential_id: Any) -> str:
@@ -35,24 +41,128 @@ def _short_credential(credential_id: Any) -> str:
     return value[:CREDENTIAL_PREFIX_LENGTH] or value
 
 
+def _internal_group_id(group_id: Any) -> str | None:
+    """Return the ``t.me/c`` form of a supergroup id (strip ``-100``/``-``)."""
+    if group_id is None:
+        return None
+    value = str(group_id).strip()
+    if not value:
+        return None
+    if value.startswith("-100"):
+        value = value[4:]
+    elif value.startswith("-"):
+        value = value[1:]
+    if not value.isdigit():
+        return None
+    return value
+
+
+def build_message_deeplink(
+    group_id: Any,
+    thread_id: Any,
+    msg_id: Any,
+) -> str | None:
+    """Build a Telegram deep link to a message inside a forum topic.
+
+    Pure and side-effect free. Returns ``None`` when any component is missing
+    or not a positive integer, so callers can silently omit the line.
+    """
+    internal_group_id = _internal_group_id(group_id)
+    if internal_group_id is None:
+        return None
+    try:
+        thread = int(thread_id)
+        message = int(msg_id)
+    except (TypeError, ValueError):
+        return None
+    if thread <= 0 or message <= 0:
+        return None
+    return DEEPLINK_TEMPLATE.format(
+        internal_group_id=internal_group_id,
+        thread_id=thread,
+        msg_id=message,
+    )
+
+
+async def _resolve_message_deeplink(
+    *,
+    message_id: Any,
+    credential_id: Any,
+) -> str | None:
+    """Best-effort deep link for a stored message; never raises.
+
+    Resolves the credential's forum topic through the broadcaster's own
+    ``ensure_topic`` path, then reads ``telegram_msg_id`` for the stored row.
+    Any missing piece (config, username, topic, message id) or any failure
+    omits the link.
+    """
+    group_id = getattr(settings, "MONITOR_GROUP_ID", None)
+    if group_id is None or not credential_id or message_id is None:
+        return None
+
+    try:
+        from app.services.broadcaster_srv import _username_from_meta
+        from app.workers.tasks.flow_tasks import get_broadcaster
+
+        credential_res = await execute_async(
+            db.table("discovered_credentials")
+            .select("meta")
+            .eq("id", credential_id)
+            .limit(1)
+        )
+        credential_rows = credential_res.data or []
+        username = (
+            _username_from_meta(credential_rows[0].get("meta"))
+            if credential_rows
+            else None
+        )
+        if not username:
+            return None
+
+        message_res = await execute_async(
+            db.table("exfiltrated_messages")
+            .select("telegram_msg_id")
+            .eq("id", message_id)
+            .limit(1)
+        )
+        message_rows = message_res.data or []
+        telegram_msg_id = (
+            message_rows[0].get("telegram_msg_id") if message_rows else None
+        )
+        if telegram_msg_id is None:
+            return None
+
+        thread_id = await get_broadcaster().ensure_topic(group_id, username)
+        return build_message_deeplink(group_id, thread_id, telegram_msg_id)
+    except Exception as exc:  # noqa: BLE001 - links must degrade silently
+        logger.warning(
+            f"[WatchlistAlert] deep link skipped for message {message_id}: {exc}"
+        )
+        return None
+
+
 def _build_alert_body(
     match: Mapping[str, Any],
     *,
     message_id: Any,
     credential_id: Any,
+    deeplink: str | None = None,
 ) -> str:
     """Build the compact alert body for a single watchlist hit."""
     name = str(match.get("name") or match.get("rule_id") or "unnamed rule")
     rule_id = str(match.get("rule_id") or "unknown")
     matched_text = str(match.get("matched_text") or "")[:SNIPPET_LIMIT]
     short_cred = _short_credential(match.get("credential_id") or credential_id)
-    return (
+    body = (
         f"Watchlist hit: {name}\n"
         f"Rule: {rule_id}\n"
         f"Credential: {short_cred}\n"
         f"Match: {matched_text}\n"
         f"Jump: credential {short_cred} / message {message_id}"
     )
+    if deeplink:
+        body = f"{body}\n{DEEPLINK_PREFIX}{deeplink}"
+    return body
 
 
 async def alert_on_matches(
@@ -88,6 +198,15 @@ async def alert_on_matches(
         logger.warning(f"[WatchlistAlert] broadcaster unavailable: {exc}")
         return 0
 
+    link_credential_id = credential_id or next(
+        (m.get("credential_id") for m in matches if m.get("credential_id")),
+        None,
+    )
+    deeplink = await _resolve_message_deeplink(
+        message_id=message_id,
+        credential_id=link_credential_id,
+    )
+
     sent = 0
     for match in matches:
         try:
@@ -95,8 +214,9 @@ async def alert_on_matches(
                 match,
                 message_id=message_id,
                 credential_id=credential_id,
+                deeplink=deeplink,
             )
-            delivered = await get_broadcaster().send_alert(body)
+            delivered = await get_broadcaster().send_watchlist_alert(body)
         except Exception as exc:  # noqa: BLE001 - one hit must not stop the rest
             logger.warning(
                 f"[WatchlistAlert] alert dispatch failed for message {message_id}: {exc}"
@@ -112,4 +232,10 @@ async def alert_on_matches(
     return sent
 
 
-__all__ = ["CREDENTIAL_PREFIX_LENGTH", "SNIPPET_LIMIT", "alert_on_matches"]
+__all__ = [
+    "CREDENTIAL_PREFIX_LENGTH",
+    "DEEPLINK_PREFIX",
+    "SNIPPET_LIMIT",
+    "alert_on_matches",
+    "build_message_deeplink",
+]

@@ -1,4 +1,8 @@
-"""TODO 20: system logs are delivered to a cached System Logs topic."""
+"""TODO 20: dedicated control topics are cached and General-fallback safe.
+
+Covers the System Logs topic and the Watchlist Hits topic, which share one
+topic-resolution implementation.
+"""
 
 import sys
 from types import SimpleNamespace
@@ -8,17 +12,21 @@ import pytest
 
 
 class _FakeRedis:
-    def __init__(self, cached=None):
+    def __init__(self, cached=None, store=None):
         self.cached = cached
+        self.store = dict(store or {})
         self.gets = []
         self.setex_calls = []
 
     def get(self, key):
         self.gets.append(key)
+        if key in self.store:
+            return self.store[key]
         return self.cached
 
     def setex(self, key, ttl, value):
         self.setex_calls.append((key, ttl, value))
+        self.store[key] = value
 
 
 class _FakeBot:
@@ -124,3 +132,121 @@ async def test_send_log_falls_back_to_general_when_topic_creation_fails(monkeypa
     assert "message_thread_id" not in bot.calls[0]
     assert fake_redis.setex_calls == []
     assert "falling back to General" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_send_watchlist_alert_uses_resolved_topic_and_caches_id(monkeypatch):
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    bot = _FakeBot()
+    service = _service(monkeypatch, bot, topic_id=909)
+
+    sent = await service.send_watchlist_alert("rule matched")
+
+    assert sent is True
+    service.ensure_topic.assert_awaited_once_with(-100123, "Watchlist Hits")
+    assert bot.calls == [
+        {
+            "chat_id": -100123,
+            "text": "👁️ [Watchlist]\nrule matched",
+            "message_thread_id": 909,
+        }
+    ]
+    assert fake_redis.setex_calls == [
+        ("topic:watchlist_hits:-100123", 86400, "909")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_watchlist_alert_uses_cached_topic_without_ensuring(monkeypatch):
+    fake_redis = _FakeRedis(cached="910")
+    _patch_redis(monkeypatch, fake_redis)
+    bot = _FakeBot()
+    service = _service(monkeypatch, bot, topic_id=909)
+
+    sent = await service.send_watchlist_alert("cached")
+
+    assert sent is True
+    service.ensure_topic.assert_not_awaited()
+    assert bot.calls[0]["message_thread_id"] == 910
+    assert fake_redis.setex_calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_watchlist_alert_falls_back_to_general_when_topic_creation_fails(
+    monkeypatch, caplog
+):
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    bot = _FakeBot()
+    service = _service(monkeypatch, bot, error=RuntimeError("topic create exploded"))
+
+    sent = await service.send_watchlist_alert("must still arrive")
+
+    assert sent is True
+    assert bot.calls == [
+        {
+            "chat_id": -100123,
+            "text": "👁️ [Watchlist]\nmust still arrive",
+        }
+    ]
+    assert "message_thread_id" not in bot.calls[0]
+    assert fake_redis.setex_calls == []
+    assert "falling back to General" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_shared_resolver_keeps_cached_topic_ids_independent(monkeypatch):
+    fake_redis = _FakeRedis(
+        store={
+            "topic:system_logs:-100123": "777",
+            "topic:watchlist_hits:-100123": "909",
+        }
+    )
+    _patch_redis(monkeypatch, fake_redis)
+    bot = _FakeBot()
+    service = _service(monkeypatch, bot, topic_id=111)
+
+    await service.send_log("log line")
+    await service.send_watchlist_alert("hit line")
+
+    service.ensure_topic.assert_not_awaited()
+    assert [call.get("message_thread_id") for call in bot.calls] == [777, 909]
+    assert fake_redis.setex_calls == []
+
+
+@pytest.mark.asyncio
+async def test_shared_resolver_caches_each_topic_under_its_own_key(monkeypatch):
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    bot = _FakeBot()
+    service = _service(monkeypatch, bot)
+
+    async def _ensure(_group_id, topic_name):
+        return {"System Logs": 777, "Watchlist Hits": 909}[topic_name]
+
+    service.ensure_topic = _ensure
+
+    await service.send_log("log line")
+    await service.send_watchlist_alert("hit line")
+
+    assert fake_redis.setex_calls == [
+        ("topic:system_logs:-100123", 86400, "777"),
+        ("topic:watchlist_hits:-100123", 86400, "909"),
+    ]
+    assert [call.get("message_thread_id") for call in bot.calls] == [777, 909]
+
+
+@pytest.mark.asyncio
+async def test_send_watchlist_alert_returns_false_when_every_identity_fails(
+    monkeypatch,
+):
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    bot = _FakeBot(error=RuntimeError("telegram down"))
+    service = _service(monkeypatch, bot, topic_id=909)
+
+    sent = await service.send_watchlist_alert("undeliverable")
+
+    assert sent is False
+    assert bot.calls[0]["message_thread_id"] == 909

@@ -45,11 +45,17 @@ for _android_package_ext in (".apk", ".apks", ".xapk"):
 # payload builder maps id 1 -> None.
 SYSTEM_LOGS_TOPIC_NAME = "System Logs"
 SYSTEM_LOGS_TOPIC_CACHE_TTL = 86400
+WATCHLIST_TOPIC_NAME = "Watchlist Hits"
+WATCHLIST_TOPIC_CACHE_TTL = 86400
 GENERAL_THREAD_ID = 1
 
 
 def _system_logs_topic_cache_key(group_id: int | str) -> str:
     return f"topic:system_logs:{group_id}"
+
+
+def _watchlist_topic_cache_key(group_id: int | str) -> str:
+    return f"topic:watchlist_hits:{group_id}"
 
 
 def _media_filename(file_meta: dict[str, Any], media_type: str) -> str | None:
@@ -867,8 +873,19 @@ class BroadcasterService:
             self._warn_system_log_failure(last_exc)
         return False
 
-    async def _resolve_system_logs_topic_id(self, group_id: int | str) -> int:
-        cache_key = _system_logs_topic_cache_key(group_id)
+    async def _resolve_named_topic_id(
+        self,
+        group_id: int | str,
+        topic_name: str,
+        cache_key: str,
+        *,
+        cache_ttl: int,
+    ) -> int:
+        """Resolve a named forum topic, caching its id in Redis.
+
+        Shared by every dedicated control-channel topic (System Logs,
+        Watchlist Hits) so they all use one Redis/TTL/``ensure_topic`` path.
+        """
         client = None
         try:
             import redis
@@ -878,15 +895,19 @@ class BroadcasterService:
             if cached is not None:
                 return int(cached)
         except Exception as exc:
-            logger.debug(f"[Broadcaster] System Logs topic cache read failed: {exc}")
+            logger.debug(
+                f"[Broadcaster] {topic_name} topic cache read failed: {exc}"
+            )
 
-        topic_id = await self.ensure_topic(group_id, SYSTEM_LOGS_TOPIC_NAME)
+        topic_id = await self.ensure_topic(group_id, topic_name)
 
         if client is not None:
             try:
-                client.setex(cache_key, SYSTEM_LOGS_TOPIC_CACHE_TTL, str(topic_id))
+                client.setex(cache_key, cache_ttl, str(topic_id))
             except Exception as exc:
-                logger.debug(f"[Broadcaster] System Logs topic cache write failed: {exc}")
+                logger.debug(
+                    f"[Broadcaster] {topic_name} topic cache write failed: {exc}"
+                )
 
         return topic_id
 
@@ -899,7 +920,12 @@ class BroadcasterService:
         group_id = settings.MONITOR_GROUP_ID
         topic_id: int | None = None
         try:
-            topic_id = await self._resolve_system_logs_topic_id(group_id)
+            topic_id = await self._resolve_named_topic_id(
+                group_id,
+                SYSTEM_LOGS_TOPIC_NAME,
+                _system_logs_topic_cache_key(group_id),
+                cache_ttl=SYSTEM_LOGS_TOPIC_CACHE_TTL,
+            )
         except Exception as exc:
             logger.warning(
                 f"[Broadcaster] System Logs topic unavailable for {group_id}; "
@@ -916,6 +942,33 @@ class BroadcasterService:
         return await self._send_control_message(
             f"🚨 [Alert]\n{message}",
             message_thread_id=GENERAL_THREAD_ID,
+        )
+
+    async def send_watchlist_alert(self, message: str) -> bool:
+        """Sends a watchlist hit to the Watchlist Hits topic, falling back to General.
+
+        Uses the shared control-channel delivery path, so identity rotation and
+        the control-channel rate limiter behave exactly as they do for
+        ``send_log``. Never raises into callers.
+        """
+        group_id = settings.MONITOR_GROUP_ID
+        topic_id: int | None = None
+        try:
+            topic_id = await self._resolve_named_topic_id(
+                group_id,
+                WATCHLIST_TOPIC_NAME,
+                _watchlist_topic_cache_key(group_id),
+                cache_ttl=WATCHLIST_TOPIC_CACHE_TTL,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[Broadcaster] Watchlist Hits topic unavailable for {group_id}; "
+                f"falling back to General: {exc}"
+            )
+
+        return await self._send_control_message(
+            f"👁️ [Watchlist]\n{message}",
+            message_thread_id=topic_id,
         )
 
     async def send_to_thread(

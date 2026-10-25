@@ -21,9 +21,81 @@ def _hit(rule_id="rule-1", name="AWS keys", matched_text="AKIAEXAMPLE"):
     }
 
 
+class _FakeQuery:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def select(self, *_args, **_kwargs):
+        return self
+
+    def eq(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
+    def execute(self):
+        return SimpleNamespace(data=list(self._rows))
+
+
+class _FakeDB:
+    """Minimal PostgREST-shaped fake: one fixed row set per table."""
+
+    def __init__(self, tables):
+        self.tables = tables
+        self.requested = []
+
+    def table(self, name):
+        self.requested.append(name)
+        return _FakeQuery(self.tables.get(name, []))
+
+
+def _patch_deeplink_tables(
+    monkeypatch,
+    broadcaster,
+    *,
+    group_id=-1001234567890,
+    credential_rows=None,
+    message_rows=None,
+    thread_id=789,
+):
+    """Wire config/DB/topic resolution for a successful deep link."""
+    if credential_rows is None:
+        credential_rows = [{"meta": {"bot_username": "@format_fm_bot"}}]
+    if message_rows is None:
+        message_rows = [{"telegram_msg_id": 456}]
+    monkeypatch.setattr(
+        watchlist_alerts,
+        "settings",
+        SimpleNamespace(MONITOR_GROUP_ID=group_id),
+    )
+    fake_db = _FakeDB(
+        {
+            "discovered_credentials": credential_rows,
+            "exfiltrated_messages": message_rows,
+        }
+    )
+    monkeypatch.setattr(watchlist_alerts, "db", fake_db)
+    broadcaster.ensure_topic = AsyncMock(return_value=thread_id)
+    return fake_db
+
+
+@pytest.fixture(autouse=True)
+def _no_deeplink_config(monkeypatch):
+    """Keep existing tests offline: no group id means no DB/topic lookup."""
+    monkeypatch.setattr(
+        watchlist_alerts,
+        "settings",
+        SimpleNamespace(MONITOR_GROUP_ID=None),
+    )
+
+
 @pytest.fixture
 def broadcaster(monkeypatch):
-    fake = SimpleNamespace(send_alert=AsyncMock(return_value=True))
+    fake = SimpleNamespace(
+        send_watchlist_alert=AsyncMock(return_value=True),
+        send_alert=AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         "app.workers.tasks.flow_tasks.get_broadcaster", lambda: fake
     )
@@ -49,8 +121,9 @@ async def test_one_match_sends_exactly_one_alert_with_expected_fields(
     )
 
     assert sent == 1
-    assert broadcaster.send_alert.await_count == 1
-    body = broadcaster.send_alert.await_args.args[0]
+    assert broadcaster.send_watchlist_alert.await_count == 1
+    broadcaster.send_alert.assert_not_awaited()
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
     assert "AWS keys" in body
     assert "12345678" in body
     assert "AKIAEXAMPLE" in body
@@ -72,7 +145,7 @@ async def test_matched_text_is_truncated_to_300_chars(monkeypatch, broadcaster):
     )
 
     assert sent == 1
-    body = broadcaster.send_alert.await_args.args[0]
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
     assert "x" * 300 in body
     assert "x" * 301 not in body
 
@@ -86,7 +159,7 @@ async def test_no_match_sends_nothing(monkeypatch, broadcaster):
     )
 
     assert sent == 0
-    broadcaster.send_alert.assert_not_awaited()
+    broadcaster.send_watchlist_alert.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -99,13 +172,13 @@ async def test_cooldown_returns_no_hits_and_sends_nothing(monkeypatch, broadcast
     )
 
     assert sent == 0
-    broadcaster.send_alert.assert_not_awaited()
+    broadcaster.send_watchlist_alert.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_broadcaster_failure_is_swallowed(monkeypatch, broadcaster, caplog):
     _mock_evaluate(monkeypatch, [_hit()])
-    broadcaster.send_alert.side_effect = RuntimeError("telegram down")
+    broadcaster.send_watchlist_alert.side_effect = RuntimeError("telegram down")
 
     with caplog.at_level(logging.WARNING, logger="app.services.watchlist_alerts"):
         sent = await watchlist_alerts.alert_on_matches(
@@ -129,7 +202,7 @@ async def test_evaluate_failure_is_swallowed(monkeypatch, broadcaster, caplog):
         )
 
     assert sent == 0
-    broadcaster.send_alert.assert_not_awaited()
+    broadcaster.send_watchlist_alert.assert_not_awaited()
     assert "evaluation failed" in caplog.text
 
 
@@ -148,8 +221,8 @@ async def test_two_matching_rules_send_two_alerts(monkeypatch, broadcaster):
     )
 
     assert sent == 2
-    assert broadcaster.send_alert.await_count == 2
-    bodies = [call.args[0] for call in broadcaster.send_alert.await_args_list]
+    assert broadcaster.send_watchlist_alert.await_count == 2
+    bodies = [call.args[0] for call in broadcaster.send_watchlist_alert.await_args_list]
     assert any("Rule one" in body and "first" in body for body in bodies)
     assert any("Rule two" in body and "second" in body for body in bodies)
 
@@ -169,7 +242,7 @@ async def test_duplicate_message_evaluates_once_per_rule(monkeypatch, broadcaste
     )
 
     assert (first, second) == (1, 0)
-    assert broadcaster.send_alert.await_count == 1
+    assert broadcaster.send_watchlist_alert.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -207,3 +280,103 @@ async def test_broadcast_call_site_survives_helper_exception(monkeypatch, caplog
 
     assert result is None
     assert "watchlist alert skipped" in caplog.text
+
+
+def test_build_message_deeplink_normalizes_supergroup_ids():
+    expected = "https://t.me/c/1234567890/789/456"
+    assert watchlist_alerts.build_message_deeplink("-1001234567890", 789, 456) == expected
+    assert watchlist_alerts.build_message_deeplink(-1001234567890, 789, 456) == expected
+    assert watchlist_alerts.build_message_deeplink("-1234567890", 789, 456) == expected
+    # Missing or non-numeric components omit the link.
+    assert watchlist_alerts.build_message_deeplink(None, 789, 456) is None
+    assert watchlist_alerts.build_message_deeplink("-1001234567890", 789, None) is None
+    assert watchlist_alerts.build_message_deeplink("-1001234567890", "topic", 456) is None
+
+
+@pytest.mark.asyncio
+async def test_alert_appends_exact_deeplink_to_watchlist_body(monkeypatch, broadcaster):
+    _mock_evaluate(monkeypatch, [_hit()])
+    fake_db = _patch_deeplink_tables(monkeypatch, broadcaster)
+
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert body.endswith(
+        "📎 Open in Telegram: https://t.me/c/1234567890/789/456"
+    )
+    broadcaster.ensure_topic.assert_awaited_once_with(
+        -1001234567890, "@format_fm_bot"
+    )
+    assert fake_db.requested == ["discovered_credentials", "exfiltrated_messages"]
+
+
+@pytest.mark.asyncio
+async def test_string_group_id_produces_correct_internal_id(monkeypatch, broadcaster):
+    _mock_evaluate(monkeypatch, [_hit()])
+    _patch_deeplink_tables(
+        monkeypatch, broadcaster, group_id="-1001234567890"
+    )
+
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert "https://t.me/c/1234567890/789/456" in body
+
+
+@pytest.mark.asyncio
+async def test_null_telegram_msg_id_omits_link_but_sends_alert(
+    monkeypatch, broadcaster
+):
+    _mock_evaluate(monkeypatch, [_hit()])
+    _patch_deeplink_tables(
+        monkeypatch, broadcaster, message_rows=[{"telegram_msg_id": None}]
+    )
+
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert "AKIAEXAMPLE" in body
+    assert "Open in Telegram" not in body
+
+
+@pytest.mark.asyncio
+async def test_ensure_topic_failure_omits_link_but_sends_alert(
+    monkeypatch, broadcaster
+):
+    _mock_evaluate(monkeypatch, [_hit()])
+    _patch_deeplink_tables(monkeypatch, broadcaster)
+    broadcaster.ensure_topic = AsyncMock(side_effect=RuntimeError("topic exploded"))
+
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert "AKIAEXAMPLE" in body
+    assert "Open in Telegram" not in body
+
+
+@pytest.mark.asyncio
+async def test_missing_monitor_group_id_omits_link_but_sends_alert(
+    monkeypatch, broadcaster
+):
+    _mock_evaluate(monkeypatch, [_hit()])
+    # The autouse fixture already leaves MONITOR_GROUP_ID unset; no DB is wired.
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert "AKIAEXAMPLE" in body
+    assert "Open in Telegram" not in body
