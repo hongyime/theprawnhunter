@@ -283,6 +283,7 @@ app.conf.update(
         "validation.*": {"queue": "validation"},
         "pivot.*": {"queue": "validation"},
         "firehose.*": {"queue": "scanners"},
+        "heavy.*": {"queue": "heavy"},
     },
     beat_schedule={
         # ============================================
