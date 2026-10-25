@@ -76,12 +76,19 @@ class SearchMatchOut(BaseModel):
     broadcasted_at: datetime | None = None
 
 class SearchOut(BaseModel):
-    """Response envelope for /monitor/search."""
+    """Response envelope for /monitor/search.
+
+    ``degraded`` is only set when the query could not be served at full
+    fidelity (for example the ILIKE fallback hit the statement timeout). The
+    route still returns HTTP 200 with an empty/partial ``matches`` list so
+    dashboards can show a notice instead of an error page.
+    """
 
     query: str
     match_count: int
     limit: int
     matches: list[SearchMatchOut] = Field(default_factory=list)
+    degraded: str | None = None
 
 class ScanRequest(BaseModel):
     source: str = "shodan"

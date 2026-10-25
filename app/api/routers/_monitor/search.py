@@ -29,6 +29,10 @@ _SEARCH_SELECT = (
 # deployed yet (migration pending) or fails transiently.
 _fts_fallback_warned = False
 
+# Same once-per-process policy for a failed/degraded ILIKE fallback: a timeout
+# repeats on every request and must not flood the logs.
+_ilike_degraded_warned = False
+
 
 def _warn_fts_fallback(exc: Exception) -> None:
     global _fts_fallback_warned
@@ -38,6 +42,26 @@ def _warn_fts_fallback(exc: Exception) -> None:
     logger.warning(
         "monitor/search FTS RPC unavailable (%s); falling back to ILIKE", exc
     )
+
+
+def _warn_ilike_degraded(exc: Exception) -> None:
+    global _ilike_degraded_warned
+    if _ilike_degraded_warned:
+        return
+    _ilike_degraded_warned = True
+    logger.warning(
+        "monitor/search ILIKE fallback unavailable (%s); returning a degraded "
+        "empty result set",
+        exc,
+    )
+
+
+def _is_statement_timeout(exc: Exception) -> bool:
+    """True when PostgREST surfaced PostgreSQL's 57014 statement timeout."""
+    if getattr(exc, "code", None) == "57014":
+        return True
+    text = str(exc).lower()
+    return "57014" in text or "statement timeout" in text
 
 
 async def _fts_search(
@@ -166,6 +190,7 @@ async def search_messages(
     limit = min(max(limit, 1), _SEARCH_LIMIT_MAX)
 
     matches: list[dict[str, Any]] | None = None
+    degraded: str | None = None
     if len(query) >= _FTS_MIN_QUERY_LEN:
         try:
             matches = await _fts_search(query, credential_id, limit)
@@ -180,15 +205,25 @@ async def search_messages(
                 query, limit, credential_id, media_only, since_hours
             )
         except Exception as exc:
-            logger.exception("monitor/search query failed")
-            raise HTTPException(status_code=500, detail="Internal error") from exc
+            # A DB failure in the fallback must not turn into a 500: the
+            # dashboard renders an empty result set with a notice instead.
+            _warn_ilike_degraded(exc)
+            matches = []
+            degraded = (
+                "query timed out"
+                if _is_statement_timeout(exc)
+                else "query unavailable"
+            )
 
-    return {
+    payload: dict[str, Any] = {
         "query": q,
         "match_count": len(matches),
         "limit": limit,
         "matches": matches,
     }
+    if degraded is not None:
+        payload["degraded"] = degraded
+    return payload
 
 
 # Semantic search degrades instead of erroring: any embed-api problem returns

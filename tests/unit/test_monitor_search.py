@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from postgrest.exceptions import APIError
 
 from app.api.routers._monitor import search as search_mod
 from app.schemas.models import SearchMatchOut, SearchOut
@@ -120,6 +121,18 @@ def _call(**kwargs):
 def _use_db(monkeypatch, fake_db):
     monkeypatch.setattr(search_mod, "db", fake_db)
     monkeypatch.setattr(search_mod, "_fts_fallback_warned", False)
+    monkeypatch.setattr(search_mod, "_ilike_degraded_warned", False)
+
+
+def _statement_timeout_error() -> APIError:
+    return APIError(
+        {
+            "message": "canceling statement due to statement timeout",
+            "code": "57014",
+            "details": None,
+            "hint": None,
+        }
+    )
 
 
 def test_fts_path_passes_clamped_limit_and_credential_id(monkeypatch):
@@ -202,19 +215,68 @@ def test_fts_failure_warns_once(monkeypatch, caplog):
     assert warnings[0].levelno == logging.WARNING
 
 
-def test_ilike_failure_still_returns_500(monkeypatch):
+def test_ilike_statement_timeout_degrades_to_200(monkeypatch):
+    fake_db = _FakeDB(
+        table_error=_statement_timeout_error(),
+        rpc_error=Exception("Operator authorization required"),
+    )
+    _use_db(monkeypatch, fake_db)
+
+    body = _call(q="telegram", limit=3)
+
+    assert body["match_count"] == 0
+    assert body["matches"] == []
+    assert body["degraded"] == "query timed out"
+
+
+def test_ilike_timeout_warns_once(monkeypatch, caplog):
+    fake_db = _FakeDB(
+        table_error=_statement_timeout_error(),
+        rpc_error=Exception("Operator authorization required"),
+    )
+    _use_db(monkeypatch, fake_db)
+
+    with caplog.at_level(logging.WARNING, logger=search_mod.logger.name):
+        _call(q="telegram")
+        _call(q="telegram")
+
+    warnings = [
+        record
+        for record in caplog.records
+        if "ILIKE fallback unavailable" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].levelno == logging.WARNING
+
+
+def test_ilike_generic_failure_degrades_instead_of_500(monkeypatch):
     fake_db = _FakeDB(table_error=Exception("db down"), rpc_error=Exception("PGRST202"))
     _use_db(monkeypatch, fake_db)
 
-    with pytest.raises(search_mod.HTTPException) as exc_info:
-        _call(q="bitcoin")
+    body = _call(q="bitcoin")
 
-    assert exc_info.value.status_code == 500
+    assert body["match_count"] == 0
+    assert body["matches"] == []
+    assert body["degraded"] == "query unavailable"
+
+
+def test_fts_success_path_never_touches_ilike(monkeypatch):
+    fake_db = _FakeDB(rpc_rows=FTS_ROWS)
+    _use_db(monkeypatch, fake_db)
+
+    body = _call(q="telegram", limit=3)
+
+    assert [name for name, _ in fake_db.rpc_calls] == ["search_evidence"]
+    assert fake_db.table_calls == []
+    assert body["match_count"] == 1
+    assert body["matches"][0]["snippet"] == "<b>bitcoin</b> wallet dump"
+    assert "degraded" not in body
 
 
 def test_response_model_exposes_snippet_and_keeps_legacy_fields():
     assert "snippet" in SearchMatchOut.model_fields
     assert SearchMatchOut.model_fields["snippet"].default is None
+    assert SearchOut.model_fields["degraded"].default is None
 
     payload = SearchOut(
         query="bitcoin",
