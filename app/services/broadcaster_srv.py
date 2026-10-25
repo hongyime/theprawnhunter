@@ -39,6 +39,18 @@ ANDROID_PACKAGE_MIME = "application/vnd.android.package-archive"
 for _android_package_ext in (".apk", ".apks", ".xapk"):
     mimetypes.add_type(ANDROID_PACKAGE_MIME, _android_package_ext, strict=False)
 
+# IS-2: General carries only high-signal alerts; routine system chatter goes to
+# a dedicated topic. "General" is topic id 1, but the Telegram Bot API expects
+# `message_thread_id` to be omitted for General (see send_to_thread), so the
+# payload builder maps id 1 -> None.
+SYSTEM_LOGS_TOPIC_NAME = "System Logs"
+SYSTEM_LOGS_TOPIC_CACHE_TTL = 86400
+GENERAL_THREAD_ID = 1
+
+
+def _system_logs_topic_cache_key(group_id: int | str) -> str:
+    return f"topic:system_logs:{group_id}"
+
 
 def _media_filename(file_meta: dict[str, Any], media_type: str) -> str | None:
     raw_name = file_meta.get("file_name") if isinstance(file_meta, dict) else None
@@ -777,23 +789,99 @@ class BroadcasterService:
             else:
                 logger.debug(f"Suppressed repeated Telegram log send failure: {exc}")
 
+    async def _send_control_message(
+        self,
+        text: str,
+        *,
+        message_thread_id: int | None = None,
+    ) -> bool:
+        """Best-effort control-channel delivery; rotates identities, never raises."""
+        if not self._pool:
+            return False
+
+        last_exc: BaseException | None = None
+        for _ in range(len(self._pool)):
+            identity = next(self._cycle)
+            if identity.get("type") != "bot":
+                continue
+
+            token = identity["id"]
+            if token in self._failed_tokens:
+                continue
+
+            try:
+                await self._wait_for_rate_limit()
+                bot = self._get_bot_instance(token)
+                payload: dict[str, Any] = {
+                    "chat_id": settings.MONITOR_GROUP_ID,
+                    "text": text,
+                }
+                if message_thread_id and message_thread_id != GENERAL_THREAD_ID:
+                    payload["message_thread_id"] = message_thread_id
+                await bot.send_message(**payload)
+                return True
+            except Forbidden as exc:
+                self._failed_tokens.add(token)
+                last_exc = exc
+                logger.warning(f"⚠️ Control message bot {token[:10]}... kicked. Rotating...")
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(f"⚠️ Control message bot {token[:10]}... failed: {exc}")
+
+        if last_exc is not None:
+            self._warn_system_log_failure(last_exc)
+        return False
+
+    async def _resolve_system_logs_topic_id(self, group_id: int | str) -> int:
+        cache_key = _system_logs_topic_cache_key(group_id)
+        client = None
+        try:
+            import redis
+
+            client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            cached = client.get(cache_key)
+            if cached is not None:
+                return int(cached)
+        except Exception as exc:
+            logger.debug(f"[Broadcaster] System Logs topic cache read failed: {exc}")
+
+        topic_id = await self.ensure_topic(group_id, SYSTEM_LOGS_TOPIC_NAME)
+
+        if client is not None:
+            try:
+                client.setex(cache_key, SYSTEM_LOGS_TOPIC_CACHE_TTL, str(topic_id))
+            except Exception as exc:
+                logger.debug(f"[Broadcaster] System Logs topic cache write failed: {exc}")
+
+        return topic_id
+
     async def send_log(self, message: str):
-        """Sends a log to the General topic using a healthy bot."""
+        """Sends a log to the System Logs topic, falling back to General."""
         if not self._acquire_system_log_slot():
             logger.debug("Suppressed Telegram system log due to rate limit")
             return False
 
-        await self._wait_for_rate_limit()
+        group_id = settings.MONITOR_GROUP_ID
+        topic_id: int | None = None
         try:
-            bot = self._get_bot_instance(self.bot_tokens[0])
-            await bot.send_message(
-                chat_id=settings.MONITOR_GROUP_ID,
-                text=f"🤖 [System Log]\n{message}"
+            topic_id = await self._resolve_system_logs_topic_id(group_id)
+        except Exception as exc:
+            logger.warning(
+                f"[Broadcaster] System Logs topic unavailable for {group_id}; "
+                f"falling back to General: {exc}"
             )
-            return True
-        except Exception as e:
-            self._warn_system_log_failure(e)
-            return False
+
+        return await self._send_control_message(
+            f"🤖 [System Log]\n{message}",
+            message_thread_id=topic_id,
+        )
+
+    async def send_alert(self, message: str) -> bool:
+        """Sends a high-signal alert to General; never raises into callers."""
+        return await self._send_control_message(
+            f"🚨 [Alert]\n{message}",
+            message_thread_id=GENERAL_THREAD_ID,
+        )
 
     async def send_to_thread(
         self,
