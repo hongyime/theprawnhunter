@@ -110,6 +110,25 @@ class Settings(BaseSettings):
     TELEGRAM_LOG_MIN_INTERVAL_SECONDS: float = 2.0
     TELEGRAM_LOG_FAILURE_WARN_INTERVAL_SECONDS: int = 60
 
+    # Validation queue
+    # Local dispatcher leases rows from the shared validation queue and fans
+    # them out to the `validation` Celery queue. BATCH caps rows leased per
+    # beat tick, INTERVAL is the dispatcher cadence, LEASE is the reclaim
+    # window for abandoned leases, and MAX_ATTEMPTS bounds retries (0 allowed).
+    VALIDATION_DISPATCH_BATCH: int = 50
+    VALIDATION_DISPATCH_INTERVAL_SECONDS: int = 15
+    VALIDATION_LEASE_SECONDS: int = 300
+    VALIDATION_QUEUE_MAX_ATTEMPTS: int = 3
+
+    # Outposts (multi-IP) — DISABLED by default
+    # Remote runners lease validation work in batches sized by LEASE_SIZE and
+    # hold each lease for LEASE_SECONDS. MAX_ACTIVE caps concurrent outposts.
+    # Code ships disabled; enable only after provisioning the remote host.
+    OUTPOST_ENABLED: bool = False
+    OUTPOST_LEASE_SIZE: int = 25
+    OUTPOST_LEASE_SECONDS: int = 300
+    OUTPOST_MAX_ACTIVE: int = 3
+
     # Honeypot mode — after successful takeover of a stolen webhook, optionally
     # re-register a webhook pointing to OUR public receiver so we can observe
     # what the attacker's C2 was expecting to receive. Requires a public HTTPS
@@ -270,6 +289,21 @@ class Settings(BaseSettings):
             raise ValueError('PSEUDONYMIZATION_KEY must be at least 32 characters when set')
         return v
 
+    @field_validator(
+        'VALIDATION_DISPATCH_BATCH',
+        'VALIDATION_DISPATCH_INTERVAL_SECONDS',
+        'VALIDATION_LEASE_SECONDS',
+        'VALIDATION_QUEUE_MAX_ATTEMPTS',
+        'OUTPOST_LEASE_SIZE',
+        'OUTPOST_LEASE_SECONDS',
+        'OUTPOST_MAX_ACTIVE',
+    )
+    @classmethod
+    def validate_non_negative_ints(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError('value must not be negative')
+        return v
+
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"),
         env_file_encoding="utf-8",
@@ -277,4 +311,9 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+
+def outposts_enabled() -> bool:
+    """Runtime gate for multi-IP outpost leasing (disabled by default)."""
+    return bool(settings.OUTPOST_ENABLED)
 
