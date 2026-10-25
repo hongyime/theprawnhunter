@@ -1,13 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react";
+import {
+    Fragment,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState,
+} from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import {
     ChevronDown,
+    ChevronLeft,
+    ChevronRight,
     ChevronUp,
     FileDown,
     Globe2,
+    ImageOff,
     LucideSend,
     RefreshCw,
     Search as SearchIcon,
@@ -31,6 +41,35 @@ const EVIDENCE_EVENT = "insert";
 const POLL_ENABLED = process.env.NEXT_PUBLIC_CHAT_POLL_ENABLED !== "false";
 const SCROLL_TOP_THRESHOLD = 40;
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 120;
+const THUMB_BUCKET = "evidence-thumbs";
+const THUMB_URL_TTL_SECONDS = 3600;
+// Re-sign shortly before Supabase's 1h expiry instead of caching forever.
+const THUMB_REFRESH_SAFETY_MS = 60_000;
+const THUMB_FAILURE_RETRY_MS = 60_000;
+
+// Dark-mode-accessible avatar colours: every entry carries white text at >= 4.5:1.
+const SENDER_PALETTE = [
+    "#be123c",
+    "#c2410c",
+    "#b45309",
+    "#047857",
+    "#0f766e",
+    "#0369a1",
+    "#4338ca",
+    "#7e22ce",
+] as const;
+
+interface ThumbCacheEntry {
+    url: string | null;
+    expiresAt: number;
+}
+
+interface GalleryItem {
+    id: string;
+    url: string | null;
+    mediaType: string;
+    label: string;
+}
 
 const useIsomorphicLayoutEffect =
     typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -50,6 +89,8 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     const [loadingOlder, setLoadingOlder] = useState(false);
     const [olderError, setOlderError] = useState<string | null>(null);
     const [hasMore, setHasMore] = useState(true);
+    const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
+    const [, setThumbTick] = useState(0);
     const bottomRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -59,6 +100,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     const loadingInitialRef = useRef(false);
     const pendingPrependScrollRef = useRef<number | null>(null);
     const lastNewestIdRef = useRef<string | null>(null);
+    const thumbCacheRef = useRef<Map<string, ThumbCacheEntry>>(new Map());
     const credentialId = credential?.id;
 
     const trimmedQuery = searchQuery.trim();
@@ -75,6 +117,8 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     useEffect(() => {
         clearSearch();
         setRetryToken(0);
+        thumbCacheRef.current.clear();
+        setGalleryIndex(null);
     }, [credentialId, clearSearch]);
 
     useEffect(() => {
@@ -359,6 +403,76 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
         if (delta > 0) container.scrollTop += delta;
     }, [messages]);
 
+    useEffect(() => {
+        if (!session || messages.length === 0) return;
+        const now = Date.now();
+        const missing = messages.filter((message) => {
+            if (!message.file_meta?.thumb_path) return false;
+            const cached = thumbCacheRef.current.get(message.id);
+            return !cached || cached.expiresAt <= now;
+        });
+        if (missing.length === 0) return;
+
+        let cancelled = false;
+
+        void (async () => {
+            const signed = await Promise.all(
+                missing.map(async (message) => {
+                    const path = message.file_meta?.thumb_path;
+                    if (!path) return null;
+                    try {
+                        const { data, error } = await supabase.storage
+                            .from(THUMB_BUCKET)
+                            .createSignedUrl(path, THUMB_URL_TTL_SECONDS);
+                        if (error || !data?.signedUrl) {
+                            return {
+                                id: message.id,
+                                url: null,
+                                expiresAt: Date.now() + THUMB_FAILURE_RETRY_MS,
+                            };
+                        }
+                        return {
+                            id: message.id,
+                            url: data.signedUrl,
+                            expiresAt:
+                                Date.now() +
+                                THUMB_URL_TTL_SECONDS * 1000 -
+                                THUMB_REFRESH_SAFETY_MS,
+                        };
+                    } catch {
+                        return {
+                            id: message.id,
+                            url: null,
+                            expiresAt: Date.now() + THUMB_FAILURE_RETRY_MS,
+                        };
+                    }
+                }),
+            );
+
+            if (cancelled) return;
+            for (const entry of signed) {
+                if (!entry) continue;
+                const { id, ...cacheEntry } = entry;
+                thumbCacheRef.current.set(id, cacheEntry);
+            }
+            if (signed.some(Boolean)) setThumbTick((value) => value + 1);
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [messages, session]);
+
+    useEffect(() => {
+        if (galleryIndex === null) return;
+        const count = messages.filter((message) => message.file_meta?.thumb_path).length;
+        if (count === 0) {
+            setGalleryIndex(null);
+        } else if (galleryIndex >= count) {
+            setGalleryIndex(count - 1);
+        }
+    }, [messages, galleryIndex]);
+
     if (!credential) {
         return (
             <div className="flex-1 flex items-center justify-center bg-slate-200 text-slate-600">
@@ -416,6 +530,20 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                     : trimmedQuery
                         ? "Type one more character to search."
                         : "Press / to search this chat.";
+
+    const galleryItems: GalleryItem[] = messages
+        .filter((message) => Boolean(message.file_meta?.thumb_path))
+        .map((message) => ({
+            id: message.id,
+            url: cachedThumbUrl(thumbCacheRef.current, message.id),
+            mediaType: message.media_type || "media",
+            label: displayNameFor(message),
+        }));
+    const galleryItem = galleryIndex === null ? undefined : galleryItems[galleryIndex];
+    const openGallery = (messageId: string) => {
+        const index = galleryItems.findIndex((item) => item.id === messageId);
+        if (index >= 0) setGalleryIndex(index);
+    };
 
     return (
         <div className="flex-1 flex flex-col h-full bg-[#E5DDD5]">
@@ -606,30 +734,263 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 Beginning of history
                             </p>
                         ) : null}
-                        {messages.filter(m => m.content).map((message, i) => (
-                            <div key={message.id || i} className="bg-white rounded-lg p-2 shadow-sm">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-semibold text-slate-800">
-                                        {message.sender_pseudonym || "Unknown"}
-                                    </span>
-                                    <span className="text-xs text-slate-400">
-                                        {new Date(message.created_at).toLocaleString()}
+                        {groupMessagesByDay(messages.filter((m) => m.content)).map((group) => (
+                            <Fragment key={group.key}>
+                                <div
+                                    role="separator"
+                                    data-testid="day-separator"
+                                    aria-label={group.label}
+                                    className="sticky top-0 z-10 flex justify-center py-1"
+                                >
+                                    <span className="rounded-full bg-white/90 px-3 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-slate-500 shadow-sm backdrop-blur">
+                                        {group.label}
                                     </span>
                                 </div>
-                                <p className="text-sm text-slate-700 whitespace-pre-wrap">
-                                    {message.content}
-                                </p>
-                                {message.media_type && message.media_type !== "text" && (
-                                    <div className="mt-1 text-xs text-cyan-600 flex items-center gap-1">
-                                        <FileDown className="h-3 w-3" />
-                                        {message.media_type}
-                                    </div>
-                                )}
-                            </div>
+                                {group.messages.map((message) => {
+                                    const name = displayNameFor(message);
+                                    const colorIndex = senderColorIndex(
+                                        senderIdentityKey(message),
+                                    );
+                                    const thumbPath = message.file_meta?.thumb_path;
+                                    const thumbUrl = thumbPath
+                                        ? cachedThumbUrl(thumbCacheRef.current, message.id)
+                                        : null;
+                                    const timestamp = new Date(message.created_at).toLocaleString();
+                                    return (
+                                        <div
+                                            key={message.id}
+                                            className="group flex items-start gap-2"
+                                        >
+                                            <span
+                                                role="img"
+                                                aria-label={name}
+                                                title={name}
+                                                data-testid="sender-avatar"
+                                                data-color={String(colorIndex)}
+                                                style={{ backgroundColor: SENDER_PALETTE[colorIndex] }}
+                                                className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                                            >
+                                                {senderInitials(name)}
+                                            </span>
+                                            <div className="min-w-0 flex-1 bg-white rounded-lg p-2 shadow-sm">
+                                                <div className="mb-1 flex items-center gap-2">
+                                                    <span className="truncate text-xs font-semibold text-slate-800">
+                                                        {name}
+                                                    </span>
+                                                    <time
+                                                        dateTime={message.created_at}
+                                                        title={timestamp}
+                                                        tabIndex={0}
+                                                        className="ml-auto whitespace-nowrap text-[11px] text-slate-400 opacity-100 transition-opacity focus:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                                                    >
+                                                        {timestamp}
+                                                    </time>
+                                                </div>
+                                                <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                                                    {message.content}
+                                                </p>
+                                                {thumbPath && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openGallery(message.id)}
+                                                        aria-label={`Open media preview for ${name}`}
+                                                        className="mt-1 overflow-hidden rounded border border-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                                    >
+                                                        {thumbUrl ? (
+                                                            <img
+                                                                src={thumbUrl}
+                                                                alt={`${message.media_type || "media"} thumbnail from ${name}`}
+                                                                className="h-14 w-14 object-cover"
+                                                            />
+                                                        ) : (
+                                                            <span
+                                                                data-testid="thumb-placeholder"
+                                                                className="flex h-14 w-14 flex-col items-center justify-center gap-0.5 bg-slate-100 text-[9px] uppercase tracking-wide text-slate-500"
+                                                            >
+                                                                <ImageOff
+                                                                    aria-hidden="true"
+                                                                    className="h-4 w-4"
+                                                                />
+                                                                <span>media</span>
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                )}
+                                                {message.media_type && message.media_type !== "text" && (
+                                                    <div className="mt-1 text-xs text-cyan-600 flex items-center gap-1">
+                                                        <FileDown className="h-3 w-3" />
+                                                        {message.media_type}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </Fragment>
                         ))}
                         <div ref={bottomRef} />
                     </>
                 )}
+            </div>
+            {galleryItem && galleryIndex !== null && (
+                <MediaGallery
+                    items={galleryItems}
+                    index={galleryIndex}
+                    onIndexChange={setGalleryIndex}
+                    onClose={() => setGalleryIndex(null)}
+                />
+            )}
+        </div>
+    );
+}
+
+function MediaGallery({
+    items,
+    index,
+    onIndexChange,
+    onClose,
+}: {
+    items: GalleryItem[];
+    index: number;
+    onIndexChange: (index: number) => void;
+    onClose: () => void;
+}) {
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const closeRef = useRef<HTMLButtonElement>(null);
+    const indexRef = useRef(index);
+    const itemsLengthRef = useRef(items.length);
+    const onCloseRef = useRef(onClose);
+    const onIndexChangeRef = useRef(onIndexChange);
+    indexRef.current = index;
+    itemsLengthRef.current = items.length;
+    onCloseRef.current = onClose;
+    onIndexChangeRef.current = onIndexChange;
+
+    useEffect(() => {
+        const previouslyFocused = document.activeElement as HTMLElement | null;
+        closeRef.current?.focus();
+
+        function handleKeyDown(event: KeyboardEvent) {
+            const currentIndex = indexRef.current;
+            const length = itemsLengthRef.current;
+            if (event.key === "Escape") {
+                event.preventDefault();
+                onCloseRef.current();
+                return;
+            }
+            if (event.key === "ArrowLeft") {
+                if (currentIndex > 0) {
+                    event.preventDefault();
+                    onIndexChangeRef.current(currentIndex - 1);
+                }
+                return;
+            }
+            if (event.key === "ArrowRight") {
+                if (currentIndex < length - 1) {
+                    event.preventDefault();
+                    onIndexChangeRef.current(currentIndex + 1);
+                }
+                return;
+            }
+            if (event.key !== "Tab") return;
+
+            const dialog = dialogRef.current;
+            if (!dialog) return;
+            const focusable = Array.from(
+                dialog.querySelectorAll<HTMLElement>(
+                    'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+                ),
+            );
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        }
+
+        document.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("keydown", handleKeyDown);
+            previouslyFocused?.focus();
+        };
+    }, []);
+
+    const item = items[index];
+    if (!item) return null;
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4"
+            onClick={(event) => {
+                if (event.target === event.currentTarget) onClose();
+            }}
+        >
+            <div
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Media preview"
+                className="w-full max-w-3xl rounded-xl bg-slate-900 p-4 text-white shadow-2xl"
+            >
+                <div className="mb-3 flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">{item.label}</p>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                            {item.mediaType} · {index + 1} of {items.length}
+                        </p>
+                    </div>
+                    <button
+                        ref={closeRef}
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Close media preview"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                    >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                </div>
+                <div className="flex min-h-[50vh] items-center justify-center rounded-lg bg-black/40">
+                    {item.url ? (
+                        <img
+                            src={item.url}
+                            alt={`${item.mediaType} from ${item.label}`}
+                            className="max-h-[70vh] max-w-full object-contain"
+                        />
+                    ) : (
+                        <span
+                            data-testid="gallery-placeholder"
+                            className="flex flex-col items-center gap-2 text-slate-400"
+                        >
+                            <ImageOff aria-hidden="true" className="h-10 w-10" />
+                            <span className="text-sm">media</span>
+                        </span>
+                    )}
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                    <button
+                        type="button"
+                        onClick={() => onIndexChange(index - 1)}
+                        disabled={index === 0}
+                        aria-label="Previous media"
+                        className="flex items-center gap-1 rounded-md border border-white/20 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                    >
+                        <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" /> Previous
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onIndexChange(index + 1)}
+                        disabled={index >= items.length - 1}
+                        aria-label="Next media"
+                        className="flex items-center gap-1 rounded-md border border-white/20 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                    >
+                        Next <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -724,6 +1085,14 @@ function ChatSearchResults({
                     >
                         <div className="flex flex-wrap items-center gap-2">
                             <span
+                                aria-hidden="true"
+                                data-testid="sender-dot"
+                                style={{
+                                    backgroundColor: SENDER_PALETTE[senderColorIndex(senderKey)],
+                                }}
+                                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            />
+                            <span
                                 title={senderKey}
                                 className="rounded border border-[#197e74]/30 bg-[#197e74]/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#12645c]"
                             >
@@ -752,6 +1121,92 @@ function ChatSearchResults({
             })}
         </>
     );
+}
+
+function hashString(value: string): number {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    hash ^= hash >>> 16;
+    hash = Math.imul(hash, 0x85ebca6b);
+    hash ^= hash >>> 13;
+    hash = Math.imul(hash, 0xc2b2ae35);
+    hash ^= hash >>> 16;
+    return hash >>> 0;
+}
+
+function senderIdentityKey(message: ChatMessage): string {
+    return (
+        message.sender_key ||
+        message.sender_pseudonym ||
+        message.sender_name ||
+        "unknown"
+    );
+}
+
+function displayNameFor(message: ChatMessage): string {
+    if (message.sender_pseudonym) return message.sender_pseudonym;
+    if (message.sender_name) return message.sender_name;
+    if (message.sender_key) return message.sender_key.slice(-8);
+    return "Unknown";
+}
+
+function senderColorIndex(key: string): number {
+    return hashString(key) % SENDER_PALETTE.length;
+}
+
+function senderInitials(name: string): string {
+    const trimmed = name.trim();
+    const withoutPrefix = trimmed.replace(/^user[_:-]?/i, "");
+    const words = withoutPrefix.split(/[\s._-]+/).filter(Boolean);
+    if (words.length >= 2) {
+        return `${words[0][0]}${words[1][0]}`.toUpperCase();
+    }
+    const compact = withoutPrefix.replace(/[^a-zA-Z0-9]/g, "");
+    if (compact.length >= 2) return compact.slice(0, 2).toUpperCase();
+    return (compact || trimmed || "?").slice(0, 2).toUpperCase();
+}
+
+function localDayKey(date: Date): string {
+    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function dayLabel(date: Date, now: Date): string {
+    if (localDayKey(date) === localDayKey(now)) return "Today";
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (localDayKey(date) === localDayKey(yesterday)) return "Yesterday";
+    return date.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+    });
+}
+
+function groupMessagesByDay(
+    messages: ChatMessage[],
+): { key: string; label: string; messages: ChatMessage[] }[] {
+    const groups: { key: string; label: string; messages: ChatMessage[] }[] = [];
+    const now = new Date();
+    for (const message of messages) {
+        const date = new Date(message.created_at);
+        const key = localDayKey(date);
+        const last = groups[groups.length - 1];
+        if (last && last.key === key) {
+            last.messages.push(message);
+        } else {
+            groups.push({ key, label: dayLabel(date, now), messages: [message] });
+        }
+    }
+    return groups;
+}
+
+function cachedThumbUrl(cache: Map<string, ThumbCacheEntry>, messageId: string): string | null {
+    const entry = cache.get(messageId);
+    if (!entry || !entry.url || entry.expiresAt <= Date.now()) return null;
+    return entry.url;
 }
 
 function chatTypeLabel(chatType?: string | null): string {
@@ -808,12 +1263,20 @@ function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMes
     });
 }
 
+interface ChatFileMeta {
+    thumb_path?: string | null;
+    [key: string]: unknown;
+}
+
 interface ChatMessage {
     id: string;
     credential_id: string;
+    sender_key?: string | null;
     sender_pseudonym: string | null;
+    sender_name?: string | null;
     content: string | null;
     media_type: string | null;
+    file_meta?: ChatFileMeta | null;
     is_broadcasted: boolean;
     created_at: string;
 }

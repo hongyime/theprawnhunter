@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,8 @@ const mockUseAuth = vi.hoisted(() => vi.fn());
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockChannel = vi.hoisted(() => vi.fn());
 const mockRemoveChannel = vi.hoisted(() => vi.fn());
+const mockStorageFrom = vi.hoisted(() => vi.fn());
+const mockCreateSignedUrl = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
@@ -14,6 +16,7 @@ vi.mock("@/lib/supabase", () => ({
     rpc: mockRpc,
     channel: mockChannel,
     removeChannel: mockRemoveChannel,
+    storage: { from: mockStorageFrom },
   },
 }));
 
@@ -43,7 +46,12 @@ const credential = {
   meta: {},
 } as Credential;
 
-function makeMessage(id: string, content: string, created_at: string) {
+function makeMessage(
+  id: string,
+  content: string,
+  created_at: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     id,
     credential_id: credential.id,
@@ -52,6 +60,7 @@ function makeMessage(id: string, content: string, created_at: string) {
     media_type: "text",
     is_broadcasted: false,
     created_at,
+    ...overrides,
   };
 }
 
@@ -123,6 +132,11 @@ describe("ChatWindow", () => {
     Element.prototype.scrollIntoView = vi.fn();
     mockUseAuth.mockReturnValue({ session: { user: { id: "operator" } } });
     mockRpc.mockResolvedValue({ data: [], error: null });
+    mockStorageFrom.mockReturnValue({ createSignedUrl: mockCreateSignedUrl });
+    mockCreateSignedUrl.mockResolvedValue({
+      data: { signedUrl: "https://example.test/signed-thumb.jpg" },
+      error: null,
+    });
     broadcastHandler = undefined;
     subscribeStatusHandler = undefined;
     channelMock = undefined;
@@ -569,5 +583,185 @@ describe("ChatWindow", () => {
 
     expect(mockChannel).toHaveBeenCalledTimes(1);
     expect(channelMock?.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders sender identity and a sticky day separator at each day boundary", async () => {
+    const dayOne = [
+      makeMessage("id-a1", "alice day one", "2026-09-05T10:00:00Z", {
+        sender_key: "user_aaaaaaaa",
+        sender_pseudonym: "Alice Smith",
+      }),
+      makeMessage("id-b1", "bob day one", "2026-09-05T11:00:00Z", {
+        sender_key: "user_bbbbbbbb",
+        sender_pseudonym: "Bob Jones",
+      }),
+    ];
+    const dayTwo = [
+      makeMessage("id-a2", "alice day two", "2026-09-06T10:00:00Z", {
+        sender_key: "user_aaaaaaaa",
+        sender_pseudonym: "Alice Smith",
+      }),
+    ];
+    mockFeed([...dayTwo, ...dayOne]);
+    const { rerender } = render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("alice day two");
+
+    const separators = screen.getAllByTestId("day-separator");
+    expect(separators).toHaveLength(2);
+    expect(separators[0].textContent).not.toBe(separators[1].textContent);
+    expect(separators[0]).toHaveClass("sticky");
+
+    const aliceAvatars = screen.getAllByRole("img", { name: "Alice Smith" });
+    expect(aliceAvatars).toHaveLength(2);
+    expect(aliceAvatars[0]).toHaveAttribute("title", "Alice Smith");
+    expect(aliceAvatars[0]).toHaveTextContent("AS");
+    const bobAvatar = screen.getByRole("img", { name: "Bob Jones" });
+    expect(bobAvatar).toHaveTextContent("BJ");
+
+    const aliceColor = aliceAvatars[0].getAttribute("data-color");
+    expect(aliceColor).not.toBe(bobAvatar.getAttribute("data-color"));
+    expect(aliceAvatars[1].getAttribute("data-color")).toBe(aliceColor);
+
+    const times = document.querySelectorAll("time");
+    expect(times).toHaveLength(3);
+    expect(times[0]).toHaveAttribute("datetime", "2026-09-05T10:00:00Z");
+    expect(times[0]).toHaveAttribute(
+      "title",
+      new Date("2026-09-05T10:00:00Z").toLocaleString(),
+    );
+
+    rerender(<ChatWindow credential={credential} />);
+    expect(
+      screen.getAllByRole("img", { name: "Alice Smith" })[0].getAttribute("data-color"),
+    ).toBe(aliceColor);
+  });
+
+  it("derives a deterministic colour from the pseudonym when sender_key is missing", async () => {
+    mockFeed([
+      makeMessage("fallback", "no sender key", "2026-09-05T10:00:00Z", {
+        sender_pseudonym: "user_deadbeef",
+      }),
+      makeMessage("explicit", "explicit sender key", "2026-09-05T11:00:00Z", {
+        sender_key: "user_deadbeef",
+        sender_pseudonym: "user_deadbeef",
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("no sender key");
+    const avatars = screen.getAllByRole("img", { name: "user_deadbeef" });
+    expect(avatars).toHaveLength(2);
+    expect(avatars[0].getAttribute("data-color")).toBe(
+      avatars[1].getAttribute("data-color"),
+    );
+    expect(avatars[0]).toHaveTextContent("DE");
+  });
+
+  it("labels today and yesterday separators", async () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
+    mockFeed([
+      makeMessage("today-message", "today message", today.toISOString()),
+      makeMessage("yesterday-message", "yesterday message", yesterday.toISOString()),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("today message");
+    const labels = screen
+      .getAllByTestId("day-separator")
+      .map((node) => node.textContent);
+    expect(labels).toEqual(["Yesterday", "Today"]);
+  });
+
+  it("signs a thumbnail URL once and renders it next to the media label", async () => {
+    mockFeed([
+      makeMessage("thumb-1", "photo caption", "2026-09-05T10:00:00Z", {
+        sender_pseudonym: "Alice Smith",
+        media_type: "photo",
+        file_meta: { thumb_path: `${credential.id}/thumb-1.jpg` },
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("photo caption");
+    const image = await screen.findByAltText("photo thumbnail from Alice Smith");
+    expect(image).toHaveAttribute("src", "https://example.test/signed-thumb.jpg");
+    expect(mockStorageFrom).toHaveBeenCalledWith("evidence-thumbs");
+    expect(mockCreateSignedUrl).toHaveBeenCalledWith(
+      `${credential.id}/thumb-1.jpg`,
+      3600,
+    );
+
+    triggerPoll();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(mockCreateSignedUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a neutral placeholder when the signed URL fails", async () => {
+    mockCreateSignedUrl.mockResolvedValue({ data: null, error: { message: "denied" } });
+    mockFeed([
+      makeMessage("thumb-fail", "failed thumb caption", "2026-09-05T10:00:00Z", {
+        media_type: "photo",
+        file_meta: { thumb_path: `${credential.id}/thumb-fail.jpg` },
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("failed thumb caption");
+    await waitFor(() => expect(mockCreateSignedUrl).toHaveBeenCalledTimes(1));
+
+    const placeholder = screen.getByTestId("thumb-placeholder");
+    expect(placeholder).toHaveTextContent("media");
+    expect(screen.queryByAltText(/thumbnail from/i)).not.toBeInTheDocument();
+    expect(screen.getByText("photo")).toBeInTheDocument();
+  });
+
+  it("opens a gallery, navigates between thumbnailed media, and closes with Escape", async () => {
+    mockFeed([
+      makeMessage("g1", "first photo", "2026-09-05T10:00:00Z", {
+        sender_pseudonym: "Alice Smith",
+        media_type: "photo",
+        file_meta: { thumb_path: `${credential.id}/g1.jpg` },
+      }),
+      makeMessage("g2", "second photo", "2026-09-05T11:00:00Z", {
+        sender_pseudonym: "Bob Jones",
+        media_type: "video",
+        file_meta: { thumb_path: `${credential.id}/g2.jpg` },
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("second photo");
+    await screen.findAllByAltText(/thumbnail from/i);
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /open media preview/i })[0],
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Media preview" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(within(dialog).getByText(/1 of 2/)).toBeInTheDocument();
+    expect(within(dialog).getByAltText("photo from Alice Smith")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Next media" }));
+    expect(within(dialog).getByText(/2 of 2/)).toBeInTheDocument();
+    expect(within(dialog).getByAltText("video from Bob Jones")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Close media preview" }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Media preview" }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /open media preview/i })[0],
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("dialog", { name: "Media preview" }),
+    ).not.toBeInTheDocument();
   });
 });
