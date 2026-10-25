@@ -55,6 +55,38 @@ def _enqueue_heavy_enrichment(message: dict[str, Any]) -> None:
         )
 
 
+def _embed_message(message: dict[str, Any]) -> None:
+    """Best-effort incremental embedding hook; never breaks the broadcast flow."""
+    try:
+        from app.services.embedding_hook import embed_message_best_effort
+
+        embed_message_best_effort(message.get("id"), message.get("content"))
+    except Exception as exc:
+        logger.warning(
+            "[Broadcast] embedding hook skipped for %s: %s",
+            message.get("id"),
+            exc,
+        )
+
+
+async def _alert_watchlist(message: dict[str, Any]) -> None:
+    """Best-effort watchlist alert hook; never breaks the broadcast flow."""
+    try:
+        from app.services.watchlist_alerts import alert_on_matches
+
+        await alert_on_matches(
+            message.get("content") or "",
+            message_id=message.get("id"),
+            credential_id=message.get("credential_id"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Broadcast] watchlist alert skipped for %s: %s",
+            message.get("id"),
+            exc,
+        )
+
+
 def _record_broadcast_delivery_latency(created_at: Any) -> None:
     """Record created_at -> successful Telegram send latency for queue health."""
     if not created_at:
@@ -692,6 +724,8 @@ async def _broadcast_logic():
 
                     logger.info(f"    📌 Claimed message {msg_id}")
                     _enqueue_heavy_enrichment(msg)
+                    _embed_message(msg)
+                    await _alert_watchlist(msg)
 
                     # Extract meta from the joined discovered_credentials
                     cred_info = msg.get("discovered_credentials", {})

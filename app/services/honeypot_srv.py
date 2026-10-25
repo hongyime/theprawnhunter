@@ -291,4 +291,26 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
                 f"[Honeypot] Heavy enrichment enqueue skipped: {enqueue_exc}"
             )
 
+        try:
+            from app.services.embedding_hook import embed_message_best_effort
+
+            await asyncio.to_thread(
+                embed_message_best_effort,
+                stored_row_id,
+                msg_data.get("content"),
+            )
+        except Exception as embed_exc:
+            logger.warning(f"[Honeypot] Embedding hook skipped: {embed_exc}")
+
+        try:
+            from app.services.watchlist_alerts import alert_on_matches
+
+            await alert_on_matches(
+                msg_data.get("content") or "",
+                message_id=stored_row_id,
+                credential_id=credential_id,
+            )
+        except Exception as alert_exc:
+            logger.warning(f"[Honeypot] Watchlist alert skipped: {alert_exc}")
+
     return msg_data
