@@ -880,7 +880,11 @@ def test_extract_honeypot_message_ignores_numeric_monitor_group(monkeypatch):
         "message": {
             "message_id": 43,
             "from": {"id": 777, "first_name": "Group"},
-            "chat": {"id": -1003588166404, "type": "supergroup"},
+            "chat": {
+                "id": -1003588166404,
+                "title": "The Prawn Hunter (hong-yi.me)",
+                "type": "supergroup",
+            },
             "text": "pinned a message",
         },
     }

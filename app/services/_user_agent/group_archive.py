@@ -15,6 +15,10 @@ def _subject_label(user_id: object) -> str:
         return "redacted"
 
 
+def _normalise_topic_title(value: object) -> str:
+    return " ".join(str(value or "").strip().lstrip("@").lower().split())
+
+
 class UserAgentGroupArchive:
     async def invite_bot_to_group(self, bot_username: str, group_id: int | str) -> bool:
         """
@@ -138,20 +142,28 @@ class UserAgentGroupArchive:
                 entity = await self.client.get_entity(target)
                 from telethon.tl.functions.messages import GetForumTopicsRequest
 
+                query = topic_name.strip().lstrip("@")
                 res = await self.client(
                     GetForumTopicsRequest(
                         peer=entity,
-                        q=topic_name,
+                        q=query,
                         offset_date=0,
                         offset_id=0,
                         offset_topic=0,
-                        limit=10,
+                        limit=20,
                     )
                 )
+                wanted = _normalise_topic_title(topic_name)
                 if res.topics:
                     for topic in res.topics:
                         if topic.title == topic_name:
                             logger.info(f"    🔍 [UserAgent] Found existing topic: {topic.title} ({topic.id})")
+                            return topic.id
+                    for topic in res.topics:
+                        if _normalise_topic_title(topic.title) == wanted:
+                            logger.info(
+                                f"    🔍 [UserAgent] Matched topic by normalised title: {topic.title} ({topic.id})"
+                            )
                             return topic.id
                 return None
             except Exception as e:

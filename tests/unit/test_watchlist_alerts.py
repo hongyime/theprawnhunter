@@ -103,7 +103,7 @@ def _patch_deeplink_tables(
     if credential_rows is None:
         credential_rows = [{"meta": {"bot_username": "@format_fm_bot"}}]
     if message_rows is None:
-        message_rows = [{"telegram_msg_id": 456}]
+        message_rows = [{"telegram_msg_id": 456, "broadcast_message_id": 456}]
     monkeypatch.setattr(
         watchlist_alerts,
         "settings",
@@ -119,7 +119,7 @@ def _patch_deeplink_tables(
         }
     )
     monkeypatch.setattr(watchlist_alerts, "db", fake_db)
-    broadcaster.ensure_topic = AsyncMock(return_value=thread_id)
+    broadcaster.find_existing_topic_id = AsyncMock(return_value=thread_id)
     return fake_db
 
 
@@ -332,7 +332,10 @@ def test_build_message_deeplink_normalizes_supergroup_ids():
     assert watchlist_alerts.build_message_deeplink("-1234567890", 789, 456) == expected
     # Missing or non-numeric components omit the link.
     assert watchlist_alerts.build_message_deeplink(None, 789, 456) is None
-    assert watchlist_alerts.build_message_deeplink("-1001234567890", 789, None) is None
+    assert (
+        watchlist_alerts.build_message_deeplink("-1001234567890", 789, None)
+        == "https://t.me/c/1234567890/789"
+    )
     assert watchlist_alerts.build_message_deeplink("-1001234567890", "topic", 456) is None
 
 
@@ -350,7 +353,7 @@ async def test_alert_appends_exact_deeplink_to_watchlist_body(monkeypatch, broad
     assert body.endswith(
         "📎 Open in Telegram: https://t.me/c/1234567890/789/456"
     )
-    broadcaster.ensure_topic.assert_awaited_once_with(
+    broadcaster.find_existing_topic_id.assert_awaited_once_with(
         -1001234567890, "@format_fm_bot"
     )
     assert fake_db.requested == ["discovered_credentials", "exfiltrated_messages"]
@@ -373,12 +376,14 @@ async def test_string_group_id_produces_correct_internal_id(monkeypatch, broadca
 
 
 @pytest.mark.asyncio
-async def test_null_telegram_msg_id_omits_link_but_sends_alert(
+async def test_missing_broadcast_id_links_to_the_topic(
     monkeypatch, broadcaster
 ):
     _mock_evaluate(monkeypatch, [_hit()])
     _patch_deeplink_tables(
-        monkeypatch, broadcaster, message_rows=[{"telegram_msg_id": None}]
+        monkeypatch,
+        broadcaster,
+        message_rows=[{"telegram_msg_id": 456, "broadcast_message_id": None}],
     )
 
     sent = await watchlist_alerts.alert_on_matches(
@@ -388,16 +393,17 @@ async def test_null_telegram_msg_id_omits_link_but_sends_alert(
     assert sent == 1
     body = broadcaster.send_watchlist_alert.await_args.args[0]
     assert "AKIAEXAMPLE" in body
-    assert "Open in Telegram" not in body
+    assert "https://t.me/c/1234567890/789" in body
+    assert "https://t.me/c/1234567890/789/" not in body
 
 
 @pytest.mark.asyncio
-async def test_ensure_topic_failure_omits_link_but_sends_alert(
+async def test_unknown_topic_omits_link_but_sends_alert(
     monkeypatch, broadcaster
 ):
     _mock_evaluate(monkeypatch, [_hit()])
     _patch_deeplink_tables(monkeypatch, broadcaster)
-    broadcaster.ensure_topic = AsyncMock(side_effect=RuntimeError("topic exploded"))
+    broadcaster.find_existing_topic_id = AsyncMock(return_value=None)
 
     sent = await watchlist_alerts.alert_on_matches(
         "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
@@ -455,7 +461,7 @@ async def test_username_group_id_resolves_numeric_id_for_deeplink(
         "📎 Open in Telegram: https://t.me/c/9876543210/789/456"
     )
     get_chat.assert_awaited_once_with("@theprawnhunter")
-    broadcaster.ensure_topic.assert_awaited_once_with(
+    broadcaster.find_existing_topic_id.assert_awaited_once_with(
         "@theprawnhunter", "@format_fm_bot"
     )
     assert fake_redis.setex_calls == [
@@ -541,3 +547,23 @@ async def test_numeric_group_id_skips_get_chat_entirely(
     get_chat.assert_not_awaited()
     assert fake_redis.gets == []
     assert fake_redis.setex_calls == []
+
+
+@pytest.mark.asyncio
+async def test_stored_topic_id_wins_over_title_lookup(monkeypatch, broadcaster):
+    _mock_evaluate(monkeypatch, [_hit()])
+    _patch_deeplink_tables(
+        monkeypatch,
+        broadcaster,
+        credential_rows=[{"meta": {"bot_username": "@xiaoai33bot", "topic_id": "964633"}}],
+        message_rows=[{"telegram_msg_id": 879951, "broadcast_message_id": 1133781}],
+    )
+
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert "https://t.me/c/1234567890/964633/1133781" in body
+    broadcaster.find_existing_topic_id.assert_not_awaited()

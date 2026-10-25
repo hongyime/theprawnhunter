@@ -31,6 +31,7 @@ SNIPPET_LIMIT = 300
 CREDENTIAL_PREFIX_LENGTH = 8
 DEEPLINK_PREFIX = "📎 Open in Telegram: "
 DEEPLINK_TEMPLATE = "https://t.me/c/{internal_group_id}/{thread_id}/{msg_id}"
+TOPIC_DEEPLINK_TEMPLATE = "https://t.me/c/{internal_group_id}/{thread_id}"
 GROUP_ID_CACHE_PREFIX = "group:numeric_id:"
 GROUP_ID_CACHE_TTL = 7 * 24 * 60 * 60
 
@@ -74,15 +75,23 @@ def build_message_deeplink(
         return None
     try:
         thread = int(thread_id)
-        message = int(msg_id)
     except (TypeError, ValueError):
         return None
-    if thread <= 0 or message <= 0:
+    if thread <= 0:
         return None
-    return DEEPLINK_TEMPLATE.format(
+    try:
+        message = int(msg_id)
+    except (TypeError, ValueError):
+        message = 0
+    if message > 0:
+        return DEEPLINK_TEMPLATE.format(
+            internal_group_id=internal_group_id,
+            thread_id=thread,
+            msg_id=message,
+        )
+    return TOPIC_DEEPLINK_TEMPLATE.format(
         internal_group_id=internal_group_id,
         thread_id=thread,
-        msg_id=message,
     )
 
 
@@ -146,10 +155,9 @@ async def _resolve_message_deeplink(
 ) -> str | None:
     """Best-effort deep link for a stored message; never raises.
 
-    Resolves the credential's forum topic through the broadcaster's own
-    ``ensure_topic`` path, then reads ``telegram_msg_id`` for the stored row.
-    Any missing piece (config, username, topic, message id) or any failure
-    omits the link.
+    Lookup-only: an unknown topic yields no link rather than creating an empty
+    one. The message component is the broadcast copy's id, never the source
+    chat's id (which would point at an unrelated message in our group).
     """
     group_id = getattr(settings, "MONITOR_GROUP_ID", None)
     if group_id is None or not credential_id or message_id is None:
@@ -173,30 +181,34 @@ async def _resolve_message_deeplink(
             .limit(1)
         )
         credential_rows = credential_res.data or []
-        username = (
-            _username_from_meta(credential_rows[0].get("meta"))
-            if credential_rows
-            else None
-        )
-        if not username:
+        meta = credential_rows[0].get("meta") if credential_rows else None
+        username = _username_from_meta(meta)
+        stored_topic_id = meta.get("topic_id") if isinstance(meta, dict) else None
+        try:
+            stored_thread_id = int(stored_topic_id) if stored_topic_id else None
+        except (TypeError, ValueError):
+            stored_thread_id = None
+        if not username and not stored_thread_id:
             return None
 
         message_res = await execute_async(
             db.table("exfiltrated_messages")
-            .select("telegram_msg_id")
+            .select("telegram_msg_id,broadcast_message_id")
             .eq("id", message_id)
             .limit(1)
         )
         message_rows = message_res.data or []
-        telegram_msg_id = (
-            message_rows[0].get("telegram_msg_id") if message_rows else None
+        broadcast_msg_id = (
+            message_rows[0].get("broadcast_message_id") if message_rows else None
         )
-        if telegram_msg_id is None:
-            return None
 
-        thread_id = await broadcaster.ensure_topic(group_id, username)
+        thread_id = stored_thread_id
+        if thread_id is None and username:
+            thread_id = await broadcaster.find_existing_topic_id(group_id, username)
+        if thread_id is None:
+            return None
         return build_message_deeplink(
-            numeric_group_id, thread_id, telegram_msg_id
+            numeric_group_id, thread_id, broadcast_msg_id
         )
     except Exception as exc:  # noqa: BLE001 - links must degrade silently
         logger.warning(

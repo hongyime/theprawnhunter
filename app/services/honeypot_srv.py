@@ -50,7 +50,8 @@ def _is_own_monitor_group(chat: dict[str, Any]) -> bool:
 
     chat_id = _to_int(chat.get("id"))
     if configured.lstrip("-").isdigit():
-        return chat_id is not None and str(chat_id) == configured
+        identified = bool(str(chat.get("title") or "").strip() or chat.get("username"))
+        return identified and chat_id is not None and str(chat_id) == configured
 
     handle = configured.lstrip("@").lower()
     username = str(chat.get("username") or "").strip().lstrip("@").lower()

@@ -1034,6 +1034,20 @@ class BroadcasterService:
             logger.warning(f"[Broadcaster] unpin_message failed msg_id={message_id}: {e}")
             return False
 
+    async def find_existing_topic_id(
+        self, group_id: int | str, topic_name: str
+    ) -> int | None:
+        """Resolve an existing topic for links without ever creating one."""
+        if topic_name in ["General", "general", "main"]:
+            return 1
+        try:
+            return await user_agent.find_topic_id(group_id, topic_name)
+        except Exception as exc:  # noqa: BLE001 - links must degrade silently
+            logger.warning(
+                f"[Broadcaster] Could not resolve topic '{topic_name}' for a link: {exc}"
+            )
+            return None
+
     async def ensure_topic(
         self,
         group_id: int | str,
