@@ -4,13 +4,19 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatWindow from "@/components/ChatWindow";
 import FindingsQueue from "@/components/FindingsQueue";
+import SearchView from "@/components/SearchView";
 import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
 import { LucideMenu, LucideX, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import NeoCard from "@/components/NeoCard";
 
-export type DashboardView = "findings" | "chat" | "botTelemetry" | "globalTelemetry";
+export type DashboardView =
+  | "findings"
+  | "search"
+  | "chat"
+  | "botTelemetry"
+  | "globalTelemetry";
 
 export type GatewayTelemetry = {
   configured_webhook_url?: string | null;
@@ -141,6 +147,8 @@ export default function Home() {
             <span className="truncate text-sm font-semibold text-slate-800">
               {activeView === "findings"
                 ? "Findings queue"
+                : activeView === "search"
+                ? "Search evidence"
                 : selected?.meta?.bot_username
                 ? `@${selected.meta.bot_username}`
                 : "The Prawn Hunter"}
@@ -208,6 +216,12 @@ export default function Home() {
         
         {activeView === "findings" ? (
           <FindingsQueue onDrilldown={handleFindingDrilldown} />
+        ) : activeView === "search" ? (
+          <SearchView
+            onOpenChat={(credentialId) =>
+              handleFindingDrilldown(credentialId, "chat")
+            }
+          />
         ) : activeView === "globalTelemetry" ? (
           <TelemetryAnalyticsView scope="global" />
         ) : activeView === "botTelemetry" ? (
