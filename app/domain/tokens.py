@@ -76,6 +76,87 @@ def extract_tokens_and_chat_ids(text: str) -> list[dict[str, Any]]:
     return results
 
 
+def _looks_binary(text: str) -> bool:
+    """Return whether a text sample is dominated by NUL/invalid control chars."""
+    sample = text[:4096]
+    if not sample:
+        return False
+    control = sum(
+        1
+        for char in sample
+        if char == "\x00" or (ord(char) < 32 and char not in "\t\n\r")
+    )
+    return control / len(sample) > 0.05
+
+
+def sweep_text_for_tokens(
+    text: str,
+    source: str,
+    *,
+    max_bytes: int = 2_000_000,
+) -> list[dict[str, Any]]:
+    """Find every valid Telegram token in a text blob, once per unique token.
+
+    Each result has exactly the keys ``token``, ``chat_id``, ``context`` and
+    ``source``. ``context`` is up to 500 characters around the first occurrence
+    of the token. Oversized input is truncated to ``max_bytes`` rather than
+    rejected; empty and binary input yields an empty list.
+    """
+    if not text or not text.strip():
+        logger.debug(f"Token sweep skipped empty input (source={source})")
+        return []
+
+    work = text
+    try:
+        encoded = work.encode("utf-8", errors="ignore")
+    except Exception as _swallowed:
+        logger.debug(f"[suppressed] {_swallowed}")
+        return []
+
+    if len(encoded) > max_bytes:
+        logger.debug(
+            f"Token sweep truncating {len(encoded)} bytes to {max_bytes} (source={source})"
+        )
+        work = encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+    if _looks_binary(work):
+        logger.debug(f"Token sweep skipped binary input (source={source})")
+        return []
+
+    chat_match = CHAT_ID_PATTERN.search(work)
+    chat_id = chat_match.group(1) if chat_match else None
+
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    cursor = 0
+
+    for token in TOKEN_PATTERN.findall(work):
+        index = work.find(token, cursor)
+        if index >= 0:
+            cursor = index + len(token)
+        if token in seen or not _is_valid_token(token):
+            continue
+        seen.add(token)
+
+        if index < 0:
+            context = ""
+        else:
+            start = max(0, index - 250)
+            end = min(len(work), index + len(token) + 250)
+            context = work[start:end][:500]
+
+        results.append(
+            {
+                "token": token,
+                "chat_id": chat_id,
+                "context": context,
+                "source": source,
+            }
+        )
+
+    return results
+
+
 __all__ = [
     "CHAT_ID_PATTERN",
     "TOKEN_PATTERN",
@@ -84,4 +165,5 @@ __all__ = [
     "extract_tokens_and_chat_ids",
     "is_valid_telegram_token",
     "logger",
+    "sweep_text_for_tokens",
 ]
