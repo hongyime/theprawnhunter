@@ -12,6 +12,7 @@ Failures are recorded in ``file_meta`` instead of raised: these are enrichment
 tasks, and a retry storm on a corrupt/oversized/absent attachment is useless.
 """
 
+import asyncio
 import contextlib
 import io
 import threading
@@ -89,7 +90,7 @@ def _mime_of(file_meta: dict) -> str:
 async def _load_message_row(message_id: str) -> dict | None:
     response = await async_execute(
         db.table("exfiltrated_messages")
-        .select("id, credential_id, media_type, file_meta")
+        .select("id, credential_id, media_type, content, file_meta")
         .eq("id", message_id)
         .limit(1)
     )
@@ -97,10 +98,16 @@ async def _load_message_row(message_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
-async def _merge_file_meta(message_id: str, file_meta: dict, updates: dict) -> bool:
-    """Merge ``updates`` into ``file_meta`` without clobbering existing keys."""
+def _merged_file_meta(file_meta: dict, updates: dict) -> dict:
+    """Return ``file_meta`` with ``updates`` applied (never mutates the input)."""
     merged = dict(file_meta or {})
     merged.update(updates)
+    return merged
+
+
+async def _merge_file_meta(message_id: str, file_meta: dict, updates: dict) -> bool:
+    """Merge ``updates`` into ``file_meta`` without clobbering existing keys."""
+    merged = _merged_file_meta(file_meta, updates)
     try:
         await async_execute(
             db.table("exfiltrated_messages")
@@ -113,6 +120,48 @@ async def _merge_file_meta(message_id: str, file_meta: dict, updates: dict) -> b
             "[Heavy] file_meta update failed for msg=%s: %s", message_id, exc
         )
         return False
+
+
+async def _refresh_embedding_after_media_text(
+    message_id: str, content: str | None, merged_file_meta: dict
+) -> None:
+    """Re-embed a message after ASR/OCR merged new derived text.
+
+    Best-effort by contract: the hook is disabled unless ``EMBED_API_URL`` is
+    set, it runs in a worker thread so the event loop keeps serving the heavy
+    task, and *every* failure is swallowed. A stale vector is recoverable by the
+    backfill; a failed/retried enrichment task is not.
+    """
+    try:
+        from app.services import embedding_hook
+
+        if not os.getenv(embedding_hook.EMBED_API_URL_ENV, "").strip():
+            return
+        await asyncio.to_thread(
+            embedding_hook.embed_message_best_effort,
+            message_id,
+            content,
+            file_meta=merged_file_meta,
+        )
+    except Exception as exc:  # noqa: BLE001 - embedding must never fail enrichment
+        # Message id only: transcript/OCR content must never reach the logs.
+        logger.warning(
+            "[Heavy] embedding refresh skipped for msg=%s: %s", message_id, exc
+        )
+
+
+async def _write_merged_file_meta_and_reembed(
+    message_id: str,
+    content: str | None,
+    file_meta: dict,
+    updates: dict,
+) -> bool:
+    """Persist merged ``file_meta`` and refresh the vector from the same text."""
+    merged = _merged_file_meta(file_meta, updates)
+    if not await _merge_file_meta(message_id, file_meta, updates):
+        return False
+    await _refresh_embedding_after_media_text(message_id, content, merged)
+    return True
 
 
 async def _skip(message_id: str, file_meta: dict, key: str, reason: str) -> dict:
@@ -217,8 +266,9 @@ async def _transcribe_media_logic(message_id: str) -> dict:
     if duration > MAX_ASR_DURATION_SECONDS:
         return await _skip(message_id, file_meta, "transcript_skipped", "too_long")
 
-    updated = await _merge_file_meta(
+    updated = await _write_merged_file_meta_and_reembed(
         message_id,
+        row.get("content"),
         file_meta,
         {
             "transcript_text": transcript,
@@ -328,8 +378,9 @@ async def _ocr_media_logic(message_id: str) -> dict:
         logger.warning("[HeavyOCR] tesseract failed for msg=%s: %s", message_id, exc)
         return await _skip(message_id, file_meta, "ocr_skipped", "ocr_failed")
 
-    updated = await _merge_file_meta(
+    updated = await _write_merged_file_meta_and_reembed(
         message_id,
+        row.get("content"),
         file_meta,
         {
             "ocr_text": text,

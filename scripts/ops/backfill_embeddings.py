@@ -5,10 +5,27 @@ Examples:
     python scripts/ops/backfill_embeddings.py --apply         # write vectors
     python scripts/ops/backfill_embeddings.py --apply --limit 500
 
-The run is resumable: messages that already have a row in ``message_embeddings``
-are skipped, so a second invocation continues where the last one stopped. On an
-embed-api failure the script prints a ``RESUME_MARKER`` and exits non-zero
-without writing the failed batch.
+Selection predicate (freshness-aware)
+-------------------------------------
+A message is selected when either:
+
+1. it has no row in ``message_embeddings``; or
+2. its ``file_meta`` contributes ``transcript_text``/``ocr_text`` and the
+   stored vector is *not* marked media-aware.
+
+The marker lives in ``message_embeddings.model``: vectors built from the full
+media document are stored under :data:`MEDIA_AWARE_MODEL_NAME`
+(``"<model>+media"``); content-only vectors keep the plain
+:data:`MODEL_NAME`. ``exfiltrated_messages`` has no ``updated_at`` column, so
+comparing timestamps cannot tell when a transcript landed; the model label is
+the durable source of truth and is written atomically with the vector. The
+upsert on ``message_id`` therefore replaces a stale content-only vector with a
+media-aware one. Re-running after that is a no-op.
+
+The run is resumable: selected rows are ordered by id and progress is tracked
+with ``after_id``, so a second invocation continues where the last one stopped.
+On an embed-api failure the script prints a ``RESUME_MARKER`` and exits
+non-zero without writing the failed batch.
 """
 
 from __future__ import annotations
@@ -22,6 +39,11 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services.embedding_hook import (  # noqa: E402
+    MEDIA_AWARE_MODEL_NAME,
+    embed_model_name,
+    has_derived_media_text,
+)
 from app.services.media_text import searchable_media_text  # noqa: E402
 
 BATCH_SIZE = 64
@@ -95,18 +117,34 @@ def _fetch_messages(
     return list(query.execute().data or [])
 
 
-def _embedded_ids(client: Any, message_ids: list[str]) -> set[str]:
+def _embedded_models(client: Any, message_ids: list[str]) -> dict[str, str | None]:
+    """Map each embedded message id to the model label of its stored vector."""
     if not message_ids:
-        return set()
+        return {}
     rows = (
         client.table(EMBEDDINGS_TABLE)
-        .select("message_id")
+        .select("message_id,model")
         .in_("message_id", message_ids)
         .execute()
         .data
         or []
     )
-    return {row["message_id"] for row in rows}
+    return {row["message_id"]: row.get("model") for row in rows}
+
+
+def _needs_embedding(row: dict[str, Any], stored_model: str | None) -> bool:
+    """Return True when this row's stored vector is missing or stale.
+
+    ``stored_model`` is None when the message has no embedding row. An existing
+    vector is only considered stale when the row now has derived media text and
+    the vector was not marked media-aware. Rows with no derived text and an
+    existing vector are never re-embedded.
+    """
+    if stored_model is None:
+        return True
+    if stored_model == MEDIA_AWARE_MODEL_NAME:
+        return False
+    return has_derived_media_text(row.get("file_meta"))
 
 
 def _embed_texts(
@@ -174,11 +212,11 @@ def _run(
 
         after_id = page[-1]["id"]
         stats["scanned"] += len(page)
-        embedded = _embedded_ids(client, [row["id"] for row in page])
+        stored_models = _embedded_models(client, [row["id"] for row in page])
 
         eligible: list[dict[str, Any]] = []
         for row in page:
-            if row["id"] in embedded:
+            if not _needs_embedding(row, stored_models.get(row["id"])):
                 continue
             # Same logical document as the FTS migration and the incremental
             # hook: content + file_meta.transcript_text + file_meta.ocr_text.
@@ -207,7 +245,7 @@ def _run(
                         {
                             "message_id": row["id"],
                             "embedding": vector,
-                            "model": MODEL_NAME,
+                            "model": embed_model_name(row.get("file_meta")),
                         }
                         for row, vector in zip(chunk, vectors, strict=True)
                     ],

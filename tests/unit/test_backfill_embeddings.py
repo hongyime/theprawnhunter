@@ -378,6 +378,134 @@ def test_empty_content_with_transcript_is_still_eligible():
     assert http.calls[0]["json"]["texts"] == ["spoken"]
 
 
+def test_apply_replaces_content_only_vector_when_derived_text_appeared():
+    cli = _load_cli()
+    db = _FakeDb(
+        [
+            {
+                "id": "0001",
+                "content": "voice caption",
+                "file_meta": {"transcript_text": "new asr text"},
+            }
+        ],
+        embeddings=[
+            {
+                "message_id": "0001",
+                "embedding": [0.0] * 384,
+                "model": embedding_hook.MODEL_NAME,
+            }
+        ],
+    )
+    http = _FakeHttp()
+
+    stats = cli._run(
+        apply=True,
+        base_url="http://embed.test",
+        client=db,
+        http_client=http,
+    )
+
+    assert stats["eligible"] == 1
+    assert stats["embedded"] == 1
+    assert http.calls[0]["json"]["texts"] == ["voice caption\nnew asr text"]
+    assert len(db.upsert_calls) == 1
+    row = db.upsert_calls[0]["rows"][0]
+    assert row["message_id"] == "0001"
+    assert len(row["embedding"]) == 384
+    # The replacement is marked media-aware so a later run does not redo it.
+    assert row["model"] == embedding_hook.MEDIA_AWARE_MODEL_NAME
+
+    assert (
+        cli._run(
+            apply=True,
+            base_url="http://embed.test",
+            client=db,
+            http_client=http,
+        )["embedded"]
+        == 0
+    )
+
+
+def test_existing_vector_without_derived_text_is_not_selected():
+    cli = _load_cli()
+    db = _FakeDb(
+        [{"id": "0001", "content": "plain caption", "file_meta": {"file_id": "f"}}],
+        embeddings=[
+            {
+                "message_id": "0001",
+                "embedding": [0.0] * 384,
+                "model": embedding_hook.MODEL_NAME,
+            }
+        ],
+    )
+    http = _FakeHttp()
+
+    stats = cli._run(
+        apply=True,
+        base_url="http://embed.test",
+        client=db,
+        http_client=http,
+    )
+
+    assert stats["eligible"] == 0
+    assert stats["embedded"] == 0
+    assert http.calls == []
+    assert db.upsert_calls == []
+
+
+def test_media_aware_vector_with_derived_text_is_not_reselected():
+    cli = _load_cli()
+    db = _FakeDb(
+        [{"id": "0001", "content": "", "file_meta": {"ocr_text": "already embedded"}}],
+        embeddings=[
+            {
+                "message_id": "0001",
+                "embedding": [0.0] * 384,
+                "model": embedding_hook.MEDIA_AWARE_MODEL_NAME,
+            }
+        ],
+    )
+    http = _FakeHttp()
+
+    stats = cli._run(
+        apply=True,
+        base_url="http://embed.test",
+        client=db,
+        http_client=http,
+    )
+
+    assert stats["eligible"] == 0
+    assert http.calls == []
+    assert db.upsert_calls == []
+
+
+def test_dry_run_never_replaces_stale_media_vector():
+    cli = _load_cli()
+    db = _FakeDb(
+        [{"id": "0001", "content": "caption", "file_meta": {"ocr_text": "new ocr"}}],
+        embeddings=[
+            {
+                "message_id": "0001",
+                "embedding": [0.0] * 384,
+                "model": embedding_hook.MODEL_NAME,
+            }
+        ],
+    )
+    http = _FakeHttp()
+
+    stats = cli._run(
+        apply=False,
+        base_url="http://embed.test",
+        client=db,
+        http_client=http,
+    )
+
+    assert stats["eligible"] == 1
+    assert stats["embedded"] == 0
+    assert http.calls == []
+    assert db.upsert_calls == []
+
+
 def test_incremental_hook_upserts_vector(monkeypatch):
     monkeypatch.setenv(embedding_hook.EMBED_API_URL_ENV, "http://embed.test/")
     http = _FakeHttp()

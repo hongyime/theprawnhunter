@@ -16,6 +16,15 @@ content-only, exactly as before.
 Every failure is swallowed. Embedding must never slow down or break capture, and
 a missing/down embed-api is an expected operating state (the service only runs
 in the optional ``heavy`` profile).
+
+Freshness marker
+----------------
+``message_embeddings.model`` records which document the vector covers. A vector
+built from content plus ``transcript_text``/``ocr_text`` is stored under
+:data:`MEDIA_AWARE_MODEL_NAME` (``"<model>+media"``); a content-only vector is
+stored under :data:`MODEL_NAME`. Semantic search ignores the column, but the
+embedding backfill uses the marker to re-embed rows whose derived media text
+arrived *after* an earlier content-only vector was written.
 """
 
 from __future__ import annotations
@@ -35,8 +44,25 @@ EMBED_TIMEOUT_ENV = "EMBED_API_TIMEOUT_SECONDS"
 DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_EMBED_API_URL = "http://127.0.0.1:8020"
 MODEL_NAME = "all-MiniLM-L6-v2"
+# Suffixed label for vectors that include transcript/OCR text. Kept derived from
+# MODEL_NAME so changing the embedding model cannot silently reuse the marker.
+MEDIA_AWARE_MODEL_NAME = f"{MODEL_NAME}+media"
 DIMENSIONS = 384
 TABLE = "message_embeddings"
+
+
+def has_derived_media_text(file_meta: dict | None) -> bool:
+    """Return True when ``file_meta`` alone contributes transcript/OCR text.
+
+    Reuses the shared helper rather than re-implementing key checks, so this
+    predicate tracks :func:`searchable_media_text` exactly.
+    """
+    return bool(searchable_media_text(None, file_meta))
+
+
+def embed_model_name(file_meta: dict | None) -> str:
+    """Model label for a vector: media-aware when derived text is included."""
+    return MEDIA_AWARE_MODEL_NAME if has_derived_media_text(file_meta) else MODEL_NAME
 
 
 def _timeout_seconds() -> float:
@@ -120,7 +146,7 @@ def embed_message_best_effort(
             {
                 "message_id": message_id,
                 "embedding": vector,
-                "model": MODEL_NAME,
+                "model": embed_model_name(file_meta),
             },
             on_conflict="message_id",
         ).execute()
@@ -137,6 +163,9 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "DIMENSIONS",
     "EMBED_API_URL_ENV",
+    "MEDIA_AWARE_MODEL_NAME",
     "MODEL_NAME",
     "embed_message_best_effort",
+    "embed_model_name",
+    "has_derived_media_text",
 ]
