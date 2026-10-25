@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { BarChart3, BellRing, LayoutDashboard, ListChecks, MessageSquareText, LucideTarget, Radar, Search } from "lucide-react";
 import type { Credential, DashboardView } from "@/app/page";
@@ -102,6 +102,28 @@ export default function Sidebar({
     const [debouncedQuery, setDebouncedQuery] = useState("");
     const [activeStatuses, setActiveStatuses] = useState<string[]>([]);
     const [activeChatTypes, setActiveChatTypes] = useState<string[]>([]);
+    const filterInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+            const target = event.target as HTMLElement | null;
+            const tag = target?.tagName;
+            if (
+                tag === "INPUT" ||
+                tag === "TEXTAREA" ||
+                tag === "SELECT" ||
+                target?.isContentEditable
+            ) {
+                return;
+            }
+            event.preventDefault();
+            filterInputRef.current?.focus();
+        }
+
+        document.addEventListener("keydown", handleKeyDown);
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, []);
 
     useEffect(() => {
         const timer = setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS);
@@ -137,6 +159,13 @@ export default function Sidebar({
                 ? current.filter((value) => value !== chatType)
                 : [...current, chatType],
         );
+    }
+
+    function clearFilters() {
+        setQuery("");
+        setDebouncedQuery("");
+        setActiveStatuses([]);
+        setActiveChatTypes([]);
     }
 
     useEffect(() => {
@@ -298,9 +327,10 @@ export default function Sidebar({
                 <div className="relative">
                     <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                     <input
+                        ref={filterInputRef}
                         type="search"
                         aria-label="Search targets"
-                        placeholder="Search bot, chat title, chat name"
+                        placeholder="Search bot, chat title, chat name  (press /)"
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
                         className="w-full rounded border border-slate-200 bg-slate-50 py-1.5 pl-7 pr-2 text-xs text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
@@ -356,17 +386,58 @@ export default function Sidebar({
                         : `${filteredCredentials.length} of ${credentials.length} targets`}
                 </div>
             </div>
-            <div className="flex flex-col">
+            <div
+                role="list"
+                aria-label="Drill-down targets"
+                aria-busy={loading}
+                className="flex flex-col"
+            >
+                {loading && (
+                    <div
+                        data-testid="targets-skeleton"
+                        aria-busy="true"
+                        aria-label="Loading targets"
+                        className="border-b p-4"
+                    >
+                        <div className="space-y-3">
+                            {Array.from({ length: 4 }, (_, index) => (
+                                <div
+                                    key={index}
+                                    className="animate-pulse space-y-2 motion-reduce:animate-none"
+                                >
+                                    <div className="h-3 w-2/3 rounded bg-slate-200" />
+                                    <div className="h-2.5 w-1/3 rounded bg-slate-100" />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 {!loading && filteredCredentials.length === 0 && (
                     <div className="border-b p-4 text-sm text-slate-500">
-                        {credentials.length === 0 && !filtersActive
-                            ? "No targets found"
-                            : "No targets match"}
+                        <p className="font-semibold text-slate-700">
+                            {credentials.length === 0 && !filtersActive
+                                ? "No targets found"
+                                : "No targets match"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                            {credentials.length === 0 && !filtersActive
+                                ? "Run a scan to discover exposed bots; new targets appear here automatically."
+                                : "Try a broader search or clear the active filters."}
+                        </p>
+                        {credentials.length > 0 && filtersActive && (
+                            <button
+                                type="button"
+                                onClick={clearFilters}
+                                className="mt-2 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                            >
+                                Clear filters
+                            </button>
+                        )}
                     </div>
                 )}
                 {filteredCredentials.map((cred) => (
+                    <div role="listitem" key={cred.id} className="contents">
                     <button
-                        key={cred.id}
                         onClick={() => onSelect(cred)}
                         className={`p-4 border-b text-left hover:bg-slate-100 transition-colors ${
                             selected?.id === cred.id ? "bg-blue-50 border-l-4 border-l-blue-500" : ""
@@ -400,6 +471,7 @@ export default function Sidebar({
                             </div>
                         )}
                     </button>
+                    </div>
                 ))}
             </div>
         </div>

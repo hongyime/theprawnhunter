@@ -341,7 +341,7 @@ export default function FindingsQueue({
           </button>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2" aria-label="Finding filters">
+        <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Finding filters">
           <select
             aria-label="Finding type"
             value={typeFilter}
@@ -370,8 +370,31 @@ export default function FindingsQueue({
 
       <div className="mx-auto flex max-w-5xl flex-col gap-3 p-4 md:p-7">
         {loading && (
-          <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
-            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> Loading material findings…
+          <div
+            data-testid="findings-skeleton"
+            aria-busy="true"
+            aria-label="Loading findings"
+            className="space-y-3"
+          >
+            <span className="sr-only">Loading material findings…</span>
+            {Array.from({ length: 3 }, (_, index) => (
+              <div
+                key={index}
+                className="animate-pulse rounded-lg border border-slate-200 bg-white p-5 motion-reduce:animate-none"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 rounded-md bg-slate-200" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-2.5 w-24 rounded bg-slate-200" />
+                    <div className="h-3.5 w-2/3 rounded bg-slate-200" />
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  <div className="h-2.5 w-full rounded bg-slate-100" />
+                  <div className="h-2.5 w-4/5 rounded bg-slate-100" />
+                </div>
+              </div>
+            ))}
           </div>
         )}
         {!loading && error && (
@@ -384,17 +407,30 @@ export default function FindingsQueue({
             <CheckCircle2 className="mx-auto h-7 w-7 text-[#197e74]" />
             <h2 className="mt-3 font-bold text-slate-900">No findings match this view</h2>
             <p className="mt-1 text-sm text-slate-600">Change the filters or wait for the next producer run.</p>
+            {(typeFilter !== "all" || statusFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTypeFilter("all");
+                  setStatusFilter("all");
+                }}
+                className="mt-3 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              >
+                Show all findings
+              </button>
+            )}
           </div>
         )}
 
+        <div role="list" aria-label="Findings" aria-busy={loading} className="flex flex-col gap-3">
         {findings.map((finding) => {
           const isOpen = expanded.has(finding.id);
           const rows = evidence[finding.id] || [];
           const credentialId = credentialByFinding[finding.id];
           const pending = pendingFinding === finding.id;
           return (
+            <div role="listitem" key={finding.id} className="contents">
             <article
-              key={finding.id}
               className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_1px_0_rgba(23,32,51,0.04)]"
             >
               <button
@@ -508,8 +544,10 @@ export default function FindingsQueue({
                 </div>
               )}
             </article>
+            </div>
           );
         })}
+        </div>
       </div>
     </section>
   );

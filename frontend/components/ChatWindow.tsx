@@ -11,10 +11,12 @@ import {
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import {
+    Check,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
+    Copy,
     FileDown,
     Globe2,
     ImageOff,
@@ -90,7 +92,12 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     const [olderError, setOlderError] = useState<string | null>(null);
     const [hasMore, setHasMore] = useState(true);
     const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
+    const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+    const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+    const [copyFailureId, setCopyFailureId] = useState<string | null>(null);
+    const [feedRefreshToken, setFeedRefreshToken] = useState(0);
     const [, setThumbTick] = useState(0);
+    const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -119,7 +126,52 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
         setRetryToken(0);
         thumbCacheRef.current.clear();
         setGalleryIndex(null);
+        setSelectedMessageId(null);
+        setCopiedMessageId(null);
+        setCopyFailureId(null);
     }, [credentialId, clearSearch]);
+
+    useEffect(() => {
+        return () => {
+            if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+        };
+    }, []);
+
+    const copyMessage = useCallback(async (messageId: string, content: string | null) => {
+        if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+        try {
+            if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+                throw new Error("Clipboard API unavailable");
+            }
+            await navigator.clipboard.writeText(content ?? "");
+            setCopiedMessageId(messageId);
+            setCopyFailureId(null);
+        } catch {
+            setCopiedMessageId(null);
+            setCopyFailureId(messageId);
+        }
+        copyResetTimerRef.current = setTimeout(() => {
+            setCopiedMessageId(null);
+            setCopyFailureId(null);
+        }, 2000);
+    }, []);
+
+    const exportChat = useCallback(
+        (format: "json" | "csv") => {
+            const rows = messages.map(toExportRow);
+            const baseName = credentialId ? credentialId.slice(0, 8) : "chat";
+            if (format === "json") {
+                downloadTextFile(
+                    `${baseName}-chat.json`,
+                    serializeChatJson(rows),
+                    "application/json",
+                );
+            } else {
+                downloadTextFile(`${baseName}-chat.csv`, serializeChatCsv(rows), "text/csv");
+            }
+        },
+        [messages, credentialId],
+    );
 
     useEffect(() => {
         if (!credentialId) return;
@@ -267,7 +319,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 channel = null;
             }
         };
-    }, [credentialId, session]);
+    }, [credentialId, session, feedRefreshToken]);
 
     const loadOlderPage = useCallback(async () => {
         if (!credentialId || !session) return;
@@ -354,29 +406,77 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     useEffect(() => {
         if (typeof document === "undefined") return;
 
-        function handleKeyDown(event: KeyboardEvent) {
-            if (event.key === "Escape" && searchActive) {
-                clearSearch();
-                return;
-            }
-            if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
-            const target = event.target as HTMLElement | null;
-            const tag = target?.tagName;
-            if (
+        function isTypingTarget(target: HTMLElement | null): boolean {
+            if (!target) return false;
+            const tag = target.tagName;
+            return (
                 tag === "INPUT" ||
                 tag === "TEXTAREA" ||
                 tag === "SELECT" ||
-                target?.isContentEditable
-            ) {
+                target.isContentEditable
+            );
+        }
+
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.metaKey || event.ctrlKey || event.altKey) return;
+            const target = event.target as HTMLElement | null;
+
+            if (event.key === "Escape") {
+                if (searchActive) {
+                    clearSearch();
+                    return;
+                }
+                setSelectedMessageId(null);
                 return;
             }
+
+            if (isTypingTarget(target)) return;
+
+            if (event.key === "/") {
+                event.preventDefault();
+                searchInputRef.current?.focus();
+                return;
+            }
+
+            if (event.key !== "j" && event.key !== "k") return;
+            if (galleryIndex !== null) return;
+
+            const navigable = messages.filter((message) => message.content);
+            if (navigable.length === 0) return;
             event.preventDefault();
-            searchInputRef.current?.focus();
+
+            setSelectedMessageId((previous) => {
+                const currentIndex = previous
+                    ? navigable.findIndex((message) => message.id === previous)
+                    : -1;
+                const nextIndex =
+                    event.key === "j"
+                        ? Math.min(currentIndex + 1, navigable.length - 1)
+                        : Math.max(currentIndex - 1, 0);
+                return navigable[nextIndex].id;
+            });
         }
 
         document.addEventListener("keydown", handleKeyDown);
         return () => document.removeEventListener("keydown", handleKeyDown);
-    }, [searchActive, clearSearch]);
+    }, [searchActive, clearSearch, galleryIndex, messages]);
+
+    useEffect(() => {
+        if (!selectedMessageId) return;
+        if (!messages.some((message) => message.id === selectedMessageId)) {
+            setSelectedMessageId(null);
+        }
+    }, [messages, selectedMessageId]);
+
+    useEffect(() => {
+        if (!selectedMessageId || galleryIndex !== null) return;
+        const container = listRef.current;
+        if (!container) return;
+        const node = Array.from(
+            container.querySelectorAll<HTMLElement>("[data-message-id]"),
+        ).find((element) => element.dataset.messageId === selectedMessageId);
+        node?.scrollIntoView({ block: "nearest" });
+    }, [selectedMessageId, galleryIndex, messages]);
 
     useEffect(() => {
         if (searchActive) return;
@@ -496,8 +596,28 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
 
     if (loading) {
         return (
-            <div className="flex-1 flex items-center justify-center bg-slate-200 text-slate-600">
-                Loading messages...
+            <div
+                data-testid="chat-skeleton"
+                aria-busy="true"
+                aria-label="Loading messages"
+                className="flex-1 overflow-hidden bg-[#E5DDD5] p-4"
+            >
+                <span className="sr-only">Loading messages…</span>
+                <div className="space-y-3">
+                    {Array.from({ length: 6 }, (_, index) => (
+                        <div
+                            key={index}
+                            className="flex animate-pulse items-start gap-2 motion-reduce:animate-none"
+                        >
+                            <div className="mt-0.5 h-8 w-8 shrink-0 rounded-full bg-slate-300" />
+                            <div className="min-w-0 flex-1 space-y-2 rounded-lg bg-white/80 p-3 shadow-sm">
+                                <div className="h-2.5 w-24 rounded bg-slate-300" />
+                                <div className="h-2.5 w-full rounded bg-slate-200" />
+                                <div className="h-2.5 w-2/3 rounded bg-slate-200" />
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
         );
     }
@@ -540,6 +660,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             label: displayNameFor(message),
         }));
     const galleryItem = galleryIndex === null ? undefined : galleryItems[galleryIndex];
+    const textMessages = messages.filter((message) => message.content);
     const openGallery = (messageId: string) => {
         const index = galleryItems.findIndex((item) => item.id === messageId);
         if (index >= 0) setGalleryIndex(index);
@@ -564,6 +685,32 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 </span>
                             )}
                         </div>
+                    </div>
+                    <div
+                        role="group"
+                        aria-label="Export chat"
+                        title="Exports the currently loaded messages only"
+                        className="ml-auto flex shrink-0 items-center gap-1.5"
+                    >
+                        <span className="hidden font-mono text-[10px] font-semibold uppercase tracking-wide text-slate-500 sm:inline">
+                            Export
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => exportChat("json")}
+                            aria-label="Export chat as JSON"
+                            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                        >
+                            <FileDown className="h-3 w-3" aria-hidden="true" /> JSON
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => exportChat("csv")}
+                            aria-label="Export chat as CSV"
+                            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                        >
+                            <FileDown className="h-3 w-3" aria-hidden="true" /> CSV
+                        </button>
                     </div>
                 </div>
                 <form
@@ -611,6 +758,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                         <button
                             type="button"
                             onClick={() => setIsProfileExpanded((value) => !value)}
+                            aria-expanded={isProfileExpanded}
                             className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
                         >
                             <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
@@ -734,7 +882,31 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 Beginning of history
                             </p>
                         ) : null}
-                        {groupMessagesByDay(messages.filter((m) => m.content)).map((group) => (
+                        {textMessages.length === 0 ? (
+                            <div
+                                data-testid="chat-empty"
+                                className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center"
+                            >
+                                <h2 className="font-bold text-slate-900">
+                                    {messages.length === 0
+                                        ? "No messages captured yet"
+                                        : "No text messages in this chat"}
+                                </h2>
+                                <p className="mt-1 text-sm text-slate-600">
+                                    {messages.length === 0
+                                        ? "This chat is connected but no evidence has been harvested. Wait for the next collector run, or refresh the feed."
+                                        : "This conversation only contains media attachments right now."}
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={() => setFeedRefreshToken((value) => value + 1)}
+                                    className="mt-3 flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] mx-auto"
+                                >
+                                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Refresh feed
+                                </button>
+                            </div>
+                        ) : (
+                            groupMessagesByDay(textMessages).map((group) => (
                             <Fragment key={group.key}>
                                 <div
                                     role="separator"
@@ -748,6 +920,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 </div>
                                 {group.messages.map((message) => {
                                     const name = displayNameFor(message);
+                                    const isSelected = selectedMessageId === message.id;
                                     const colorIndex = senderColorIndex(
                                         senderIdentityKey(message),
                                     );
@@ -759,7 +932,15 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     return (
                                         <div
                                             key={message.id}
-                                            className="group flex items-start gap-2"
+                                            data-message-id={message.id}
+                                            data-selected={isSelected ? "true" : undefined}
+                                            aria-selected={isSelected}
+                                            tabIndex={-1}
+                                            className={`group flex items-start gap-2 rounded-lg transition-shadow ${
+                                                isSelected
+                                                    ? "ring-2 ring-[#197e74] ring-offset-2 ring-offset-[#E5DDD5]"
+                                                    : ""
+                                            }`}
                                         >
                                             <span
                                                 role="img"
@@ -777,6 +958,27 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                     <span className="truncate text-xs font-semibold text-slate-800">
                                                         {name}
                                                     </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            void copyMessage(message.id, message.content)
+                                                        }
+                                                        aria-label="Copy message"
+                                                        className="flex shrink-0 items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                                    >
+                                                        {copiedMessageId === message.id ? (
+                                                            <Check className="h-3 w-3" aria-hidden="true" />
+                                                        ) : (
+                                                            <Copy className="h-3 w-3" aria-hidden="true" />
+                                                        )}
+                                                        <span>
+                                                            {copiedMessageId === message.id
+                                                                ? "Copied"
+                                                                : copyFailureId === message.id
+                                                                    ? "Copy failed"
+                                                                    : "Copy"}
+                                                        </span>
+                                                    </button>
                                                     <time
                                                         dateTime={message.created_at}
                                                         title={timestamp}
@@ -827,7 +1029,8 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     );
                                 })}
                             </Fragment>
-                        ))}
+                            ))
+                        )}
                         <div ref={bottomRef} />
                     </>
                 )}
@@ -1279,4 +1482,67 @@ interface ChatMessage {
     file_meta?: ChatFileMeta | null;
     is_broadcasted: boolean;
     created_at: string;
+}
+
+export interface ChatExportRow {
+    id: string;
+    created_at: string;
+    sender: string;
+    sender_key: string;
+    sender_pseudonym: string;
+    media_type: string;
+    content: string;
+}
+
+const CSV_HEADER = ["id", "created_at", "sender", "media_type", "content"] as const;
+
+function toExportRow(message: ChatMessage): ChatExportRow {
+    return {
+        id: message.id,
+        created_at: message.created_at,
+        sender: message.sender_pseudonym || message.sender_key || message.sender_name || "",
+        sender_key: message.sender_key ?? "",
+        sender_pseudonym: message.sender_pseudonym ?? "",
+        media_type: message.media_type ?? "",
+        content: message.content ?? "",
+    };
+}
+
+/** RFC4180 field: always quoted, embedded quotes doubled. */
+function csvField(value: string): string {
+    return `"${value.replace(/"/g, '""')}"`;
+}
+
+export function serializeChatJson(rows: readonly ChatExportRow[]): string {
+    return JSON.stringify(rows, null, 2);
+}
+
+/** Header row is always present; an empty chat yields a header-only file. */
+export function serializeChatCsv(rows: readonly ChatExportRow[]): string {
+    const lines = [CSV_HEADER.join(",")];
+    for (const row of rows) {
+        lines.push(
+            [row.id, row.created_at, row.sender, row.media_type, row.content]
+                .map(csvField)
+                .join(","),
+        );
+    }
+    return lines.join("\r\n");
+}
+
+function downloadTextFile(filename: string, contents: string, mimeType: string) {
+    if (typeof document === "undefined") return;
+    const blob = new Blob([contents], { type: `${mimeType};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.rel = "noopener";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    // Revoke on the next tick so the download has started.
+    setTimeout(() => {
+        if (typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(url);
+    }, 0);
 }

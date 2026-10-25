@@ -25,7 +25,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 import type { Credential } from "@/app/page";
-import ChatWindow from "./ChatWindow";
+import ChatWindow, { serializeChatCsv, serializeChatJson } from "./ChatWindow";
 
 const PAGE_SIZE = 50;
 const BASE_TIME = Date.parse("2026-09-05T12:00:00Z");
@@ -763,5 +763,191 @@ describe("ChatWindow", () => {
     expect(
       screen.queryByRole("dialog", { name: "Media preview" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("moves the visual selection with j and k, ignoring keys while typing", async () => {
+    mockFeed([
+      makeMessage("sel-a", "selection alpha", "2026-09-05T10:00:00Z"),
+      makeMessage("sel-b", "selection beta", "2026-09-05T10:01:00Z"),
+      makeMessage("sel-c", "selection gamma", "2026-09-05T10:02:00Z"),
+    ]);
+    render(<ChatWindow credential={credential} />);
+    await screen.findByText("selection alpha");
+
+    const rowFor = (text: string) =>
+      screen.getByText(text).closest("[data-message-id]") as HTMLElement;
+    (Element.prototype.scrollIntoView as unknown as { mockClear: () => void }).mockClear();
+
+    expect(rowFor("selection alpha")).toHaveAttribute("aria-selected", "false");
+
+    await userEvent.keyboard("j");
+    expect(rowFor("selection alpha")).toHaveAttribute("aria-selected", "true");
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+
+    await userEvent.keyboard("j");
+    expect(rowFor("selection beta")).toHaveAttribute("aria-selected", "true");
+    expect(rowFor("selection alpha")).toHaveAttribute("aria-selected", "false");
+
+    await userEvent.keyboard("k");
+    expect(rowFor("selection alpha")).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard("{Escape}");
+    expect(rowFor("selection alpha")).toHaveAttribute("aria-selected", "false");
+
+    await userEvent.click(searchInput());
+    await userEvent.keyboard("j");
+    expect(rowFor("selection alpha")).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("copies a message to the clipboard with a transient Copied state", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    mockFeed();
+    render(<ChatWindow credential={credential} />);
+    await screen.findByText("live feed message");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("live feed message"));
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+  });
+
+  it("shows a copy failure instead of crashing when the clipboard is unavailable", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    mockFeed();
+    render(<ChatWindow credential={credential} />);
+    await screen.findByText("live feed message");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+
+    expect(await screen.findByText("Copy failed")).toBeInTheDocument();
+  });
+
+  it("serializes JSON exports with the documented fields", () => {
+    const rows = [
+      {
+        id: "m1",
+        created_at: "2026-09-05T10:00:00Z",
+        sender: "user_ab12",
+        sender_key: "user_ab12",
+        sender_pseudonym: "user_ab12",
+        media_type: "text",
+        content: 'hello, "world"',
+      },
+    ];
+    const parsed = JSON.parse(serializeChatJson(rows));
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toMatchObject({
+      id: "m1",
+      created_at: "2026-09-05T10:00:00Z",
+      sender: "user_ab12",
+      media_type: "text",
+      content: 'hello, "world"',
+    });
+    expect(JSON.parse(serializeChatJson([]))).toEqual([]);
+  });
+
+  it("serializes CSV with RFC4180 quoting and header-only for an empty chat", () => {
+    expect(serializeChatCsv([])).toBe("id,created_at,sender,media_type,content");
+
+    const csv = serializeChatCsv([
+      {
+        id: "m1",
+        created_at: "2026-09-05T10:00:00Z",
+        sender: "user_ab12",
+        sender_key: "user_ab12",
+        sender_pseudonym: "user_ab12",
+        media_type: "text",
+        content: 'hello, "world"\nsecond line',
+      },
+    ]);
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe("id,created_at,sender,media_type,content");
+    expect(lines[1]).toContain('"hello, ""world""\nsecond line"');
+    expect(lines[1].startsWith('"m1","2026-09-05T10:00:00Z","user_ab12","text",')).toBe(
+      true,
+    );
+  });
+
+  it("downloads the loaded chat as a Blob through the export control", async () => {
+    mockFeed();
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:chat-export");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+    render(<ChatWindow credential={credential} />);
+    await screen.findByText("live feed message");
+
+    fireEvent.click(screen.getByRole("button", { name: "Export chat as JSON" }));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(clickSpy).toHaveBeenCalled();
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:chat-export"));
+    clickSpy.mockRestore();
+  });
+
+  it("exports an empty chat as a header-only CSV without crashing", async () => {
+    mockFeed([]);
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:empty-export");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+    render(<ChatWindow credential={credential} />);
+
+    expect(await screen.findByTestId("chat-empty")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Export chat as CSV" }));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const blob = createObjectURL.mock.calls[0][0];
+    expect(blob.type).toContain("text/csv");
+    if (typeof blob.text === "function") {
+      expect(await blob.text()).toBe("id,created_at,sender,media_type,content");
+    }
+    clickSpy.mockRestore();
+  });
+
+  it("renders a loading skeleton until the first page resolves", async () => {
+    let resolvePage: ((value: unknown) => void) | undefined;
+    const builder = messageBuilder({ data: [], error: null });
+    builder.range.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePage = resolve;
+      }),
+    );
+    mockFrom.mockReturnValue(builder);
+    render(<ChatWindow credential={credential} />);
+
+    const skeleton = await screen.findByTestId("chat-skeleton");
+    expect(skeleton).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => {
+      resolvePage?.({ data: [liveMessage], error: null });
+    });
+
+    expect(await screen.findByText("live feed message")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-skeleton")).not.toBeInTheDocument();
   });
 });
