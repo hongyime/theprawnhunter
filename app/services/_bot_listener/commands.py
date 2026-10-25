@@ -77,7 +77,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/bots - List bots\n"
             "/telemetry - Telemetry\n"
             "/getfile <id> - Get attachment\n"
-            "/backfill [--apply] - Re-broadcast stuck messages (dry run by default)"
+            "/backfill [--apply] - Re-broadcast stuck messages (dry run by default)\n"
+            "/watchlist - Manage watchlist (list/add/rm/on/off/cooldown/hits)"
         )
     else:
         help_text = (

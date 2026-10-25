@@ -5,6 +5,7 @@ from .common import *
 from .commands import *
 from .login import *
 from .updates import *
+from .watchlist_commands import *
 from .login import _conversation_timeout
 
 def _bot_id_from_token(token: str) -> str:
@@ -240,6 +241,7 @@ def _build_application(token: str) -> Application:
     application.add_handler(CommandHandler("getfile", getfile_command))
     application.add_handler(CommandHandler("archive", getfile_command))
     application.add_handler(CommandHandler("backfill", backfill_command))
+    application.add_handler(CommandHandler("watchlist", watchlist_command))
 
     # Auto-promote logged-in session accounts when they join monitor group
     application.add_handler(
