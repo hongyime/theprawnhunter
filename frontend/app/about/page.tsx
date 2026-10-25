@@ -75,6 +75,14 @@ const PRIVACY = [
   },
 ] as const;
 
+const SECTION_LABEL =
+  "font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500";
+const CARD = "rounded-lg border border-slate-200 bg-white";
+const PRIMARY_BUTTON =
+  "inline-flex items-center justify-center rounded-md bg-[#197e74] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#12645c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]";
+const SECONDARY_BUTTON =
+  "inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]";
+
 function Mark({ className }: { className?: string }) {
   return (
     <svg
@@ -103,12 +111,10 @@ function SectionHeading({
 }) {
   return (
     <div className="max-w-2xl">
-      <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-400">
-        {eyebrow}
-      </p>
+      <p className={SECTION_LABEL}>{eyebrow}</p>
       <h2
         id={id}
-        className="mt-4 text-3xl font-bold tracking-tight text-white sm:text-4xl"
+        className="mt-2 text-2xl font-bold tracking-tight text-slate-900"
       >
         {title}
       </h2>
@@ -118,139 +124,83 @@ function SectionHeading({
 
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-300 selection:bg-emerald-500/30 selection:text-emerald-50">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 sm:px-10">
-        <div className="flex items-center gap-3">
-          <Mark className="h-6 w-6 text-emerald-400" />
-          <span className="font-mono text-xs font-semibold uppercase tracking-[0.22em] text-slate-200">
-            The Prawn Hunter
-          </span>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <Mark className="h-5 w-5 shrink-0 text-[#197e74]" />
+            <span className="truncate text-sm font-bold text-slate-800">
+              The Prawn Hunter
+            </span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="hidden rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600 md:inline">
+              Operator console
+            </span>
+            <a
+              href="/"
+              className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+            >
+              Back to the app
+            </a>
+            <a
+              href="/signin"
+              className="inline-flex items-center justify-center rounded-md bg-[#197e74] px-2.5 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#12645c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+            >
+              Sign in
+            </a>
+          </div>
         </div>
-        <span className="hidden items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500 sm:flex">
-          <span
-            className="h-1.5 w-1.5 rounded-full bg-emerald-400"
-            aria-hidden="true"
-          />
-          Operator console
-        </span>
       </header>
 
       <main>
-        <section aria-labelledby="hero-heading" className="relative overflow-hidden">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute -top-40 right-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl"
-          />
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/40 to-transparent"
-          />
-          <div className="relative mx-auto grid max-w-6xl gap-14 px-6 pb-20 pt-10 sm:px-10 sm:pb-28 sm:pt-16 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
-            <div>
-              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-400">
-                Self-hosted OSINT pipeline
-              </p>
-              <h1
-                id="hero-heading"
-                className="mt-5 max-w-2xl text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl"
-              >
-                Exposed Telegram bots, found, proven, kept private.
-              </h1>
-              <p className="mt-6 max-w-xl text-base leading-7 text-slate-400 sm:text-lg">
-                The Prawn Hunter discovers leaked Telegram Bot API tokens across
-                public sources, validates each one against the live Telegram API,
-                harvests the chat history those bots can still reach, and delivers
-                the evidence to a private operator supergroup and dashboard.
-              </p>
-              <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
-                <a
-                  href="/signin"
-                  className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
-                >
-                  Sign in
-                  <span aria-hidden="true">→</span>
-                </a>
-                <a
-                  href="/"
-                  className="inline-flex items-center justify-center rounded-md border border-white/15 px-6 py-3 text-sm font-medium text-slate-200 transition-colors hover:border-white/30 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
-                >
-                  Back to the app
-                </a>
-              </div>
-              <p className="mt-6 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                Operator access only
-              </p>
+        <section aria-labelledby="hero-heading">
+          <div className="mx-auto max-w-6xl px-4 pb-12 pt-12 sm:px-6 sm:pb-16 sm:pt-16">
+            <p className={SECTION_LABEL}>Self-hosted OSINT pipeline</p>
+            <h1
+              id="hero-heading"
+              className="mt-3 max-w-3xl text-3xl font-bold tracking-tight text-slate-900"
+            >
+              Exposed Telegram bots, found, proven, kept private.
+            </h1>
+            <p className="mt-4 max-w-4xl text-base leading-7 text-slate-600">
+              The Prawn Hunter discovers leaked Telegram Bot API tokens across
+              public sources, validates each one against the live Telegram API,
+              and delivers the evidence to a private operator supergroup and
+              dashboard.
+            </p>
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <a href="#steps" className={PRIMARY_BUTTON}>
+                How it works
+              </a>
+              <a href="#privacy" className={SECONDARY_BUTTON}>
+                Private by design
+              </a>
             </div>
-
-            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6 shadow-2xl shadow-black/40 backdrop-blur">
-              <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-slate-400">
-                  Pipeline
-                </span>
-                <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-emerald-400">
-                  <span
-                    className="h-1.5 w-1.5 rounded-full bg-emerald-400"
-                    aria-hidden="true"
-                  />
-                  Self-hosted
-                </span>
-              </div>
-              <ul className="divide-y divide-white/5">
-                {PIPELINE.map((step) => (
-                  <li
-                    key={step.index}
-                    className="flex items-start justify-between gap-4 py-4"
-                  >
-                    <div className="flex items-start gap-4">
-                      <span className="font-mono text-[11px] text-slate-500">
-                        {step.index}
-                      </span>
-                      <div>
-                        <p className="text-sm font-semibold text-slate-100">
-                          {step.title}
-                        </p>
-                        <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                          {step.detail}
-                        </p>
-                      </div>
-                    </div>
-                    <span
-                      className="mt-1 font-mono text-xs text-emerald-500"
-                      aria-hidden="true"
-                    >
-                      →
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-4 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                <span>Evidence destination</span>
-                <span className="text-emerald-400">Private</span>
-              </div>
-            </div>
+            <p className={`mt-6 ${SECTION_LABEL}`}>Operator access only</p>
           </div>
         </section>
 
         <section
           aria-labelledby="steps-heading"
-          className="border-y border-white/10 bg-slate-900/30"
+          className="border-t border-slate-200"
         >
-          <div className="mx-auto max-w-6xl px-6 py-20 sm:px-10 sm:py-24">
+          <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
             <SectionHeading
               id="steps-heading"
               eyebrow="How it works"
               title="Four stages, one private pipeline."
             />
-            <ol className="mt-10 grid overflow-hidden rounded-2xl border border-white/10 bg-white/10 sm:grid-cols-2 lg:grid-cols-4">
+            <ol className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {PIPELINE.map((step) => (
-                <li key={step.index} className="bg-slate-950 p-6 sm:p-7">
-                  <span className="font-mono text-xs text-emerald-400">
+                <li key={step.index} className={`${CARD} p-5`}>
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-[#197e74]">
                     {step.index}
                   </span>
-                  <h3 className="mt-4 text-lg font-semibold text-white">
+                  <h3 className="mt-2 text-sm font-semibold text-slate-900">
                     {step.title}
                   </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
                     {step.body}
                   </p>
                   <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
@@ -264,48 +214,56 @@ export default function AboutPage() {
 
         <section
           aria-labelledby="features-heading"
-          className="mx-auto max-w-6xl px-6 py-20 sm:px-10 sm:py-24"
+          className="border-t border-slate-200"
         >
-          <SectionHeading
-            id="features-heading"
-            eyebrow="Operator surfaces"
-            title="Built for an operator, not a crowd."
-          />
-          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map((feature) => (
-              <article
-                key={feature.title}
-                className="rounded-xl border border-white/10 bg-slate-900/40 p-6 transition-colors hover:border-emerald-500/40 hover:bg-slate-900/70"
-              >
-                <h3 className="text-base font-semibold text-white">
-                  {feature.title}
-                </h3>
-                <p className="mt-3 text-sm leading-6 text-slate-400">
-                  {feature.body}
-                </p>
-              </article>
-            ))}
+          <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
+            <SectionHeading
+              id="features-heading"
+              eyebrow="Operator surfaces"
+              title="Built for an operator, not a crowd."
+            />
+            <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {FEATURES.map((feature, index) => (
+                <article
+                  key={feature.title}
+                  className={`${CARD} p-5 shadow-[0_1px_0_rgba(23,32,51,0.04)]`}
+                >
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <h3 className="mt-2 text-sm font-semibold text-slate-900">
+                    {feature.title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {feature.body}
+                  </p>
+                </article>
+              ))}
+            </div>
           </div>
         </section>
 
         <section
           aria-labelledby="privacy-heading"
-          className="border-y border-white/10 bg-slate-900/30"
+          className="border-y border-slate-200 bg-white"
         >
-          <div className="mx-auto max-w-6xl px-6 py-20 sm:px-10">
+          <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
             <h2
               id="privacy-heading"
-              className="font-mono text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-400"
+              className="text-2xl font-bold tracking-tight text-slate-900"
             >
               Private by design
             </h2>
-            <div className="mt-8 grid gap-8 sm:grid-cols-3 sm:gap-6">
+            <div className="mt-6 grid divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
               {PRIVACY.map((item) => (
-                <div key={item.title}>
-                  <h3 className="text-base font-semibold text-white">
+                <div
+                  key={item.title}
+                  className="py-5 first:pt-0 last:pb-0 sm:px-6 sm:py-0 sm:first:pl-0 sm:last:pr-0"
+                >
+                  <h3 className="text-sm font-semibold text-slate-900">
                     {item.title}
                   </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
                     {item.body}
                   </p>
                 </div>
@@ -314,23 +272,25 @@ export default function AboutPage() {
           </div>
         </section>
 
-        <section className="mx-auto max-w-6xl px-6 py-20 sm:px-10 sm:py-24">
-          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-8 sm:p-10">
-            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-400">
-              Access
-            </p>
-            <p className="mt-4 max-w-2xl text-xl leading-8 text-slate-200 sm:text-2xl">
-              Dashboard access is provisioned by an administrator, not granted by
-              discovery. Once your operator account is authorised, sign in with the
-              credentials you were given.
-            </p>
+        <section aria-labelledby="access-heading">
+          <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-6">
+              <h2 id="access-heading" className={SECTION_LABEL}>
+                Access
+              </h2>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-700">
+                Dashboard access is provisioned by an administrator, not granted
+                by discovery. Once your operator account is authorised, sign in
+                with the credentials you were given.
+              </p>
+            </div>
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-white/10">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-6 py-8 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-10">
-          <p className="font-mono uppercase tracking-[0.16em] text-slate-400">
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-6 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <p className="font-mono uppercase tracking-[0.16em] text-slate-500">
             The Prawn Hunter
           </p>
           <p>

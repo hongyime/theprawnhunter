@@ -118,6 +118,25 @@ describe("About landing page", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("uses the light product theme instead of the dark landing theme", () => {
+    expect(SOURCE).not.toMatch(/bg-slate-950/);
+    expect(SOURCE).not.toMatch(/text-slate-300/);
+    expect(SOURCE).not.toMatch(/bg-emerald-500\/10|from-transparent|blur-3xl/);
+    expect(SOURCE).not.toMatch(/rounded-2xl/);
+    expect(SOURCE).toMatch(/bg-slate-50/);
+    expect(SOURCE).toMatch(/border-slate-200/);
+    expect(SOURCE).toMatch(/text-slate-900/);
+  });
+
+  it("exposes the public sign-in entry point to /signin", () => {
+    render(<AboutPage />);
+
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      "/signin",
+    );
+  });
+
   it("imports no data client and performs no network access at module scope", () => {
     expect(SOURCE).not.toMatch(
       /lib\/supabase|@supabase|fetch\(|XMLHttpRequest|axios/i,
