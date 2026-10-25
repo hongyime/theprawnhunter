@@ -38,6 +38,25 @@ def _to_int(val: Any) -> int | None:
         return None
 
 
+def _is_own_monitor_group(chat: dict[str, Any]) -> bool:
+    """Return True when a webhook update originates from our own monitor group.
+
+    Captured bots added to the monitor supergroup receive its service messages;
+    ingesting them would re-broadcast our own group back into itself.
+    """
+    configured = str(getattr(settings, "MONITOR_GROUP_ID", "") or "").strip()
+    if not configured:
+        return False
+
+    chat_id = _to_int(chat.get("id"))
+    if configured.lstrip("-").isdigit():
+        return chat_id is not None and str(chat_id) == configured
+
+    handle = configured.lstrip("@").lower()
+    username = str(chat.get("username") or "").strip().lstrip("@").lower()
+    return bool(handle) and username == handle
+
+
 def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dict[str, Any] | None:
     """Normalize a raw Telegram webhook update into an exfiltrated_messages record.
 
@@ -79,6 +98,11 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
         chat_msg_id = _to_int(target.get("message_id"))
         chat_obj = target.get("chat") if isinstance(target.get("chat"), dict) else {}
         chat_id = _to_int(chat_obj.get("id"))
+        if _is_own_monitor_group(chat_obj):
+            logger.debug(
+                f"[Honeypot] Ignoring update {safe_update_id} from the monitor group"
+            )
+            return None
 
         sender = target.get("from") if isinstance(target.get("from"), dict) else {}
         sender_name = (
@@ -127,6 +151,11 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
         cb_msg = cb.get("message") if isinstance(cb.get("message"), dict) else {}
         chat_msg_id = _to_int(cb_msg.get("message_id"))
         cb_chat = cb_msg.get("chat") if isinstance(cb_msg.get("chat"), dict) else {}
+        if _is_own_monitor_group(cb_chat):
+            logger.debug(
+                f"[Honeypot] Ignoring callback update {safe_update_id} from the monitor group"
+            )
+            return None
 
         file_meta = {
             "source": "bot_api",

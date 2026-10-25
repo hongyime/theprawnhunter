@@ -844,3 +844,62 @@ async def test_receiver_and_extractor_reject_update_id_exceeding_32_bit():
         mock_db.table.assert_not_called()
 
 
+
+
+def test_extract_honeypot_message_ignores_own_monitor_group(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "MONITOR_GROUP_ID", "@theprawnhunter", raising=False)
+    payload = {
+        "update_id": 99902,
+        "message": {
+            "message_id": 42,
+            "from": {
+                "id": 777,
+                "username": "GroupAnonymousBot",
+                "first_name": "Group",
+            },
+            "chat": {
+                "id": -1003588166404,
+                "username": "theprawnhunter",
+                "title": "The Prawn Hunter (hong-yi.me)",
+                "type": "supergroup",
+            },
+            "text": "New members joined the chat",
+        },
+    }
+    assert extract_honeypot_message(payload, "cred-uuid-loop") is None
+
+
+def test_extract_honeypot_message_ignores_numeric_monitor_group(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "MONITOR_GROUP_ID", "-1003588166404", raising=False)
+    payload = {
+        "update_id": 99903,
+        "message": {
+            "message_id": 43,
+            "from": {"id": 777, "first_name": "Group"},
+            "chat": {"id": -1003588166404, "type": "supergroup"},
+            "text": "pinned a message",
+        },
+    }
+    assert extract_honeypot_message(payload, "cred-uuid-loop") is None
+
+
+def test_extract_honeypot_message_allows_other_groups(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "MONITOR_GROUP_ID", "@theprawnhunter", raising=False)
+    payload = {
+        "update_id": 99904,
+        "message": {
+            "message_id": 44,
+            "from": {"id": 5, "username": "victim"},
+            "chat": {"id": -1001111111111, "username": "other_group", "type": "supergroup"},
+            "text": "bot token 1234567890:AAHhbW3Pzj9V5JhU5KzJ9V5JhU5KzJ9V5Jh",
+        },
+    }
+    extracted = extract_honeypot_message(payload, "cred-uuid-ok")
+    assert extracted is not None
+    assert extracted["telegram_msg_id"] == -99904
