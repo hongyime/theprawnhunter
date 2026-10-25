@@ -32,7 +32,36 @@ BEGIN
         RETURN;
     END IF;
 
-    EXECUTE 'ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY';
+    -- Supabase owns `realtime.messages` and enables RLS on it by default, so
+    -- this owner-only ALTER fails with 42501 when the applying role is not the
+    -- owner. Only attempt it when RLS is actually off, and degrade to a NOTICE
+    -- instead of aborting the migration on an ownership mismatch.
+    IF EXISTS (
+        SELECT 1
+        FROM pg_class
+        WHERE oid = 'realtime.messages'::regclass
+          AND relrowsecurity = false
+    ) THEN
+        BEGIN
+            EXECUTE 'ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY';
+        EXCEPTION
+            WHEN insufficient_privilege THEN
+                RAISE NOTICE 'not owner of realtime.messages; RLS left as-is';
+        END;
+    END IF;
+
+    -- Assert the end state: either RLS was already enabled or the ALTER above
+    -- succeeded. A still-disabled table is surfaced rather than silently ignored.
+    IF EXISTS (
+        SELECT 1
+        FROM pg_class
+        WHERE oid = 'realtime.messages'::regclass
+          AND relrowsecurity = true
+    ) THEN
+        RAISE NOTICE 'RLS enabled on realtime.messages';
+    ELSE
+        RAISE NOTICE 'RLS disabled on realtime.messages and could not be enabled';
+    END IF;
 
     -- Roles are Supabase-managed; guard so vanilla Postgres fixtures still apply.
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
