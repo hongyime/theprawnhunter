@@ -6,7 +6,7 @@ from .commands import _wipe_conversation, schedule_deletion
 async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the login flow. Gated on ALLOW_PUBLIC_STARTHUNTER unless caller
     is a whitelisted admin. Rate-limited per user to prevent session-pool
-    pollution (3 attempts per 24h)."""
+    pollution (STARTHUNTER_RATE_LIMIT_PER_DAY per window)."""
     if update.effective_chat.type != "private":
         bot_username = context.bot.username or "telehunter234bot"
         await _reply_and_delete(update,
@@ -29,26 +29,36 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         )
         return ConversationHandler.END
 
-    # Per-user rate limit: 3 attempts per 24h. Redis-backed so it survives
-    # bot restarts. Key format: rl:starthunter:<user_id>
-    try:
-        from app.core.redis_srv import redis_srv
-        user_id = update.effective_user.id
-        rl_key = f"rl:starthunter:{user_id}"
-        attempts = redis_srv.incr_key(rl_key, ttl_seconds=86400)
-        if attempts > 3:
-            logger.warning(
-                "[starthunter] rate-limited subject=%s attempt=%s/3 in 24h",
-                _subject_label(user_id),
-                attempts,
+    # Per-user rate limit: STARTHUNTER_RATE_LIMIT_PER_DAY attempts per
+    # STARTHUNTER_RATE_WINDOW_HOURS (default 3 per 24h). Redis-backed so it
+    # survives bot restarts. Key format: rl:starthunter:<user_id>.
+    # STARTHUNTER_RATE_LIMIT_PER_DAY=0 disables the gate.
+    rate_limit = settings.STARTHUNTER_RATE_LIMIT_PER_DAY
+    if rate_limit > 0:
+        try:
+            from app.core.redis_srv import redis_srv
+            user_id = update.effective_user.id
+            rl_key = f"rl:starthunter:{user_id}"
+            window_hours = settings.STARTHUNTER_RATE_WINDOW_HOURS
+            attempts = redis_srv.incr_key(
+                rl_key, ttl_seconds=window_hours * 3600
             )
-            await _reply_and_delete(update,
-                "Too many attempts. Try tomorrow.",
-            )
-            return ConversationHandler.END
-    except Exception as rl_exc:
-        # Redis down — don't fail closed, just log and let through
-        logger.debug(f"[starthunter] rate-limit check skipped: {rl_exc}")
+            if attempts > rate_limit:
+                logger.warning(
+                    "[starthunter] rate-limited subject=%s attempt=%s/%s in %sh",
+                    _subject_label(user_id),
+                    attempts,
+                    rate_limit,
+                    window_hours,
+                )
+                await _reply_and_delete(update,
+                    f"Too many attempts ({rate_limit} per {window_hours}h). "
+                    "Try again later.",
+                )
+                return ConversationHandler.END
+        except Exception as rl_exc:
+            # Redis down — don't fail closed, just log and let through
+            logger.debug(f"[starthunter] rate-limit check skipped: {rl_exc}")
 
     msg = (
         "Reply with your phone number (+countrycode).\n"
