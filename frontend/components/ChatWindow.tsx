@@ -24,6 +24,10 @@ const SEARCH_RESULT_LIMIT = 50;
 const SEARCH_MIN_QUERY = 2;
 const PAGE_SIZE = 50;
 const POLL_INTERVAL_MS = 3000;
+const REALTIME_FALLBACK_POLL_INTERVAL_MS = 60000;
+const REALTIME_SUBSCRIBE_TIMEOUT_MS = 5000;
+const EVIDENCE_CHANNEL = "evidence";
+const EVIDENCE_EVENT = "insert";
 const POLL_ENABLED = process.env.NEXT_PUBLIC_CHAT_POLL_ENABLED !== "false";
 const SCROLL_TOP_THRESHOLD = 40;
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 120;
@@ -143,18 +147,36 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
 
         void fetchNewestPage(false);
 
-        // Active polling is behind NEXT_PUBLIC_CHAT_POLL_ENABLED until the
-        // realtime/replacement path lands.
+        // Realtime is primary: a private broadcast on the evidence channel
+        // refreshes the newest page. Polling remains the fallback so the feed
+        // keeps advancing when Realtime is unavailable.
         let intervalId: ReturnType<typeof setInterval> | undefined;
         let handleVisibilityChange: (() => void) | undefined;
+        let channel: ReturnType<typeof supabase.channel> | null = null;
+        let subscribeTimeoutId: ReturnType<typeof setTimeout> | undefined;
+        let pollingFallback = false;
 
-        if (POLL_ENABLED) {
+        function startPolling(intervalMs: number) {
+            if (intervalId) clearInterval(intervalId);
             intervalId = setInterval(() => {
                 if (typeof document !== "undefined" && document.visibilityState === "hidden") {
                     return;
                 }
                 void fetchNewestPage(true);
-            }, POLL_INTERVAL_MS);
+            }, intervalMs);
+        }
+
+        function fallBackToPolling(reason: string) {
+            if (cancelled || pollingFallback) return;
+            pollingFallback = true;
+            console.debug(
+                `[ChatWindow] Realtime ${reason}; polling every ${POLL_INTERVAL_MS}ms`,
+            );
+            startPolling(POLL_INTERVAL_MS);
+        }
+
+        if (POLL_ENABLED) {
+            startPolling(REALTIME_FALLBACK_POLL_INTERVAL_MS);
 
             handleVisibilityChange = () => {
                 if (typeof document !== "undefined" && document.visibilityState === "visible") {
@@ -165,13 +187,40 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             if (typeof document !== "undefined") {
                 document.addEventListener("visibilitychange", handleVisibilityChange);
             }
+
+            channel = supabase.channel(EVIDENCE_CHANNEL, { config: { private: true } });
+            channel.on("broadcast", { event: EVIDENCE_EVENT }, (event) => {
+                if (cancelled) return;
+                if (String(event.payload?.credential_id) !== credentialId) return;
+                void fetchNewestPage(true);
+            });
+            subscribeTimeoutId = setTimeout(() => {
+                fallBackToPolling("subscription timed out");
+            }, REALTIME_SUBSCRIBE_TIMEOUT_MS);
+            channel.subscribe((status) => {
+                if (cancelled) return;
+                const state = String(status);
+                if (state === "SUBSCRIBED") {
+                    if (subscribeTimeoutId) clearTimeout(subscribeTimeoutId);
+                    subscribeTimeoutId = undefined;
+                    return;
+                }
+                if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
+                    fallBackToPolling(state.toLowerCase());
+                }
+            });
         }
 
         return () => {
             cancelled = true;
+            if (subscribeTimeoutId) clearTimeout(subscribeTimeoutId);
             if (intervalId) clearInterval(intervalId);
             if (handleVisibilityChange && typeof document !== "undefined") {
                 document.removeEventListener("visibilitychange", handleVisibilityChange);
+            }
+            if (channel) {
+                void supabase.removeChannel(channel);
+                channel = null;
             }
         };
     }, [credentialId, session]);

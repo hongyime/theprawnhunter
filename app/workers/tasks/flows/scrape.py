@@ -66,6 +66,34 @@ async def _embed_stored_rows(rows: list[dict[str, Any]]) -> None:
             )
 
 
+async def _publish_realtime_deltas(rows: list[dict[str, Any]]) -> None:
+    """Best-effort identifier-only realtime deltas for freshly stored rows."""
+    if not rows:
+        return
+    try:
+        from app.services.realtime_srv import publish_evidence_delta
+    except Exception as exc:  # noqa: BLE001 - realtime hook is optional
+        logger.debug(f"[Exfil] realtime delta import skipped: {exc}")
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        message_id = row.get("id")
+        credential_id = row.get("credential_id")
+        if not message_id or not credential_id:
+            continue
+        try:
+            await asyncio.to_thread(
+                publish_evidence_delta,
+                credential_id,
+                message_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - capture flow must continue
+            logger.debug(
+                f"[Exfil] realtime delta publish skipped for {message_id}: {exc}"
+            )
+
+
 async def _alert_stored_rows(rows: list[dict[str, Any]]) -> None:
     """Best-effort watchlist alerts for freshly stored messages."""
     try:
@@ -526,6 +554,7 @@ async def _exfiltrate_logic(cred_id: str):
                     )
                 )
                 await _index_telemetry_indicators(preflight_result.data or valid_updates)
+                await _publish_realtime_deltas(preflight_result.data or [])
     except Exception as e:
         logger.warning(f"⚠️ [Exfil] Preflight check failed for {cred_id}: {e}")
 
@@ -621,6 +650,8 @@ async def _exfiltrate_logic(cred_id: str):
                 index_candidates.append(db_payload)
         except Exception as e:
             logger.error(f"    ❌ Insert error for msg {msg.get('telegram_msg_id')}: {e}")
+
+    await _publish_realtime_deltas(heavy_candidates)
 
     if index_candidates:
         await _index_telemetry_indicators(index_candidates)

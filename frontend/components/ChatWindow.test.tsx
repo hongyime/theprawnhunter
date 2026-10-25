@@ -1,13 +1,20 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockUseAuth = vi.hoisted(() => vi.fn());
 const mockRpc = vi.hoisted(() => vi.fn());
+const mockChannel = vi.hoisted(() => vi.fn());
+const mockRemoveChannel = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: mockFrom, rpc: mockRpc },
+  supabase: {
+    from: mockFrom,
+    rpc: mockRpc,
+    channel: mockChannel,
+    removeChannel: mockRemoveChannel,
+  },
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -19,6 +26,15 @@ import ChatWindow from "./ChatWindow";
 
 const PAGE_SIZE = 50;
 const BASE_TIME = Date.parse("2026-09-05T12:00:00Z");
+
+type BroadcastHandler = (event: { payload?: Record<string, unknown> }) => void;
+type StatusHandler = (status: string) => void;
+
+let broadcastHandler: BroadcastHandler | undefined;
+let subscribeStatusHandler: StatusHandler | undefined;
+let channelMock:
+  | { on: ReturnType<typeof vi.fn>; subscribe: ReturnType<typeof vi.fn> }
+  | undefined;
 
 const credential = {
   id: "30000000-0000-0000-0000-000000000001",
@@ -107,6 +123,24 @@ describe("ChatWindow", () => {
     Element.prototype.scrollIntoView = vi.fn();
     mockUseAuth.mockReturnValue({ session: { user: { id: "operator" } } });
     mockRpc.mockResolvedValue({ data: [], error: null });
+    broadcastHandler = undefined;
+    subscribeStatusHandler = undefined;
+    channelMock = undefined;
+    mockRemoveChannel.mockResolvedValue("ok");
+    mockChannel.mockImplementation(() => {
+      const channel = {
+        on: vi.fn((_type: string, _filter: unknown, handler: BroadcastHandler) => {
+          broadcastHandler = handler;
+          return channel;
+        }),
+        subscribe: vi.fn((handler: StatusHandler) => {
+          subscribeStatusHandler = handler;
+          return channel;
+        }),
+      };
+      channelMock = channel;
+      return channel;
+    });
   });
 
   it("does not query evidence without an authenticated session", async () => {
@@ -443,5 +477,97 @@ describe("ChatWindow", () => {
     await userEvent.keyboard("/");
 
     expect(searchInput()).toHaveFocus();
+  });
+
+  it("subscribes to the private evidence channel", async () => {
+    mockFeed();
+    render(<ChatWindow credential={credential} />);
+    await screen.findByText("live feed message");
+
+    expect(mockChannel).toHaveBeenCalledTimes(1);
+    expect(mockChannel).toHaveBeenCalledWith("evidence", { config: { private: true } });
+    expect(channelMock?.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches only the newest page once when an evidence insert arrives", async () => {
+    const firstPage = [makeMessage("base", "base message", "2026-09-05T02:00:00Z")];
+    const refreshed = [
+      makeMessage("fresh", "brand new message", "2026-09-05T03:00:00Z"),
+      ...firstPage,
+    ];
+    const builder = messageBuilder({ data: firstPage, error: null });
+    builder.range
+      .mockResolvedValueOnce({ data: firstPage, error: null })
+      .mockResolvedValueOnce({ data: refreshed, error: null });
+    mockFrom.mockReturnValue(builder);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("base message");
+    expect(builder.range).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      broadcastHandler?.({
+        payload: { credential_id: credential.id, message_id: "fresh" },
+      });
+    });
+
+    expect(await screen.findByText("brand new message")).toBeInTheDocument();
+    expect(builder.range).toHaveBeenCalledTimes(2);
+    expect(builder.range).toHaveBeenLastCalledWith(0, PAGE_SIZE - 1);
+    expect(screen.getAllByText("base message")).toHaveLength(1);
+  });
+
+  it("falls back to the 3s poll when the realtime subscription errors, without a banner", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const firstPage = [makeMessage("base", "base message", "2026-09-05T02:00:00Z")];
+      const refreshed = [
+        makeMessage("fresh", "poll fallback message", "2026-09-05T03:00:00Z"),
+        ...firstPage,
+      ];
+      const builder = messageBuilder({ data: firstPage, error: null });
+      builder.range
+        .mockResolvedValueOnce({ data: firstPage, error: null })
+        .mockResolvedValueOnce({ data: refreshed, error: null });
+      mockFrom.mockReturnValue(builder);
+      render(<ChatWindow credential={credential} />);
+
+      await screen.findByText("base message");
+
+      act(() => {
+        subscribeStatusHandler?.("CHANNEL_ERROR");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      expect(await screen.findByText("poll fallback message")).toBeInTheDocument();
+      expect(builder.range).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes the realtime channel on unmount", async () => {
+    mockFeed();
+    const { unmount } = render(<ChatWindow credential={credential} />);
+    await screen.findByText("live feed message");
+
+    unmount();
+
+    expect(mockRemoveChannel).toHaveBeenCalledTimes(1);
+    expect(mockRemoveChannel).toHaveBeenCalledWith(channelMock);
+  });
+
+  it("does not resubscribe when re-rendered with the same credential", async () => {
+    mockFeed();
+    const { rerender } = render(<ChatWindow credential={credential} />);
+    await screen.findByText("live feed message");
+
+    rerender(<ChatWindow credential={credential} />);
+
+    expect(mockChannel).toHaveBeenCalledTimes(1);
+    expect(channelMock?.subscribe).toHaveBeenCalledTimes(1);
   });
 });

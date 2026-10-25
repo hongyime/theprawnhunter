@@ -18,6 +18,7 @@ from app.domain.media import bot_api_media_info
 from app.infrastructure.database import execute_async
 from app.services.honeypot_urls import extract_message_urls
 from app.services.message_preview import prepare_stored_content
+from app.services.realtime_srv import publish_evidence_delta
 
 logger = get_logger(__name__)
 
@@ -240,6 +241,18 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
         logger.info(
             f"[Honeypot] Message {msg_data['telegram_msg_id']} recorded but not broadcasted — redispatching"
         )
+
+    # Notify dashboard operators that the newest evidence page has changed.
+    # Best-effort: a realtime outage must never interrupt capture/forwarding.
+    if stored_row_id:
+        try:
+            await asyncio.to_thread(
+                publish_evidence_delta,
+                credential_id,
+                str(stored_row_id),
+            )
+        except Exception as realtime_exc:
+            logger.debug(f"[Honeypot] Realtime evidence delta skipped: {realtime_exc}")
 
     # Trigger targeted honeypot message broadcast if enabled
     if getattr(settings, "HONEYPOT_BROADCAST_TO_TOPIC", True):
