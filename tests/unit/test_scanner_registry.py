@@ -1,89 +1,152 @@
-"""Guard the scanner/heavy task registry and stale-beat expiry coverage."""
+"""Guard the scanner/heavy task registry and stale-beat expiry coverage.
 
+The registry is inspected in a **subprocess with a fresh interpreter**. Loading
+the real Celery app and every ``app.conf.imports`` module in-process would
+replace (and later restore) entries in ``sys.modules``, leaving task-module
+identity inconsistent for every test that runs afterwards. That process-global
+mutation made later modules — e.g. ``test_watchlist_alerts.py``'s string-target
+monkeypatch of ``app.workers.tasks.flow_tasks.get_broadcaster`` — resolve the
+wrong module object and fail only in full-suite order.
+
+Running the import in a disposable interpreter keeps this test's assertions
+identical while leaving the pytest process's module table untouched.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Mock settings values only — identical placeholders to tests/unit/conftest.py.
+# Passed through the child environment, never through the command line.
+_MOCK_ENV = {
+    "SUPABASE_URL": "https://example.supabase.co",
+    "SUPABASE_KEY": "mock-key",
+    "SUPABASE_SERVICE_ROLE_KEY": "mock-service-role-key",
+    "REDIS_URL": "redis://localhost:6379/0",
+    "ENCRYPTION_KEY": "B" * 43 + "=",
+    "MONITOR_BOT_TOKEN": "123:ABC",
+    "MONITOR_GROUP_ID": "-100123",
+    "MONITOR_API_KEY": "test-monitor-key-for-pytest",
+    "TELEGRAM_API_ID": "1",
+    "TELEGRAM_API_HASH": "abc",
+}
+
+# Imports the real app + every autodiscovered task module, then dumps a JSON
+# snapshot of the registry. stdout is redirected during imports so incidental
+# import-time logging cannot corrupt the payload.
+_SNAPSHOT_SCRIPT = r"""
+import contextlib
 import importlib
+import io
+import json
 import sys
 
-from celery import Task
+with contextlib.redirect_stdout(io.StringIO()):
+    celery_module = importlib.import_module("app.workers.celery_app")
+    modules = [
+        importlib.import_module(name)
+        for name in celery_module.app.conf.imports
+    ]
+    from celery import Task
 
-_TASK_MODULES = "app.workers.tasks"
-_CELERY_APP = "app.workers.celery_app"
-
-
-def _is_task_module(name):
-    return name == _CELERY_APP or name.startswith(_TASK_MODULES)
-
-
-def _purge_task_modules():
-    saved = {
-        name: module
-        for name, module in list(sys.modules.items())
-        if _is_task_module(name)
-    }
-    for name in saved:
-        sys.modules.pop(name, None)
-    return saved
-
-
-def _restore_task_modules(saved):
-    for name in [name for name in list(sys.modules) if _is_task_module(name)]:
-        sys.modules.pop(name, None)
-    sys.modules.update(saved)
-
-
-def _load_registry():
-    saved = _purge_task_modules()
-    try:
-        celery_module = importlib.import_module(_CELERY_APP)
-        modules = [
-            importlib.import_module(module_name)
-            for module_name in celery_module.app.conf.imports
-        ]
-        return celery_module, modules
-    finally:
-        _restore_task_modules(saved)
-
-
-def _task_names_by_module(modules):
-    tasks = {}
+    task_objects = {}
     for module in modules:
         for value in vars(module).values():
             if isinstance(value, Task):
-                tasks[id(value)] = value
-    names = {}
-    for task in tasks.values():
-        names.setdefault(task.name, []).append(task)
-    return names
+                task_objects[id(value)] = value
+
+names = {}
+for task in task_objects.values():
+    names.setdefault(task.name, []).append(task)
+
+beat = {}
+for key, entry in celery_module.app.conf.beat_schedule.items():
+    options = entry.get("options") or {}
+    beat[key] = {"task": entry["task"], "expires": options.get("expires")}
+
+payload = {
+    "registered": sorted(celery_module.app.tasks),
+    "beat": beat,
+    "expiries": dict(celery_module._BEAT_EXPIRY_SECONDS),
+    "duplicates": {name: len(tasks) for name, tasks in names.items() if len(tasks) > 1},
+}
+json.dump(payload, sys.stdout)
+"""
+
+_SNAPSHOT = None
+
+
+def _registry_snapshot():
+    """Import the registry in a fresh interpreter and return its JSON snapshot."""
+    global _SNAPSHOT
+    if _SNAPSHOT is not None:
+        return _SNAPSHOT
+
+    env = os.environ.copy()
+    for key, value in _MOCK_ENV.items():
+        env.setdefault(key, value)
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(_PROJECT_ROOT)
+        if not existing_pythonpath
+        else str(_PROJECT_ROOT) + os.pathsep + existing_pythonpath
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", _SNAPSHOT_SCRIPT],
+        cwd=_PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(
+            "Registry snapshot subprocess failed "
+            f"(exit {completed.returncode}):\n{completed.stderr}"
+        )
+
+    try:
+        _SNAPSHOT = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:  # pragma: no cover - defensive
+        raise AssertionError(
+            f"Registry snapshot subprocess emitted invalid JSON: {exc}\n"
+            f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}"
+        ) from exc
+    return _SNAPSHOT
 
 
 def test_scanner_and_heavy_beat_tasks_are_registered():
-    celery_module, _modules = _load_registry()
-    beat_schedule = celery_module.app.conf.beat_schedule
+    snapshot = _registry_snapshot()
+    beat_schedule = snapshot["beat"]
 
     required = {
         entry["task"]
         for entry in beat_schedule.values()
         if entry["task"].startswith(("scanner.", "heavy."))
     }
-    registered = set(celery_module.app.tasks)
+    registered = set(snapshot["registered"])
 
     missing = sorted(required - registered)
     assert not missing, f"Beat tasks are not registered in app.tasks: {missing}"
 
 
 def test_no_duplicate_task_names_across_imported_modules():
-    _celery_module, modules = _load_registry()
-    names = _task_names_by_module(modules)
+    snapshot = _registry_snapshot()
 
-    duplicates = {
-        name: len(tasks) for name, tasks in names.items() if len(tasks) > 1
-    }
-    assert not duplicates, f"Duplicate task names across the registry: {duplicates}"
+    assert not snapshot["duplicates"], (
+        "Duplicate task names across the registry: " + str(snapshot["duplicates"])
+    )
 
 
 def test_every_beat_entry_has_a_stale_expiry():
-    celery_module, _modules = _load_registry()
-    beat_schedule = celery_module.app.conf.beat_schedule
-    expiries = celery_module._BEAT_EXPIRY_SECONDS
+    snapshot = _registry_snapshot()
+    beat_schedule = snapshot["beat"]
+    expiries = snapshot["expiries"]
 
     missing = sorted(set(beat_schedule) - set(expiries))
     assert not missing, (
@@ -98,7 +161,6 @@ def test_every_beat_entry_has_a_stale_expiry():
     )
 
     for beat_key, expires in expiries.items():
-        options = beat_schedule[beat_key].get("options") or {}
-        assert options.get("expires") == expires, (
+        assert beat_schedule[beat_key]["expires"] == expires, (
             f"Beat entry {beat_key!r} did not receive expires={expires}"
         )
