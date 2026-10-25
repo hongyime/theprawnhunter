@@ -51,6 +51,38 @@ class MessageOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class SearchMatchOut(BaseModel):
+    """One /monitor/search hit.
+
+    FTS hits (``search_evidence``) carry a highlighted ``snippet``; the legacy
+    ILIKE fallback returns full message columns without one. ``extra="allow"``
+    keeps any additional keys from either path so existing clients keep seeing
+    the same fields.
+    """
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+    id: UUID
+    credential_id: UUID | None = None
+    telegram_msg_id: int | None = None
+    sender_name: str | None = None
+    sender_key: str | None = None
+    sender_pseudonym: str | None = None
+    content: str | None = None
+    snippet: str | None = None
+    media_type: str | None = None
+    is_broadcasted: bool | None = None
+    created_at: datetime | None = None
+    broadcasted_at: datetime | None = None
+
+class SearchOut(BaseModel):
+    """Response envelope for /monitor/search."""
+
+    query: str
+    match_count: int
+    limit: int
+    matches: list[SearchMatchOut] = Field(default_factory=list)
+
 class ScanRequest(BaseModel):
     source: str = "shodan"
     query: str

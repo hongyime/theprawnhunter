@@ -37,6 +37,8 @@ from app.schemas.models import (
     FindingStatus,
     FindingType,
     MessageOut,
+    SearchMatchOut,
+    SearchOut,
     StatsOut,
 )
 
@@ -273,4 +275,4 @@ def _canonical_url(value: str) -> str:
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
-__all__ = ['APIRouter', 'Any', 'AuditEvent', 'AuditLogger', 'CredentialOut', 'Depends', 'EngagementLifecycleIn', 'FindingDetailOut', 'FindingEvidenceOut', 'FindingFeedbackIn', 'FindingFeedbackOut', 'FindingOut', 'FindingStatus', 'FindingType', 'HTTPException', 'JSONResponse', 'Literal', 'MessageOut', 'Query', 'StatsOut', 'StreamingResponse', 'UTC', 'UUID', '_STATS_CACHE_TTL_SECONDS', '_STATS_REDIS_KEY', '_canonical_domain', '_canonical_url', '_exact_count', '_exact_count_async', '_fetch_telemetry_target_rows', '_fetch_webhook_target_rows', '_finding_evidence_rows', '_get_monitor_stats', '_get_monitor_stats_async', '_get_monitor_stats_from_rpc', '_get_monitor_stats_from_rpc_async', '_is_missing_monitor_stats_rpc', '_monitor_stats_from_result', '_target_feed_items', '_telemetry_row_to_target', '_utc_now_iso', '_webhook_row_to_target', 'asyncio', 'csv', 'datetime', 'db', 'execute_async', 'io', 'logger', 'logging', 'require_monitor_key', 'urlsplit', 'urlunsplit']
+__all__ = ['APIRouter', 'Any', 'AuditEvent', 'AuditLogger', 'CredentialOut', 'Depends', 'EngagementLifecycleIn', 'FindingDetailOut', 'FindingEvidenceOut', 'FindingFeedbackIn', 'FindingFeedbackOut', 'FindingOut', 'FindingStatus', 'FindingType', 'HTTPException', 'JSONResponse', 'Literal', 'MessageOut', 'Query', 'SearchMatchOut', 'SearchOut', 'StatsOut', 'StreamingResponse', 'UTC', 'UUID', '_STATS_CACHE_TTL_SECONDS', '_STATS_REDIS_KEY', '_canonical_domain', '_canonical_url', '_exact_count', '_exact_count_async', '_fetch_telemetry_target_rows', '_fetch_webhook_target_rows', '_finding_evidence_rows', '_get_monitor_stats', '_get_monitor_stats_async', '_get_monitor_stats_from_rpc', '_get_monitor_stats_from_rpc_async', '_is_missing_monitor_stats_rpc', '_monitor_stats_from_result', '_target_feed_items', '_telemetry_row_to_target', '_utc_now_iso', '_webhook_row_to_target', 'asyncio', 'csv', 'datetime', 'db', 'execute_async', 'io', 'logger', 'logging', 'require_monitor_key', 'urlsplit', 'urlunsplit']
