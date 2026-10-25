@@ -212,6 +212,12 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
         )
     )
 
+    stored_row_id: str | None = None
+    if inserted.data:
+        first_row = inserted.data[0]
+        if isinstance(first_row, dict):
+            stored_row_id = first_row.get("id")
+
     if not inserted.data:
         existing = await execute_async(
             db.table("exfiltrated_messages")
@@ -230,6 +236,7 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
                 f"[Honeypot] Message {msg_data['telegram_msg_id']} already recorded and broadcasted — skipping duplicate dispatch"
             )
             return msg_data
+        stored_row_id = existing.data[0].get("id")
         logger.info(
             f"[Honeypot] Message {msg_data['telegram_msg_id']} recorded but not broadcasted — redispatching"
         )
@@ -267,5 +274,21 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
                 )
         except Exception as task_exc:
             logger.warning(f"[Honeypot] Celery broadcast dispatch deferred: {task_exc}")
+
+    if stored_row_id:
+        try:
+            from app.workers.tasks.flows.heavy import enqueue_enrichment_for_message
+
+            await asyncio.to_thread(
+                enqueue_enrichment_for_message,
+                msg_data.get("media_type"),
+                stored_row_id,
+                credential_id,
+                msg_data.get("file_meta"),
+            )
+        except Exception as enqueue_exc:
+            logger.warning(
+                f"[Honeypot] Heavy enrichment enqueue skipped: {enqueue_exc}"
+            )
 
     return msg_data

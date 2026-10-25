@@ -350,6 +350,116 @@ async def _ocr_media_logic(message_id: str) -> dict:
 
 
 # ==============================================
+# CAPTURE-FLOW ENQUEUE HOOK
+# ==============================================
+HEAVY_ENQUEUE_QUEUE = "heavy"
+HEAVY_ENQUEUE_DEDUPE_PREFIX = "heavy:enqueued:"
+HEAVY_ENQUEUE_DEDUPE_TTL_SECONDS = 86_400
+HEAVY_ENQUEUE_MAX_PER_RUN_ENV = "HEAVY_ENQUEUE_MAX_PER_RUN"
+HEAVY_ENQUEUE_DEFAULT_MAX_PER_RUN = 50
+
+_run_enqueued = 0
+_run_cap_logged = False
+
+
+def reset_enqueue_run_budget() -> None:
+    """Start a fresh per-run enqueue budget for a capture/broadcast run."""
+    global _run_enqueued, _run_cap_logged
+    _run_enqueued = 0
+    _run_cap_logged = False
+
+
+def _enqueue_max_per_run() -> int:
+    raw = os.getenv(HEAVY_ENQUEUE_MAX_PER_RUN_ENV)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return HEAVY_ENQUEUE_DEFAULT_MAX_PER_RUN
+
+
+def _enqueue_task_for(media_type: str, file_meta: dict | None):
+    if media_type in ASR_MEDIA_TYPES:
+        return transcribe_media
+    if media_type == "photo" or (
+        media_type == "document" and _is_image_media(media_type, file_meta or {})
+    ):
+        return ocr_media
+    return None
+
+
+def enqueue_enrichment_for_message(
+    media_type: str | None,
+    message_id: str | None,
+    credential_id: str | None = None,
+    file_meta: dict | None = None,
+) -> bool:
+    """Best-effort ASR/OCR enqueue for one stored media message.
+
+    Returns True only when a task was dispatched. Every failure mode (flag off,
+    unsupported media, duplicate id, cap reached, Redis/broker unavailable)
+    returns False and never raises — capture flows must be unaffected.
+    """
+    global _run_enqueued, _run_cap_logged
+
+    if not getattr(settings, "HEAVY_ENRICHMENT_ENABLED", False):
+        return False
+
+    normalized_type = str(media_type or "").lower()
+    task = _enqueue_task_for(normalized_type, file_meta)
+    if task is None or not message_id:
+        return False
+
+    if _run_enqueued >= _enqueue_max_per_run():
+        if not _run_cap_logged:
+            _run_cap_logged = True
+            logger.info(
+                "[HeavyEnqueue] per-run cap reached (%s); skipping further enqueues",
+                _enqueue_max_per_run(),
+            )
+        return False
+
+    dedupe_key = f"{HEAVY_ENQUEUE_DEDUPE_PREFIX}{message_id}"
+    try:
+        is_first = redis_client.set(
+            dedupe_key, "1", nx=True, ex=HEAVY_ENQUEUE_DEDUPE_TTL_SECONDS
+        )
+    except Exception as exc:  # noqa: BLE001 - capture must not depend on Redis
+        logger.warning(
+            "[HeavyEnqueue] redis dedupe failed msg=%s cred=%s: %s",
+            message_id,
+            credential_id,
+            exc,
+        )
+        return False
+    if not is_first:
+        return False
+
+    try:
+        task.apply_async(args=[str(message_id)], queue=HEAVY_ENQUEUE_QUEUE)
+    except Exception as exc:  # noqa: BLE001 - broker outage must not break capture
+        logger.warning(
+            "[HeavyEnqueue] broker dispatch failed msg=%s cred=%s: %s",
+            message_id,
+            credential_id,
+            exc,
+        )
+        try:
+            redis_client.delete(dedupe_key)
+        except Exception:  # noqa: BLE001 - best-effort dedupe cleanup
+            pass
+        return False
+
+    _run_enqueued += 1
+    logger.debug(
+        "[HeavyEnqueue] enqueued %s msg=%s cred=%s",
+        task.name if hasattr(task, "name") else normalized_type,
+        message_id,
+        credential_id,
+    )
+    return True
+
+
+# ==============================================
 # BACKFILL
 # ==============================================
 HEAVY_BACKFILL_BATCH_SIZE = 50

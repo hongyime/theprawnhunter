@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     WHITELISTED_BOT_IDS: str = "" # Comma-separated IDs (or usernames)
     ANONYMOUS_ADMIN_ID: int = 1087968824  # Telegram anonymous group admin bot ID
     AUTO_ARCHIVE_MEDIA: bool = True
+
+    # Heavy media enrichment (ASR/OCR)
+    # When enabled, media messages captured by the honeypot/scrape/broadcast
+    # flows are enqueued for heavy.transcribe_media / heavy.ocr_media.
+    # Requires the `heavy` compose profile (worker-heavy) to be running.
+    HEAVY_ENRICHMENT_ENABLED: bool = False
+
     # If True, the logged-in user-agent account may invite captured bots back
     # into victim chats. Disabled by default to avoid exposing the personal
     # account as the inviter.
