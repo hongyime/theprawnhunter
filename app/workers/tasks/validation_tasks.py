@@ -34,8 +34,10 @@ import time
 
 import httpx
 
+from app.core.config import settings
 from app.core.database import db
 from app.core.security import security
+from app.services import validation_queue_srv
 from app.services.scanners import _is_valid_token
 from app.workers.celery_app import app
 from app.workers.tasks.flow_tasks import async_execute, redis_client
@@ -115,20 +117,123 @@ def _calculate_hash(token: str) -> str:
     # allows 4 × 60 = 240 calls/min to escape the Redis gate simultaneously, defeating
     # the global limit entirely.  The Redis bucket is the single source of truth.
 )
-def validate_token(item: dict, source_name: str):
+def validate_token(item: dict, source_name: str, queue_row_id: str | None = None):
     """
     Validate a single token from a scanner result.
 
     Args:
         item: dict with at least {"token": str}, optionally {"chat_id", "meta"}
         source_name: scanner that found this token (for provenance)
+        queue_row_id: optional ``validation_queue`` row this task was dispatched
+            for. When present the row is the authority for the token (so a
+            replay after a dispatcher crash still works) and the row is closed
+            out with ``done``/``pending``/``dropped`` after the attempt.
+
+    The legacy two-argument call path is unchanged: without ``queue_row_id`` no
+    queue row is read and no completion write happens.
     """
     from app.workers.celery_app import get_worker_loop
-    return get_worker_loop().run_until_complete(_validate_token_async(item, source_name))
+    return get_worker_loop().run_until_complete(
+        _validate_token_async(item, source_name, queue_row_id=queue_row_id)
+    )
 
 
-async def _validate_token_async(item: dict, source_name: str) -> int:
-    """Returns 1 if saved/updated, 0 otherwise."""
+async def _load_queue_row(queue_row_id: str) -> dict | None:
+    """Load the staged candidate backing a dispatched ``validate_token``.
+
+    Returns ``None`` when the row is gone (deleted) or unreadable — callers must
+    still validate from the task payload rather than raising.
+    """
+    try:
+        res = await async_execute(
+            db.table("validation_queue")
+            .select("id, token_ciphertext, source, meta, lease_id, status")
+            .eq("id", queue_row_id)
+            .limit(1)
+        )
+    except Exception as e:
+        logger.warning(f"[Validate] queue row {queue_row_id} could not be loaded: {e}")
+        return None
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+async def _complete_queue_row(lease_id: str, queue_row_id: str, success: bool) -> None:
+    """Close out one leased queue row; completion failure must never fail the task.
+
+    ``validation_queue_srv.complete`` is idempotent (guarded by ``lease_id`` and
+    ``status='leased'``), and this helper is called at most once per attempt.
+    """
+    try:
+        await validation_queue_srv.complete(
+            lease_id, [{"queue_row_id": queue_row_id, "success": success}]
+        )
+    except Exception as e:
+        logger.warning(f"[Validate] queue completion failed for row {queue_row_id}: {e}")
+
+
+async def _validate_token_async(
+    item: dict, source_name: str, queue_row_id: str | None = None
+) -> int:
+    """Validate one candidate and, when dispatched from the queue, close its row.
+
+    ``queue_row_id`` semantics:
+    * Row found and decryptable → the row's token wins over the payload token,
+      which keeps the queue as the single source of truth.
+    * Row found but not currently leased (expired/re-dispatched) → validate but
+      skip completion; ``complete`` would be a no-op anyway.
+    * Row missing → log a warning and validate from ``item`` when it has a
+      token; never raise because the queue raced a delete.
+    """
+    row_id = str(queue_row_id) if queue_row_id else None
+    lease_id: str | None = None
+
+    if row_id:
+        row = await _load_queue_row(row_id)
+        if row is None:
+            logger.warning(
+                f"[Validate] queue row {row_id} not found; validating from task payload"
+            )
+            row_id = None
+        else:
+            lease_id = row.get("lease_id")
+            if not lease_id:
+                logger.warning(
+                    f"[Validate] queue row {row_id} is not leased; skipping completion"
+                )
+            row_token = None
+            ciphertext = row.get("token_ciphertext")
+            if ciphertext:
+                try:
+                    row_token = security.decrypt(ciphertext)
+                except Exception as e:
+                    logger.warning(
+                        f"[Validate] queue row {row_id} token could not be decrypted: {e}"
+                    )
+            if row_token:
+                item = {**(item or {}), "token": row_token}
+                if not item.get("meta"):
+                    item["meta"] = row.get("meta") or {}
+                source_name = source_name or row.get("source") or "validation_queue"
+            elif not (item or {}).get("token"):
+                logger.warning(f"[Validate] queue row {row_id} has no usable token; failing row")
+                if lease_id:
+                    await _complete_queue_row(lease_id, row_id, False)
+                return 0
+            else:
+                logger.warning(
+                    f"[Validate] queue row {row_id} token unavailable; using payload token"
+                )
+
+    result = await _validate_token_core(item or {}, source_name)
+
+    if row_id and lease_id:
+        await _complete_queue_row(lease_id, row_id, bool(result))
+    return result
+
+
+async def _validate_token_core(item: dict, source_name: str) -> int:
+    """Returns 1 if saved/updated, 0 otherwise. Legacy validation body."""
     token = item.get("token")
     if not token or token == "MANUAL_REVIEW_REQUIRED":
         return 0
@@ -372,6 +477,130 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
         logger.error(f"[Validate] Error processing token {token[:10]}...: {err_str}")
 
     return 0
+
+
+# ============================================
+# Priority dispatcher — lease staged candidates onto the validation queue
+# ============================================
+
+def _remaining_dispatch_budget() -> int:
+    """Unconsumed getMe budget in the shared Redis bucket (consumes nothing).
+
+    The dispatcher must not fan out more validators than the bucket can admit
+    within the current window: leasing beyond that leaves rows stuck ``leased``
+    (invisible to outposts) while their validators sleep behind the limiter.
+    Reading the same ``rate_limit:telegram_getMe`` key keeps a single global
+    bucket — :func:`_acquire_rate_token` remains the only consumer.
+    """
+    try:
+        pipe = redis_client.pipeline()
+        pipe.get(RATE_LIMIT_KEY)
+        pipe.ttl(RATE_LIMIT_KEY)
+        used_raw, ttl_raw = pipe.execute()
+    except Exception as e:
+        # A Redis hiccup must not wedge dispatch; per-task acquisition still
+        # enforces the bucket when the worker runs.
+        logger.warning(f"[Dispatch] rate bucket read failed ({e}); assuming full budget")
+        return RATE_MAX_CALLS
+
+    try:
+        ttl = int(ttl_raw)
+    except (TypeError, ValueError):
+        ttl = -1
+    if used_raw is None or ttl < 0:
+        return RATE_MAX_CALLS
+    try:
+        used = int(used_raw)
+    except (TypeError, ValueError):
+        used = 0
+    return max(0, RATE_MAX_CALLS - used)
+
+
+@app.task(name="validation.dispatch_pending", queue="validation")
+def dispatch_pending():
+    """Lease highest-priority staged candidates and fan them out.
+
+    Beat entry (owned by celery_app): every
+    ``settings.VALIDATION_DISPATCH_INTERVAL_SECONDS`` (15s by default).
+    """
+    from app.workers.celery_app import get_worker_loop
+    return get_worker_loop().run_until_complete(_dispatch_pending_async())
+
+
+async def _dispatch_pending_async() -> str:
+    """One dispatcher pass; returns a small status string.
+
+    Reclaims expired leases first, then leases at most
+    ``VALIDATION_DISPATCH_BATCH`` rows capped by the shared getMe bucket. When
+    the bucket is exhausted the remaining rows are simply left ``pending`` for
+    the next beat tick — leasing and sleeping would hold a worker while making
+    the rows invisible to outposts.
+    """
+    await validation_queue_srv.release_expired()
+
+    try:
+        if redis_client.get("system:paused"):
+            return "paused"
+    except Exception as e:
+        logger.warning(f"[Dispatch] pause check failed ({e}); continuing")
+
+    batch = max(0, int(settings.VALIDATION_DISPATCH_BATCH))
+    if batch <= 0:
+        return "dispatched:0"
+
+    budget = _remaining_dispatch_budget()
+    limit = min(batch, budget)
+    if limit <= 0:
+        logger.info(
+            f"[Dispatch] getMe bucket exhausted "
+            f"({RATE_MAX_CALLS}/{RATE_WINDOW_SECONDS}s); leaving staged rows pending"
+        )
+        return "rate_limited:0"
+
+    leased = await validation_queue_srv.lease(
+        limit, int(settings.VALIDATION_LEASE_SECONDS)
+    )
+    if not leased:
+        return "dispatched:0"
+
+    dispatched = 0
+    for row in leased:
+        row_id = row.get("queue_row_id")
+        lease_id = row.get("lease_id")
+        token = row.get("token")
+        if not row_id:
+            continue
+        if not token:
+            # lease() already drops undecryptable rows; defence in depth so a
+            # malformed row can never be enqueued with a garbage token.
+            logger.warning(f"[Dispatch] queue row {row_id} has no plaintext token; failing row")
+            if lease_id:
+                await _complete_queue_row(lease_id, row_id, False)
+            continue
+        try:
+            validate_token.apply_async(
+                # Positional token + source preserve the legacy task contract;
+                # queue_row_id (kwargs, never plaintext) makes the encrypted row
+                # authoritative inside the task.
+                args=[
+                    {"token": token, "meta": row.get("meta") or {}},
+                    row.get("source") or "validation_queue",
+                ],
+                kwargs={"queue_row_id": row_id},
+                queue="validation",
+            )
+        except Exception as e:
+            logger.warning(f"[Dispatch] enqueue failed for row {row_id}: {e}")
+            if lease_id:
+                await _complete_queue_row(lease_id, row_id, False)
+            continue
+        dispatched += 1
+
+    logger.info(
+        f"[Dispatch] leased={len(leased)} dispatched={dispatched} "
+        f"limit={limit} (budget={budget}, batch={batch})"
+    )
+    return f"dispatched:{dispatched}"
 
 
 # ============================================
