@@ -33,6 +33,11 @@ type SemanticHit = {
   distance: number | null;
 };
 
+type HydrationFileMeta = {
+  transcript_text?: unknown;
+  ocr_text?: unknown;
+};
+
 type HydrationRow = {
   id: string;
   credential_id?: string | null;
@@ -41,13 +46,14 @@ type HydrationRow = {
   media_type?: string | null;
   created_at?: string | null;
   content?: string | null;
+  file_meta?: HydrationFileMeta | null;
 };
 
 /** Same-origin proxy; it injects `MONITOR_API_KEY` server-side. */
 export const SEMANTIC_PROXY_PATH = "/api/semantic-search";
 
 export const SEMANTIC_HYDRATION_SELECT =
-  "id, credential_id, sender_key, sender_pseudonym, media_type, created_at, content";
+  "id, credential_id, sender_key, sender_pseudonym, media_type, created_at, content, file_meta";
 
 export const SNIPPET_MAX_LENGTH = 200;
 
@@ -105,6 +111,34 @@ export function buildSnippet(
 }
 
 /**
+ * Derive the searchable text for a hydrated semantic row.
+ *
+ * Matches the FTS document: `content` plus the operator-visible
+ * `file_meta.transcript_text` and `file_meta.ocr_text`. Anything else is
+ * ignored, and a missing or non-object `file_meta` degrades to the old
+ * content-only behaviour. The returned value is plain text; only
+ * `buildSnippet` ever adds a `<b>…</b>` pair.
+ */
+function derivedHydrationText(row: HydrationRow): string | null {
+  const parts: string[] = [];
+  if (typeof row.content === "string" && row.content.trim()) {
+    parts.push(row.content.trim());
+  }
+
+  const meta = row.file_meta;
+  if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+    for (const key of ["transcript_text", "ocr_text"] as const) {
+      const value = meta[key];
+      if (typeof value === "string" && value.trim()) {
+        parts.push(value.trim());
+      }
+    }
+  }
+
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+/**
  * Fetch the renderable fields for semantic hits from `evidence_redacted`.
  *
  * `semantic_search` only returns `(message_id, credential_id, distance)`, so
@@ -144,7 +178,7 @@ async function hydrateSemanticRows(
       credential_id: hit.credential_id ?? row.credential_id ?? null,
       sender_key: row.sender_key ?? null,
       sender_pseudonym: row.sender_pseudonym ?? null,
-      snippet: buildSnippet(row.content, query),
+      snippet: buildSnippet(derivedHydrationText(row), query),
       media_type: row.media_type ?? null,
       created_at: row.created_at ?? null,
     });

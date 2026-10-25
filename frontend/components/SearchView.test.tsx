@@ -138,7 +138,7 @@ describe("SearchView", () => {
     );
     expect(mockFrom).toHaveBeenCalledWith("evidence_redacted");
     expect(mockSelect).toHaveBeenCalledWith(
-      "id, credential_id, sender_key, sender_pseudonym, media_type, created_at, content",
+      "id, credential_id, sender_key, sender_pseudonym, media_type, created_at, content, file_meta",
     );
     expect(mockIn).toHaveBeenCalledWith("id", [row.id]);
     expect(mockRpc).not.toHaveBeenCalled();
@@ -149,6 +149,57 @@ describe("SearchView", () => {
     expect(screen.getByText(row.sender_key)).toBeInTheDocument();
     expect(screen.getByText(row.media_type)).toBeInTheDocument();
     expect(screen.getByText(/ago|just now/)).toBeInTheDocument();
+  });
+
+  it("builds the semantic snippet from transcript/OCR file_meta and keeps hostile markup inert", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          {
+            message_id: row.id,
+            credential_id: row.credential_id,
+            distance: 0.08,
+          },
+        ],
+        fallback: false,
+      }),
+    });
+    mockIn.mockResolvedValue({
+      data: [
+        {
+          id: row.id,
+          credential_id: row.credential_id,
+          sender_key: row.sender_key,
+          sender_pseudonym: row.sender_pseudonym,
+          media_type: "voice",
+          created_at: row.created_at,
+          content: "voice memo",
+          file_meta: {
+            transcript_text:
+              'please move the secret <script>alert(9)</script> funds',
+            ocr_text: "   ",
+          },
+        },
+      ],
+      error: null,
+    });
+    const { container } = render(<SearchView onOpenChat={vi.fn()} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /semantic search/i }),
+    );
+    await userEvent.type(searchInput(), "secret");
+
+    expect(await screen.findByTestId("result-mode")).toHaveTextContent(
+      "Semantic",
+    );
+    expect(screen.getByText("secret").tagName).toBe("MARK");
+    expect(container.querySelector("script")).toBeNull();
+    expect(container.textContent).toContain(
+      "<script>alert(9)</script>",
+    );
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   it("falls back to FTS with a notice when the semantic proxy fails", async () => {

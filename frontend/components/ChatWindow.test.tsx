@@ -746,6 +746,52 @@ describe("ChatWindow", () => {
     expect(screen.getByText("printed wallet address")).toBeInTheDocument();
   });
 
+  it("renders transcript, OCR and thumbnail from a view-shaped file_meta row", async () => {
+    mockFeed([
+      makeMessage("view-shaped", "media caption", "2026-09-05T10:00:00Z", {
+        sender_pseudonym: "Alice Smith",
+        media_type: "photo",
+        file_meta: {
+          thumb_path: `${credential.id}/view-shaped.jpg`,
+          transcript_text: "the spoken line",
+          ocr_text: "the printed line",
+        },
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("media caption");
+    expect(screen.getByText("TRANSCRIPT")).toBeInTheDocument();
+    expect(screen.getByText("the spoken line")).toBeInTheDocument();
+    expect(screen.getByText("OCR")).toBeInTheDocument();
+    expect(screen.getByText("the printed line")).toBeInTheDocument();
+    const image = await screen.findByAltText("photo thumbnail from Alice Smith");
+    expect(image).toHaveAttribute("src", "https://example.test/signed-thumb.jpg");
+    expect(mockCreateSignedUrl).toHaveBeenCalledWith(
+      `${credential.id}/view-shaped.jpg`,
+      3600,
+    );
+  });
+
+  it("tolerates null and non-object file_meta without derived output", async () => {
+    mockFeed([
+      makeMessage("null-meta", "null meta message", "2026-09-05T10:00:00Z", {
+        file_meta: null,
+      }),
+      makeMessage("weird-meta", "weird meta message", "2026-09-05T10:01:00Z", {
+        file_meta: "not-an-object",
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("null meta message");
+    await screen.findByText("weird meta message");
+    expect(screen.queryByText("TRANSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText("OCR")).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/derived-media-text/)).not.toBeInTheDocument();
+    expect(mockCreateSignedUrl).not.toHaveBeenCalled();
+  });
+
   it("collapses a long transcript until Show more is pressed", async () => {
     const longTranscript = Array.from({ length: 80 }, (_, index) => `word${index}`).join(" ");
     mockFeed([
