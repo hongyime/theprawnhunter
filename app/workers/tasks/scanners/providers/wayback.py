@@ -21,7 +21,7 @@ async def _scan_wayback_async(query: str = None):
 
     logger.info("🔍 [Wayback] Starting historical URL scan...")
     try:
-        query_pattern = query or "api.telegram.org"
+        query_pattern = query
         try:
             limit = int(os.getenv("WAYBACK_LIMIT", 500))
         except (TypeError, ValueError) as error:

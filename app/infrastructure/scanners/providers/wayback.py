@@ -1,11 +1,13 @@
 """Scanner client for Wayback."""
 
-from ..common import *
-
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+
+from app.domain.tokens import sweep_text_for_tokens
+
+from ..common import *
 
 
 @dataclass
@@ -28,6 +30,22 @@ class WaybackService:
     REQUEST_PAUSE = 1.2
     MAX_WAIT = 60.0
     SEEN_TTL = 7 * 86400
+    # Bounded CDX query templates. `{username}` is resolved by the pivot layer;
+    # the scheduled scan uses the wildcard form. Keep this list short — every
+    # extra entry costs one CDX request per run.
+    DEFAULT_QUERY_TEMPLATES = (
+        "api.telegram.org",
+        "t.me/{username}",
+        "*/raw/*",
+        "*config*.json",
+        "*env*",
+    )
+
+    @classmethod
+    def default_queries(cls, username: str | None = None) -> list[str]:
+        """Return the default query set with the pivot placeholder resolved."""
+        account = username or "*"
+        return [template.format(username=account) for template in cls.DEFAULT_QUERY_TEMPLATES]
 
     def __init__(self):
         self.timeout = httpx.Timeout(20.0, connect=10.0)
@@ -239,9 +257,14 @@ class WaybackService:
         return None, requests, True, True
 
     async def search(
-        self, query_pattern: str = "api.telegram.org", limit: int = 500, *, return_batch: bool = False,
+        self, query_pattern: str | None = None, limit: int = 500, *, return_batch: bool = False,
     ) -> list[dict[str, Any]] | WaybackScanBatch:
-        """Search CDX and fetch snapshots; the scanner can request completion details."""
+        """Search CDX and fetch snapshots; the scanner can request completion details.
+
+        Without an explicit query the bounded ``DEFAULT_QUERY_TEMPLATES`` set is
+        used. Every query shares one per-run snapshot request budget so extra
+        templates cannot multiply outbound requests.
+        """
         from app.workers.tasks.flow_tasks import redis_client
 
         batch = WaybackScanBatch()
@@ -254,6 +277,9 @@ class WaybackService:
         safe_limit = max(1, min(requested_limit, self.MAX_RESULTS))
         if safe_limit != requested_limit:
             logger.warning("[Wayback] Search %r limit %d is outside 1-%d; using %d.", query_pattern, requested_limit, self.MAX_RESULTS, safe_limit)
+
+        queries = [query_pattern] if query_pattern else self.default_queries()
+        per_query_items = max(1, safe_limit // len(queries))
 
         pending = self._load_pending(redis_client, batch)
         for snapshot_id, snapshot in list(pending.items()):
@@ -271,87 +297,112 @@ class WaybackService:
                         batch.failures += 1
                         logger.warning("[Wayback] Could not clear completed snapshot %s (%s) from pending (%s); its read marker is kept.", snapshot_id, snapshot["original"], error)
         candidates = dict(pending)
+        attempted: set[str] = set()
 
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            rows, stop = await self._search_cdx(client, query_pattern, safe_limit, batch)
-            if rows is None:
-                logger.warning("[Wayback] Search %r has no new rows this run; saved snapshots remain available.", query_pattern)
-            elif len(rows) < 2:
-                logger.info("[Wayback] Search %r returned no snapshots.", query_pattern)
-            else:
-                header = rows[0]
-                try:
-                    ts_index, url_index = header.index("timestamp"), header.index("original")
-                except (AttributeError, ValueError):
-                    batch.failures += 1
-                    logger.error("[Wayback] Search %r returned a bad CDX header %r; try the search next scan.", query_pattern, header)
-                else:
-                    for row_number, row in enumerate(rows[1:safe_limit + 1], 1):
-                        if not isinstance(row, list) or len(row) <= max(ts_index, url_index):
-                            batch.failures += 1
-                            logger.warning("[Wayback] Search %r returned short row %d (%r); skip it and retry the search next scan.", query_pattern, row_number, row)
-                            continue
-                        timestamp, original = row[ts_index], row[url_index]
-                        if not isinstance(timestamp, str) or not timestamp or not isinstance(original, str) or not original:
-                            batch.failures += 1
-                            logger.warning("[Wayback] Search %r returned empty row %d (%r); skip it and retry next scan.", query_pattern, row_number, row)
-                            continue
-                        snapshot_id = self._url_hash(original)
-                        if snapshot_id in candidates:
-                            continue
-                        try:
-                            if redis_client.exists(f"wayback:seen:{snapshot_id}"):
-                                continue
-                        except Exception as error:
-                            batch.failures += 1
-                            logger.warning("[Wayback] Could not check snapshot %s (%s) read marker (%s); save and retry it.", snapshot_id, original, error)
-                        if self._save_pending(redis_client, snapshot_id, original, timestamp, query_pattern, batch):
-                            candidates[snapshot_id] = {"original": original, "timestamp": timestamp}
-
-            if stop:
-                logger.warning("[Wayback] Search %r was blocked; stop requests this run and retry next scan.", query_pattern)
-                return batch if return_batch else batch.matches
-
             request_budget = min(safe_limit, self.MAX_REQUESTS)
-            items = list(candidates.items())[:safe_limit]
             requests_used = 0
-            for index, (snapshot_id, snapshot) in enumerate(items):
+            fetch_stopped = False
+            for query in queries:
                 if requests_used >= request_budget:
                     batch.failures += 1
-                    logger.warning("[Wayback] Search %r reached the %d-request cap; %d snapshots stay saved for next scan.", query_pattern, request_budget, len(items) - index)
+                    logger.warning("[Wayback] Search %r reached the %d-request cap; remaining searches stay for next scan.", query, request_budget)
                     break
-                body, used, stop, failed = await self._fetch_snapshot(
-                    client, query_pattern, snapshot, request_budget - requests_used,
-                )
-                requests_used += used
-                batch.failures += int(failed)
-                if stop:
-                    if len(items) > index + 1:
-                        logger.warning("[Wayback] Wayback stopped this run with %d snapshots saved; they will be tried next scan.", len(items) - index - 1)
-                    break
-                if body is None:
-                    continue
-                original, timestamp = snapshot["original"], snapshot["timestamp"]
-                try:
-                    url_tokens = TOKEN_PATTERN.findall(original)
-                    body_tokens = set(TOKEN_PATTERN.findall(body))
-                    for token in url_tokens + [token for token in body_tokens if token not in url_tokens]:
-                        if _is_valid_token(token):
-                            batch.matches.append({
-                                "token": token,
-                                "meta": {"wayback_url": original, "wayback_timestamp": timestamp,
-                                         "extracted_from": "url" if token in url_tokens else "body"},
-                            })
-                    batch.completed_snapshot_ids.append(snapshot_id)
-                    batch.snapshot_urls[snapshot_id] = original
-                except Exception as error:
-                    batch.failures += 1
-                    logger.exception("[Wayback] Snapshot %s (%s, search %r) could not be scanned (%s); keep it for next scan and continue.", timestamp, original, query_pattern, error)
 
+                rows, stop = await self._search_cdx(client, query, safe_limit, batch)
+                if rows is None:
+                    logger.warning("[Wayback] Search %r has no new rows this run; saved snapshots remain available.", query)
+                elif len(rows) < 2:
+                    logger.info("[Wayback] Search %r returned no snapshots.", query)
+                else:
+                    header = rows[0]
+                    try:
+                        ts_index, url_index = header.index("timestamp"), header.index("original")
+                    except (AttributeError, ValueError):
+                        batch.failures += 1
+                        logger.error("[Wayback] Search %r returned a bad CDX header %r; try the search next scan.", query, header)
+                    else:
+                        for row_number, row in enumerate(rows[1:safe_limit + 1], 1):
+                            if not isinstance(row, list) or len(row) <= max(ts_index, url_index):
+                                batch.failures += 1
+                                logger.warning("[Wayback] Search %r returned short row %d (%r); skip it and retry the search next scan.", query, row_number, row)
+                                continue
+                            timestamp, original = row[ts_index], row[url_index]
+                            if not isinstance(timestamp, str) or not timestamp or not isinstance(original, str) or not original:
+                                batch.failures += 1
+                                logger.warning("[Wayback] Search %r returned empty row %d (%r); skip it and retry next scan.", query, row_number, row)
+                                continue
+                            snapshot_id = self._url_hash(original)
+                            if snapshot_id in candidates:
+                                continue
+                            try:
+                                if redis_client.exists(f"wayback:seen:{snapshot_id}"):
+                                    continue
+                            except Exception as error:
+                                batch.failures += 1
+                                logger.warning("[Wayback] Could not check snapshot %s (%s) read marker (%s); save and retry it.", snapshot_id, original, error)
+                            if self._save_pending(redis_client, snapshot_id, original, timestamp, query, batch):
+                                candidates[snapshot_id] = {"original": original, "timestamp": timestamp}
+
+                if stop:
+                    logger.warning("[Wayback] Search %r was blocked; stop requests this run and retry next scan.", query)
+                    return batch if return_batch else batch.matches
+
+                items = [
+                    (snapshot_id, snapshot)
+                    for snapshot_id, snapshot in candidates.items()
+                    if snapshot_id not in attempted
+                ][:per_query_items]
+                for index, (snapshot_id, snapshot) in enumerate(items):
+                    if requests_used >= request_budget:
+                        batch.failures += 1
+                        logger.warning("[Wayback] Search %r reached the %d-request cap; %d snapshots stay saved for next scan.", query, request_budget, len(items) - index)
+                        fetch_stopped = True
+                        break
+                    attempted.add(snapshot_id)
+                    body, used, stop, failed = await self._fetch_snapshot(
+                        client, query, snapshot, request_budget - requests_used,
+                    )
+                    requests_used += used
+                    batch.failures += int(failed)
+                    if stop:
+                        if len(items) > index + 1:
+                            logger.warning("[Wayback] Wayback stopped this run with %d snapshots saved; they will be tried next scan.", len(items) - index - 1)
+                        fetch_stopped = True
+                        break
+                    if body is None:
+                        continue
+                    original, timestamp = snapshot["original"], snapshot["timestamp"]
+                    try:
+                        url_hits = sweep_text_for_tokens(original, "wayback")
+                        url_tokens = {hit["token"] for hit in url_hits}
+                        body_hits = sweep_text_for_tokens(body, "wayback")
+                        for hit in url_hits + [hit for hit in body_hits if hit["token"] not in url_tokens]:
+                            batch.matches.append({
+                                "token": hit["token"],
+                                "chat_id": hit["chat_id"],
+                                "context": hit["context"],
+                                "meta": {
+                                    "wayback_url": original,
+                                    "wayback_timestamp": timestamp,
+                                    "extracted_from": "url" if hit["token"] in url_tokens else "body",
+                                    "source": hit["source"],
+                                },
+                            })
+                        batch.completed_snapshot_ids.append(snapshot_id)
+                        batch.snapshot_urls[snapshot_id] = original
+                    except Exception as error:
+                        batch.failures += 1
+                        logger.exception("[Wayback] Snapshot %s (%s, search %r) could not be scanned (%s); keep it for next scan and continue.", timestamp, original, query, error)
+
+                if fetch_stopped:
+                    break
+
+        query_label = query_pattern or "default query set"
         if len(candidates) > safe_limit:
             batch.failures += 1
-            logger.warning("[Wayback] Search %r has %d extra saved snapshots; they stay for next scan.", query_pattern, len(candidates) - safe_limit)
-        logger.info("[Wayback] Search %r found %d matches; %d snapshots are ready; %d issues remain.", query_pattern, len(batch.matches), len(batch.completed_snapshot_ids), batch.failures)
+            logger.warning("[Wayback] Search %r has %d extra saved snapshots; they stay for next scan.", query_label, len(candidates) - safe_limit)
+        logger.info("[Wayback] Search %r found %d matches; %d snapshots are ready; %d issues remain.", query_label, len(batch.matches), len(batch.completed_snapshot_ids), batch.failures)
         if return_batch:
             return batch
         self.mark_completed(batch.completed_snapshot_ids, batch.snapshot_urls)
