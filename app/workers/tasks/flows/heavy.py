@@ -14,6 +14,7 @@ tasks, and a retry storm on a corrupt/oversized/absent attachment is useless.
 
 import io
 import threading
+from datetime import datetime
 
 from .common import *
 
@@ -346,3 +347,168 @@ async def _ocr_media_logic(message_id: str) -> dict:
         OCR_LANGUAGE,
     )
     return {"status": "ok", "chars": len(text)}
+
+
+# ==============================================
+# BACKFILL
+# ==============================================
+HEAVY_BACKFILL_BATCH_SIZE = 50
+HEAVY_BACKFILL_PAGE_SIZE = 200
+HEAVY_BACKFILL_MARKER_KEY = "heavy_backfill_at"
+HEAVY_BACKFILL_MEDIA_TYPES = ASR_MEDIA_TYPES | {"photo", "document"}
+HEAVY_BACKFILL_DELAY_ENV = "HEAVY_BACKFILL_DELAY_SECONDS"
+HEAVY_BACKFILL_DEFAULT_DELAY_SECONDS = 2.0
+
+
+def _backfill_delay_seconds() -> float:
+    """Env-tunable pause between dispatches (never negative)."""
+    raw = os.getenv(HEAVY_BACKFILL_DELAY_ENV)
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return HEAVY_BACKFILL_DEFAULT_DELAY_SECONDS
+
+
+def _backfill_pipelines(media_type: str, file_meta: dict) -> list[str]:
+    """Return the enrichment pipelines still owed for a row.
+
+    A row is skipped when any extraction already produced text, when the
+    backfill marker from a previous run is present, or when the relevant
+    pipeline recorded a skip reason.  Reusing the ASR/OCR predicates keeps the
+    selection identical to what the worker tasks themselves accept.
+    """
+    transcript = file_meta.get("transcript_text")
+    if isinstance(transcript, str) and transcript.strip():
+        return []
+    ocr = file_meta.get("ocr_text")
+    if isinstance(ocr, str) and ocr.strip():
+        return []
+    if file_meta.get(HEAVY_BACKFILL_MARKER_KEY):
+        return []
+
+    pipelines = []
+    if media_type in ASR_MEDIA_TYPES and not file_meta.get("transcript_skipped"):
+        pipelines.append("asr")
+    if _is_image_media(media_type, file_meta) and not file_meta.get("ocr_skipped"):
+        pipelines.append("ocr")
+    return pipelines
+
+
+async def _fetch_backfill_page(offset: int, limit: int) -> list[dict]:
+    response = await async_execute(
+        db.table("exfiltrated_messages")
+        .select("id, media_type, file_meta, created_at")
+        .in_("media_type", sorted(HEAVY_BACKFILL_MEDIA_TYPES))
+        .order("created_at")
+        .range(offset, offset + limit - 1)
+    )
+    return list(response.data or [])
+
+
+async def _select_backfill_batch() -> tuple[list[tuple[dict, list[str]]], int]:
+    """Oldest-first scan returning at most ``HEAVY_BACKFILL_BATCH_SIZE`` rows."""
+    selected: list[tuple[dict, list[str]]] = []
+    scanned = 0
+    offset = 0
+    while len(selected) < HEAVY_BACKFILL_BATCH_SIZE:
+        rows = await _fetch_backfill_page(offset, HEAVY_BACKFILL_PAGE_SIZE)
+        if not rows:
+            break
+        scanned += len(rows)
+        for row in rows:
+            media_type = str(row.get("media_type") or "").lower()
+            file_meta = row.get("file_meta")
+            if not isinstance(file_meta, dict):
+                file_meta = {}
+            pipelines = _backfill_pipelines(media_type, file_meta)
+            if not pipelines:
+                continue
+            selected.append((row, pipelines))
+            if len(selected) >= HEAVY_BACKFILL_BATCH_SIZE:
+                break
+        if len(rows) < HEAVY_BACKFILL_PAGE_SIZE:
+            break
+        offset += len(rows)
+    return selected, scanned
+
+
+@app.task(name="heavy.backfill_media_text")
+def backfill_media_text(dry_run: bool = True):
+    """Backfill transcripts/OCR for media messages that never got them.
+
+    ``dry_run`` defaults to True: the task only reports what it would do.
+    Applied runs stamp ``file_meta.heavy_backfill_at`` after dispatching so a
+    follow-up run does not queue the same messages again while the enrichment
+    tasks are still in flight.
+    """
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(
+        _backfill_media_text_logic(dry_run=dry_run)
+    )
+
+
+async def _backfill_media_text_logic(dry_run: bool = True) -> dict:
+    selected, scanned = await _select_backfill_batch()
+
+    pending = {"asr": 0, "ocr": 0}
+    for _row, pipelines in selected:
+        for pipeline in pipelines:
+            pending[pipeline] += 1
+
+    result = {
+        "status": "dry_run" if dry_run else "ok",
+        "selected": len(selected),
+        "scanned": scanned,
+        "pending": pending,
+        "dispatched": {"asr": 0, "ocr": 0},
+        "delay_seconds": _backfill_delay_seconds(),
+    }
+    logger.info(
+        "[HeavyBackfill] dry_run=%s selected=%s scanned=%s pending=%s",
+        dry_run,
+        len(selected),
+        scanned,
+        pending,
+    )
+    if dry_run or not selected:
+        return result
+
+    delay = result["delay_seconds"]
+    dispatched = 0
+    for row, pipelines in selected:
+        message_id = str(row.get("id"))
+        if dispatched and delay > 0:
+            time.sleep(delay)
+        tasks = {"asr": transcribe_media, "ocr": ocr_media}
+        queued = []
+        for pipeline in pipelines:
+            try:
+                tasks[pipeline].apply_async(args=[message_id], queue="heavy")
+            except Exception as exc:  # noqa: BLE001 - one bad dispatch must not stop the batch
+                logger.warning(
+                    "[HeavyBackfill] dispatch failed msg=%s pipeline=%s: %s",
+                    message_id,
+                    pipeline,
+                    exc,
+                )
+                break
+            queued.append(pipeline)
+        if not queued:
+            continue
+        for pipeline in queued:
+            result["dispatched"][pipeline] += 1
+        stamped = await _merge_file_meta(
+            message_id,
+            row.get("file_meta") or {},
+            {HEAVY_BACKFILL_MARKER_KEY: datetime.now(UTC).isoformat()},
+        )
+        if stamped:
+            dispatched += 1
+
+    logger.info(
+        "[HeavyBackfill] dispatched=%s breakdown=%s",
+        dispatched,
+        result["dispatched"],
+    )
+    return result
