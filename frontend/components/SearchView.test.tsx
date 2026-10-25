@@ -3,10 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockRpc = vi.hoisted(() => vi.fn());
+const mockIn = vi.hoisted(() => vi.fn());
+const mockSelect = vi.hoisted(() => vi.fn());
+const mockFrom = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     rpc: mockRpc,
+    from: mockFrom,
   },
 }));
 
@@ -34,14 +38,15 @@ describe("SearchView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.NEXT_PUBLIC_API_BASE;
+    mockFrom.mockReturnValue({ select: mockSelect });
+    mockSelect.mockReturnValue({ in: mockIn });
+    mockIn.mockResolvedValue({ data: [], error: null });
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    delete process.env.NEXT_PUBLIC_API_BASE;
   });
 
   it("debounces typing into a single search_evidence call", async () => {
@@ -79,8 +84,7 @@ describe("SearchView", () => {
     ).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("calls the semantic route when the toggle is on", async () => {
-    process.env.NEXT_PUBLIC_API_BASE = "http://api.test";
+  it("calls the same-origin proxy without any monitor key and hydrates rows", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -93,6 +97,20 @@ describe("SearchView", () => {
         ],
         fallback: false,
       }),
+    });
+    mockIn.mockResolvedValue({
+      data: [
+        {
+          id: row.id,
+          credential_id: row.credential_id,
+          sender_key: row.sender_key,
+          sender_pseudonym: row.sender_pseudonym,
+          media_type: row.media_type,
+          created_at: row.created_at,
+          content: "please transfer bitcoin to the wallet now",
+        },
+      ],
+      error: null,
     });
     render(<SearchView onOpenChat={vi.fn()} />);
 
@@ -108,20 +126,32 @@ describe("SearchView", () => {
       { timeout: 2000 },
     );
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://api.test/monitor/semantic-search");
+    expect(url).toBe("/api/semantic-search");
     expect(JSON.parse(init.body)).toEqual({
       q: "bitcoin",
       credential_id: null,
       limit: 50,
     });
+    expect(init.headers).not.toHaveProperty("X-Monitor-Key");
+    expect(JSON.stringify(init.headers ?? {})).not.toMatch(
+      /monitor_api_key|x-monitor-key/i,
+    );
+    expect(mockFrom).toHaveBeenCalledWith("evidence_redacted");
+    expect(mockSelect).toHaveBeenCalledWith(
+      "id, credential_id, sender_key, sender_pseudonym, media_type, created_at, content",
+    );
+    expect(mockIn).toHaveBeenCalledWith("id", [row.id]);
     expect(mockRpc).not.toHaveBeenCalled();
     expect(await screen.findByTestId("result-mode")).toHaveTextContent(
       "Semantic",
     );
+    expect(screen.getByText("bitcoin").tagName).toBe("MARK");
+    expect(screen.getByText(row.sender_key)).toBeInTheDocument();
+    expect(screen.getByText(row.media_type)).toBeInTheDocument();
+    expect(screen.getByText(/ago|just now/)).toBeInTheDocument();
   });
 
-  it("falls back to FTS with a notice when the semantic route fails", async () => {
-    process.env.NEXT_PUBLIC_API_BASE = "http://api.test";
+  it("falls back to FTS with a notice when the semantic proxy fails", async () => {
     fetchMock.mockRejectedValue(new Error("network down"));
     mockRpc.mockResolvedValue({ data: [row], error: null });
     render(<SearchView onOpenChat={vi.fn()} />);
@@ -146,11 +176,14 @@ describe("SearchView", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("treats a fallback payload as semantic unavailable", async () => {
-    process.env.NEXT_PUBLIC_API_BASE = "http://api.test";
+  it("treats a proxy fallback payload as semantic unavailable", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ results: [], fallback: true, reason: "embed_unreachable" }),
+      json: async () => ({
+        results: [],
+        fallback: true,
+        reason: "semantic proxy not configured",
+      }),
     });
     mockRpc.mockResolvedValue({ data: [row], error: null });
     render(<SearchView onOpenChat={vi.fn()} />);
@@ -164,9 +197,24 @@ describe("SearchView", () => {
       await screen.findByText(SEMANTIC_NOTICE, undefined, { timeout: 2000 }),
     ).toBeInTheDocument();
     expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("result-mode")).toHaveTextContent("FTS");
   });
 
-  it("keeps keyword search when no API base is configured", async () => {
+  it("falls back to FTS when hydration returns an error", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          {
+            message_id: row.id,
+            credential_id: row.credential_id,
+            distance: 0.12,
+          },
+        ],
+        fallback: false,
+      }),
+    });
+    mockIn.mockResolvedValue({ data: null, error: { message: "denied" } });
     mockRpc.mockResolvedValue({ data: [row], error: null });
     render(<SearchView onOpenChat={vi.fn()} />);
 
@@ -178,8 +226,53 @@ describe("SearchView", () => {
     expect(
       await screen.findByText(SEMANTIC_NOTICE, undefined, { timeout: 2000 }),
     ).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
     expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("result-mode")).toHaveTextContent("FTS");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("drops semantic hits that are missing from evidence_redacted", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          { message_id: row.id, credential_id: row.credential_id, distance: 0.1 },
+          {
+            message_id: "60000000-0000-0000-0000-000000000099",
+            credential_id: null,
+            distance: 0.2,
+          },
+        ],
+        fallback: false,
+      }),
+    });
+    mockIn.mockResolvedValue({
+      data: [
+        {
+          id: row.id,
+          credential_id: row.credential_id,
+          sender_key: row.sender_key,
+          sender_pseudonym: row.sender_pseudonym,
+          media_type: row.media_type,
+          created_at: row.created_at,
+          content: "bitcoin transfer instructions",
+        },
+      ],
+      error: null,
+    });
+    render(<SearchView onOpenChat={vi.fn()} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /semantic search/i }),
+    );
+    await userEvent.type(searchInput(), "bitcoin");
+
+    expect(
+      await screen.findByText(/1 match \(semantic\) for “bitcoin”/, undefined, {
+        timeout: 2000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("result-mode")).toHaveTextContent("Semantic");
   });
 
   it("renders result metadata and jumps to the chat", async () => {

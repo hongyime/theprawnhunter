@@ -33,17 +33,127 @@ type SemanticHit = {
   distance: number | null;
 };
 
-/** Semantic hits carry no snippet/sender fields; render them via safe defaults. */
-function semanticRows(hits: SemanticHit[]): EvidenceSearchRow[] {
-  return hits.map((hit) => ({
-    id: hit.message_id,
-    credential_id: hit.credential_id,
-    sender_key: null,
-    sender_pseudonym: null,
-    snippet: null,
-    media_type: null,
-    created_at: null,
-  }));
+type HydrationRow = {
+  id: string;
+  credential_id?: string | null;
+  sender_key?: string | null;
+  sender_pseudonym?: string | null;
+  media_type?: string | null;
+  created_at?: string | null;
+  content?: string | null;
+};
+
+/** Same-origin proxy; it injects `MONITOR_API_KEY` server-side. */
+export const SEMANTIC_PROXY_PATH = "/api/semantic-search";
+
+export const SEMANTIC_HYDRATION_SELECT =
+  "id, credential_id, sender_key, sender_pseudonym, media_type, created_at, content";
+
+export const SNIPPET_MAX_LENGTH = 200;
+
+/**
+ * Build a plain-text snippet centred on the query term.
+ *
+ * The returned string is *text*, not HTML: the only markup ever added is a
+ * `<b>…</b>` pair around the matched substring, which the existing
+ * `HighlightedSnippet` renderer interprets safely. Everything else (including
+ * hostile input such as `<script>`) becomes inert React text, so no raw HTML
+ * is injected.
+ */
+export function buildSnippet(
+  content: string | null | undefined,
+  query: string,
+): string | null {
+  if (!content) return null;
+  const text = content.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+
+  const needle = query.trim().toLowerCase();
+  const matchIndex = needle ? text.toLowerCase().indexOf(needle) : -1;
+
+  let start = 0;
+  if (matchIndex >= 0) {
+    const pad = Math.max(
+      0,
+      Math.floor((SNIPPET_MAX_LENGTH - needle.length) / 2),
+    );
+    start = Math.max(0, matchIndex - pad);
+  }
+
+  const prefix = start > 0 ? "…" : "";
+  let end = Math.min(text.length, start + (SNIPPET_MAX_LENGTH - prefix.length));
+  const hasSuffix = end < text.length;
+  if (hasSuffix) {
+    end -= prefix.length;
+  }
+  end = Math.max(start, end);
+
+  const body = text.slice(start, end);
+  const suffix = hasSuffix ? "…" : "";
+  const relative = matchIndex - start;
+  if (
+    relative >= 0 &&
+    needle.length > 0 &&
+    relative + needle.length <= body.length
+  ) {
+    const before = body.slice(0, relative);
+    const match = body.slice(relative, relative + needle.length);
+    const after = body.slice(relative + needle.length);
+    return `${prefix}${before}<b>${match}</b>${after}${suffix}`;
+  }
+  return `${prefix}${body}${suffix}`;
+}
+
+/**
+ * Fetch the renderable fields for semantic hits from `evidence_redacted`.
+ *
+ * `semantic_search` only returns `(message_id, credential_id, distance)`, so
+ * each hit is hydrated by id. Rows the authenticated view does not expose are
+ * dropped; if no hit can be hydrated the caller falls back to FTS.
+ */
+async function hydrateSemanticRows(
+  hits: SemanticHit[],
+  query: string,
+): Promise<EvidenceSearchRow[]> {
+  const ids = Array.from(
+    new Set(
+      hits
+        .map((hit) => hit.message_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  );
+  if (ids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("evidence_redacted")
+    .select(SEMANTIC_HYDRATION_SELECT)
+    .in("id", ids);
+  if (error) throw new Error(error.message);
+
+  const byId = new Map<string, HydrationRow>();
+  for (const row of (data as HydrationRow[] | null) ?? []) {
+    if (row && typeof row.id === "string") byId.set(row.id, row);
+  }
+
+  const hydrated: EvidenceSearchRow[] = [];
+  for (const hit of hits) {
+    const row = byId.get(hit.message_id);
+    if (!row) continue;
+    hydrated.push({
+      id: row.id,
+      credential_id: hit.credential_id ?? row.credential_id ?? null,
+      sender_key: row.sender_key ?? null,
+      sender_pseudonym: row.sender_pseudonym ?? null,
+      snippet: buildSnippet(row.content, query),
+      media_type: row.media_type ?? null,
+      created_at: row.created_at ?? null,
+    });
+  }
+
+  if (hydrated.length === 0) {
+    throw new Error("semantic hydration returned no rows");
+  }
+  return hydrated;
 }
 
 const CHIP_TONES = [
@@ -184,9 +294,7 @@ export default function SearchView({
     }
 
     async function runSemantic(): Promise<EvidenceSearchRow[]> {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? "";
-      if (!apiBase) throw new Error("semantic route not configured");
-      const response = await fetch(`${apiBase}/monitor/semantic-search`, {
+      const response = await fetch(SEMANTIC_PROXY_PATH, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -195,13 +303,15 @@ export default function SearchView({
           limit: SEARCH_RESULT_LIMIT,
         }),
       });
-      if (!response.ok) throw new Error(`semantic route returned ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`semantic proxy returned ${response.status}`);
+      }
       const payload = (await response.json()) as {
         results?: SemanticHit[];
         fallback?: boolean;
       };
       if (payload?.fallback) throw new Error("semantic fallback");
-      return semanticRows(payload?.results ?? []);
+      return hydrateSemanticRows(payload?.results ?? [], trimmedQuery);
     }
 
     const timer = window.setTimeout(async () => {
