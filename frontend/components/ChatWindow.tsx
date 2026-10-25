@@ -48,6 +48,8 @@ const THUMB_URL_TTL_SECONDS = 3600;
 // Re-sign shortly before Supabase's 1h expiry instead of caching forever.
 const THUMB_REFRESH_SAFETY_MS = 60_000;
 const THUMB_FAILURE_RETRY_MS = 60_000;
+// Long transcripts are collapsed by default; the label + affordance stay visible.
+const MEDIA_TEXT_COLLAPSE_CHARS = 280;
 
 // Dark-mode-accessible avatar colours: every entry carries white text at >= 4.5:1.
 const SENDER_PALETTE = [
@@ -928,6 +930,12 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     const thumbUrl = thumbPath
                                         ? cachedThumbUrl(thumbCacheRef.current, message.id)
                                         : null;
+                                    const transcriptText = mediaTextValue(
+                                        message.file_meta?.transcript_text,
+                                    );
+                                    const ocrText = mediaTextValue(
+                                        message.file_meta?.ocr_text,
+                                    );
                                     const timestamp = new Date(message.created_at).toLocaleString();
                                     return (
                                         <div
@@ -991,6 +999,15 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                 <p className="text-sm text-slate-700 whitespace-pre-wrap">
                                                     {message.content}
                                                 </p>
+                                                {transcriptText && (
+                                                    <DerivedMediaText
+                                                        label="TRANSCRIPT"
+                                                        text={transcriptText}
+                                                    />
+                                                )}
+                                                {ocrText && (
+                                                    <DerivedMediaText label="OCR" text={ocrText} />
+                                                )}
                                                 {thumbPath && (
                                                     <button
                                                         type="button"
@@ -1412,6 +1429,43 @@ function cachedThumbUrl(cache: Map<string, ThumbCacheEntry>, messageId: string):
     return entry.url;
 }
 
+function mediaTextValue(value: unknown): string | null {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function DerivedMediaText({ label, text }: { label: string; text: string }) {
+    const [expanded, setExpanded] = useState(false);
+    const isLong = text.length > MEDIA_TEXT_COLLAPSE_CHARS;
+    const visible =
+        isLong && !expanded
+            ? `${text.slice(0, MEDIA_TEXT_COLLAPSE_CHARS).trimEnd()}…`
+            : text;
+
+    return (
+        <div
+            data-testid={`derived-media-text-${label.toLowerCase()}`}
+            className="mt-1 rounded border border-slate-200 bg-slate-50 px-2 py-1.5"
+        >
+            <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    {label}
+                </span>
+                {isLong && (
+                    <button
+                        type="button"
+                        onClick={() => setExpanded((value) => !value)}
+                        aria-expanded={expanded}
+                        className="text-[11px] font-semibold text-cyan-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                    >
+                        {expanded ? "Show less" : "Show more"}
+                    </button>
+                )}
+            </div>
+            <p className="mt-0.5 whitespace-pre-wrap text-xs text-slate-600">{visible}</p>
+        </div>
+    );
+}
+
 function chatTypeLabel(chatType?: string | null): string {
     switch (chatType) {
         case "private":
@@ -1468,6 +1522,8 @@ function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMes
 
 interface ChatFileMeta {
     thumb_path?: string | null;
+    transcript_text?: string | null;
+    ocr_text?: string | null;
     [key: string]: unknown;
 }
 

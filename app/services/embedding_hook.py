@@ -6,6 +6,13 @@ row is stored. The hook is *disabled by default*: it does nothing unless
 to the local ``embed-api`` service and upserts the resulting vector into
 ``message_embeddings``.
 
+The embedded text is :func:`app.services.media_text.searchable_media_text`
+(content + ``file_meta.transcript_text`` + ``file_meta.ocr_text``), matching the
+full-text document built by the ``20261025000009_media_text_search.sql``
+migration. Callers that hold the stored row should pass ``file_meta`` so ASR and
+OCR text are covered by semantic search too; passing ``None`` degrades to
+content-only, exactly as before.
+
 Every failure is swallowed. Embedding must never slow down or break capture, and
 a missing/down embed-api is an expected operating state (the service only runs
 in the optional ``heavy`` profile).
@@ -19,6 +26,7 @@ from typing import Any
 import httpx
 
 from app.core.logger import get_logger
+from app.services.media_text import searchable_media_text
 
 logger = get_logger(__name__)
 
@@ -79,16 +87,20 @@ def embed_message_best_effort(
     message_id: str | None,
     content: str | None,
     *,
+    file_meta: dict | None = None,
     db: Any = None,
     http_client: Any = None,
     timeout: float | None = None,
 ) -> bool:
     """Embed one stored message and upsert its vector. Never raises.
 
-    Returns True only when a vector was stored. Disabled hook, empty content,
-    HTTP failure, malformed response and DB failure all return False.
+    The text is ``searchable_media_text(content, file_meta)`` so transcript and
+    OCR survive into the vector when the caller supplies ``file_meta``. Returns
+    True only when a vector was stored. Disabled hook, no searchable text, HTTP
+    failure, malformed response and DB failure all return False.
     """
-    if not message_id or not isinstance(content, str) or not content.strip():
+    text = searchable_media_text(content, file_meta)
+    if not message_id or not text:
         return False
 
     base_url = _base_url()
@@ -99,13 +111,9 @@ def embed_message_best_effort(
     try:
         if http_client is None:
             with httpx.Client(timeout=httpx.Timeout(effective_timeout)) as client:
-                vector = _post_embed(
-                    client, base_url, content, timeout=effective_timeout
-                )
+                vector = _post_embed(client, base_url, text, timeout=effective_timeout)
         else:
-            vector = _post_embed(
-                http_client, base_url, content, timeout=effective_timeout
-            )
+            vector = _post_embed(http_client, base_url, text, timeout=effective_timeout)
 
         client_db = db if db is not None else _get_db()
         client_db.table(TABLE).upsert(

@@ -328,9 +328,54 @@ def test_incremental_hook_is_disabled_without_env(monkeypatch):
     http = _FakeHttp()
     db = _FakeDb([])
 
-    assert embedding_hook.embed_message_best_effort("0001", "hello", db=db, http_client=http) is False
+    assert (
+        embedding_hook.embed_message_best_effort("0001", "hello", db=db, http_client=http) is False
+    )
     assert http.calls == []
     assert db.upsert_calls == []
+
+
+def test_apply_embeds_transcript_and_ocr_with_content():
+    cli = _load_cli()
+    db = _FakeDb(
+        [
+            {
+                "id": "0001",
+                "content": "voice caption",
+                "file_meta": {
+                    "transcript_text": "hello from asr",
+                    "ocr_text": "hello from ocr",
+                },
+            }
+        ]
+    )
+    http = _FakeHttp()
+
+    stats = cli._run(
+        apply=True,
+        base_url="http://embed.test",
+        client=db,
+        http_client=http,
+    )
+
+    assert stats["embedded"] == 1
+    assert http.calls[0]["json"]["texts"] == ["voice caption\nhello from asr\nhello from ocr"]
+
+
+def test_empty_content_with_transcript_is_still_eligible():
+    cli = _load_cli()
+    db = _FakeDb([{"id": "0001", "content": None, "file_meta": {"transcript_text": "spoken"}}])
+    http = _FakeHttp()
+
+    stats = cli._run(
+        apply=True,
+        base_url="http://embed.test",
+        client=db,
+        http_client=http,
+    )
+
+    assert stats["skipped_empty"] == 0
+    assert http.calls[0]["json"]["texts"] == ["spoken"]
 
 
 def test_incremental_hook_upserts_vector(monkeypatch):
@@ -338,7 +383,9 @@ def test_incremental_hook_upserts_vector(monkeypatch):
     http = _FakeHttp()
     db = _FakeDb([])
 
-    assert embedding_hook.embed_message_best_effort("0001", "hello", db=db, http_client=http) is True
+    assert (
+        embedding_hook.embed_message_best_effort("0001", "hello", db=db, http_client=http) is True
+    )
 
     assert http.calls[0]["url"] == "http://embed.test/embed"
     assert http.calls[0]["json"] == {"texts": ["hello"]}
@@ -349,12 +396,33 @@ def test_incremental_hook_upserts_vector(monkeypatch):
     assert len(upsert["rows"][0]["embedding"]) == 384
 
 
+def test_incremental_hook_embeds_transcript_and_ocr(monkeypatch):
+    monkeypatch.setenv(embedding_hook.EMBED_API_URL_ENV, "http://embed.test")
+    http = _FakeHttp()
+    db = _FakeDb([])
+
+    assert (
+        embedding_hook.embed_message_best_effort(
+            "0001",
+            "caption",
+            file_meta={"transcript_text": "asr text", "ocr_text": "ocr text"},
+            db=db,
+            http_client=http,
+        )
+        is True
+    )
+
+    assert http.calls[0]["json"] == {"texts": ["caption\nasr text\nocr text"]}
+
+
 def test_incremental_hook_swallows_http_failure(monkeypatch):
     monkeypatch.setenv(embedding_hook.EMBED_API_URL_ENV, "http://embed.test")
     http = _FakeHttp(fail=True)
     db = _FakeDb([])
 
-    assert embedding_hook.embed_message_best_effort("0001", "hello", db=db, http_client=http) is False
+    assert (
+        embedding_hook.embed_message_best_effort("0001", "hello", db=db, http_client=http) is False
+    )
     assert db.upsert_calls == []
 
 

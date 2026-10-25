@@ -57,6 +57,7 @@ async def _embed_stored_rows(rows: list[dict[str, Any]]) -> None:
                 embed_message_best_effort,
                 row.get("id"),
                 row.get("content"),
+                file_meta=row.get("file_meta"),
             )
         except Exception as exc:  # noqa: BLE001 - capture flow must continue
             logger.warning(

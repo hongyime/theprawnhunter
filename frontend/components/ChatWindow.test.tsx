@@ -718,6 +718,68 @@ describe("ChatWindow", () => {
     expect(screen.getByText("photo")).toBeInTheDocument();
   });
 
+  it("renders transcript text with a visible TRANSCRIPT label", async () => {
+    mockFeed([
+      makeMessage("asr-1", "voice note caption", "2026-09-05T10:00:00Z", {
+        media_type: "voice",
+        file_meta: { transcript_text: "the spoken secret" },
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("voice note caption");
+    expect(screen.getByText("TRANSCRIPT")).toBeInTheDocument();
+    expect(screen.getByText("the spoken secret")).toBeInTheDocument();
+  });
+
+  it("renders OCR text with a visible OCR label", async () => {
+    mockFeed([
+      makeMessage("ocr-1", "photo caption", "2026-09-05T10:00:00Z", {
+        media_type: "photo",
+        file_meta: { ocr_text: "printed wallet address" },
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("photo caption");
+    expect(screen.getByText("OCR")).toBeInTheDocument();
+    expect(screen.getByText("printed wallet address")).toBeInTheDocument();
+  });
+
+  it("collapses a long transcript until Show more is pressed", async () => {
+    const longTranscript = Array.from({ length: 80 }, (_, index) => `word${index}`).join(" ");
+    mockFeed([
+      makeMessage("asr-long", "long voice note", "2026-09-05T10:00:00Z", {
+        media_type: "voice",
+        file_meta: { transcript_text: longTranscript },
+      }),
+    ]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("long voice note");
+    expect(screen.queryByText(longTranscript)).not.toBeInTheDocument();
+
+    const showMore = screen.getByRole("button", { name: "Show more" });
+    expect(showMore).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(showMore);
+    expect(screen.getByText(longTranscript)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("renders no derived media text when file_meta is absent", async () => {
+    mockFeed([makeMessage("plain-1", "plain message", "2026-09-05T10:00:00Z")]);
+    render(<ChatWindow credential={credential} />);
+
+    await screen.findByText("plain message");
+    expect(screen.queryByText("TRANSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText("OCR")).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/derived-media-text/)).not.toBeInTheDocument();
+  });
+
   it("opens a gallery, navigates between thumbnailed media, and closes with Escape", async () => {
     mockFeed([
       makeMessage("g1", "first photo", "2026-09-05T10:00:00Z", {

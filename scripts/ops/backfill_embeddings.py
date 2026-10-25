@@ -22,6 +22,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services.media_text import searchable_media_text  # noqa: E402
+
 BATCH_SIZE = 64
 DEFAULT_EMBED_API_URL = "http://127.0.0.1:8020"
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -87,12 +89,7 @@ def _fetch_messages(
     after_id: str | None,
     limit: int,
 ) -> list[dict[str, Any]]:
-    query = (
-        client.table(MESSAGES_TABLE)
-        .select("id,content")
-        .order("id")
-        .limit(limit)
-    )
+    query = client.table(MESSAGES_TABLE).select("id,content,file_meta").order("id").limit(limit)
     if after_id is not None:
         query = query.gt("id", after_id)
     return list(query.execute().data or [])
@@ -183,11 +180,13 @@ def _run(
         for row in page:
             if row["id"] in embedded:
                 continue
-            content = row.get("content")
-            if not isinstance(content, str) or not content.strip():
+            # Same logical document as the FTS migration and the incremental
+            # hook: content + file_meta.transcript_text + file_meta.ocr_text.
+            text = searchable_media_text(row.get("content"), row.get("file_meta"))
+            if not text:
                 stats["skipped_empty"] += 1
                 continue
-            eligible.append(row)
+            eligible.append({**row, "_search_text": text})
 
         for chunk in _chunks(eligible, batch_size):
             stats["eligible"] += len(chunk)
@@ -199,7 +198,7 @@ def _run(
                 vectors = _embed_texts(
                     http_client,
                     base_url,
-                    [str(row["content"]) for row in chunk],
+                    [row["_search_text"] for row in chunk],
                     timeout=timeout,
                 )
                 _upsert_embeddings(

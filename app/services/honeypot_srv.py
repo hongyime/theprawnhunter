@@ -311,6 +311,7 @@ async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) 
                 embed_message_best_effort,
                 stored_row_id,
                 msg_data.get("content"),
+                file_meta=msg_data.get("file_meta"),
             )
         except Exception as embed_exc:
             logger.warning(f"[Honeypot] Embedding hook skipped: {embed_exc}")

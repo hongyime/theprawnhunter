@@ -60,7 +60,11 @@ def _embed_message(message: dict[str, Any]) -> None:
     try:
         from app.services.embedding_hook import embed_message_best_effort
 
-        embed_message_best_effort(message.get("id"), message.get("content"))
+        embed_message_best_effort(
+            message.get("id"),
+            message.get("content"),
+            file_meta=message.get("file_meta"),
+        )
     except Exception as exc:
         logger.warning(
             "[Broadcast] embedding hook skipped for %s: %s",
