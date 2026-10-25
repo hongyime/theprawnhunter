@@ -212,26 +212,16 @@ async def _validate_token_async(item: dict, source_name: str) -> int:
 
             # ---- Bundle 1: Pivot fan-out (fire-and-forget) ----
             try:
-                from app.workers.tasks.pivot_tasks import (
-                    search_bot_username,
-                    search_github_user,
-                    search_webhook_host,
+                from app.workers.tasks.pivot_tasks import fan_out_pivots
+
+                # Owner pivots advance the owner graph at most two hops deep;
+                # the candidate's meta carries which hop it came from, so a
+                # depth-2 candidate never re-enqueues (see MAX_PIVOT_DEPTH).
+                fan_out_pivots(
+                    item.get("meta") or {},
+                    bot_username=bot_username,
+                    webhook_url=webhook_url,
                 )
-                # Seed 1: GitHub owner (if source meta carries repo)
-                meta_in = item.get("meta") or {}
-                repo = meta_in.get("repo")  # format "owner/repo"
-                if repo and "/" in repo:
-                    owner = repo.split("/")[0]
-                    if owner:
-                        search_github_user.apply_async(args=[owner], queue="validation")
-
-                # Seed 2: Bot @username (always available from getMe)
-                if bot_username and bot_username != "unknown":
-                    search_bot_username.apply_async(args=[bot_username], queue="validation")
-
-                # Seed 3: Webhook host (only if set)
-                if webhook_url:
-                    search_webhook_host.apply_async(args=[webhook_url], queue="validation")
             except Exception as e:
                 # Pivot failure must NEVER block the main validation pipeline
                 logger.debug(f"[Validate] Pivot fan-out failed (non-fatal): {e}")
