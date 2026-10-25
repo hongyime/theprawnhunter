@@ -1,10 +1,27 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
-import { ChevronDown, ChevronUp, FileDown, Globe2, LucideSend, Server, TerminalSquare } from "lucide-react";
+import {
+    ChevronDown,
+    ChevronUp,
+    FileDown,
+    Globe2,
+    LucideSend,
+    RefreshCw,
+    Search as SearchIcon,
+    Server,
+    TerminalSquare,
+    TriangleAlert,
+    X,
+} from "lucide-react";
 import type { Credential, InfrastructureContext } from "@/app/page";
+import { HighlightedSnippet, type EvidenceSearchRow } from "./SearchView";
+
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_RESULT_LIMIT = 50;
+const SEARCH_MIN_QUERY = 2;
 
 export default function ChatWindow({ credential }: { credential: Credential | null }) {
     const { session } = useAuth();
@@ -12,8 +29,31 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     const [isProfileExpanded, setIsProfileExpanded] = useState(true);
     const [loading, setLoading] = useState(false);
     const [authError, setAuthError] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchResults, setSearchResults] = useState<EvidenceSearchRow[]>([]);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
+    const [searchHasSearched, setSearchHasSearched] = useState(false);
+    const [retryToken, setRetryToken] = useState(0);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
     const credentialId = credential?.id;
+
+    const trimmedQuery = searchQuery.trim();
+    const searchActive = trimmedQuery.length >= SEARCH_MIN_QUERY;
+
+    const clearSearch = useCallback(() => {
+        setSearchQuery("");
+        setSearchResults([]);
+        setSearchLoading(false);
+        setSearchError(null);
+        setSearchHasSearched(false);
+    }, []);
+
+    useEffect(() => {
+        clearSearch();
+        setRetryToken(0);
+    }, [credentialId, clearSearch]);
 
     useEffect(() => {
         if (!credentialId) return;
@@ -95,8 +135,73 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     }, [credentialId, session]);
 
     useEffect(() => {
+        if (!searchActive || !credentialId) {
+            setSearchResults([]);
+            setSearchLoading(false);
+            setSearchError(null);
+            setSearchHasSearched(false);
+            return;
+        }
+
+        let active = true;
+        setSearchLoading(true);
+        setSearchError(null);
+
+        const timer = window.setTimeout(async () => {
+            const { data, error } = await supabase.rpc("search_evidence", {
+                q: trimmedQuery,
+                credential_id: credentialId,
+                lim: SEARCH_RESULT_LIMIT,
+            });
+            if (!active) return;
+            if (error) {
+                setSearchResults([]);
+                setSearchError(`Search failed: ${error.message}`);
+            } else {
+                setSearchResults((data as EvidenceSearchRow[] | null) ?? []);
+                setSearchError(null);
+            }
+            setSearchHasSearched(true);
+            setSearchLoading(false);
+        }, SEARCH_DEBOUNCE_MS);
+
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [searchActive, trimmedQuery, credentialId, retryToken]);
+
+    useEffect(() => {
+        if (typeof document === "undefined") return;
+
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.key === "Escape" && searchActive) {
+                clearSearch();
+                return;
+            }
+            if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+            const target = event.target as HTMLElement | null;
+            const tag = target?.tagName;
+            if (
+                tag === "INPUT" ||
+                tag === "TEXTAREA" ||
+                tag === "SELECT" ||
+                target?.isContentEditable
+            ) {
+                return;
+            }
+            event.preventDefault();
+            searchInputRef.current?.focus();
+        }
+
+        document.addEventListener("keydown", handleKeyDown);
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, [searchActive, clearSearch]);
+
+    useEffect(() => {
+        if (searchActive) return;
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages]);
+    }, [messages, searchActive]);
 
     if (!credential) {
         return (
@@ -144,6 +249,18 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
         infrastructureEndpoints.length > 0
     );
 
+    const searchSummary = searchLoading
+        ? "Searching this chat…"
+        : searchError
+            ? "Search error"
+            : searchActive && searchHasSearched
+                ? `${searchResults.length} ${searchResults.length === 1 ? "match" : "matches"} in this chat`
+                : searchActive
+                    ? "Searching this chat…"
+                    : trimmedQuery
+                        ? "Type one more character to search."
+                        : "Press / to search this chat.";
+
     return (
         <div className="flex-1 flex flex-col h-full bg-[#E5DDD5]">
             <div className="border-b bg-white/90 shadow-sm backdrop-blur">
@@ -165,6 +282,46 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                         </div>
                     </div>
                 </div>
+                <form
+                    role="search"
+                    className="mx-3 mb-3"
+                    onSubmit={(event) => event.preventDefault()}
+                >
+                    <div className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 shadow-sm focus-within:border-[#197e74] focus-within:ring-2 focus-within:ring-[#197e74]/25">
+                        <SearchIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-400" />
+                        <input
+                            ref={searchInputRef}
+                            type="search"
+                            value={searchQuery}
+                            onChange={(event) => setSearchQuery(event.target.value)}
+                            aria-label="Search this chat"
+                            aria-describedby="chat-search-summary"
+                            placeholder="Search this chat…  (press / to focus)"
+                            className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                        />
+                        <kbd className="hidden shrink-0 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 md:inline">
+                            /
+                        </kbd>
+                        {searchQuery && (
+                            <button
+                                type="button"
+                                onClick={clearSearch}
+                                aria-label="Clear search"
+                                className="flex shrink-0 items-center gap-1 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                            >
+                                <X className="h-3 w-3" aria-hidden="true" /> Clear
+                            </button>
+                        )}
+                    </div>
+                    <p
+                        id="chat-search-summary"
+                        role="status"
+                        aria-live="polite"
+                        className="mt-2 text-xs text-slate-600"
+                    >
+                        {searchSummary}
+                    </p>
+                </form>
                 {hasEndpointProfile && (
                     <div className="mx-3 mb-3 rounded border border-white/60 bg-white/70 shadow-sm backdrop-blur-md">
                         <button
@@ -242,31 +399,167 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                     </div>
                 )}
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                {messages.filter(m => m.content).map((message, i) => (
-                    <div key={message.id || i} className="bg-white rounded-lg p-2 shadow-sm">
-                        <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-semibold text-slate-800">
-                                {message.sender_pseudonym || "Unknown"}
-                            </span>
-                            <span className="text-xs text-slate-400">
-                                {new Date(message.created_at).toLocaleString()}
-                            </span>
-                        </div>
-                        <p className="text-sm text-slate-700 whitespace-pre-wrap">
-                            {message.content}
-                        </p>
-                        {message.media_type && message.media_type !== "text" && (
-                            <div className="mt-1 text-xs text-cyan-600 flex items-center gap-1">
-                                <FileDown className="h-3 w-3" />
-                                {message.media_type}
+            <div
+                className="flex-1 overflow-y-auto p-4 space-y-2"
+                aria-busy={searchActive && searchLoading}
+            >
+                {searchActive ? (
+                    <ChatSearchResults
+                        loading={searchLoading}
+                        error={searchError}
+                        hasSearched={searchHasSearched}
+                        results={searchResults}
+                        query={trimmedQuery}
+                        onRetry={() => setRetryToken((value) => value + 1)}
+                        onClear={clearSearch}
+                    />
+                ) : (
+                    <>
+                        {messages.filter(m => m.content).map((message, i) => (
+                            <div key={message.id || i} className="bg-white rounded-lg p-2 shadow-sm">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-xs font-semibold text-slate-800">
+                                        {message.sender_pseudonym || "Unknown"}
+                                    </span>
+                                    <span className="text-xs text-slate-400">
+                                        {new Date(message.created_at).toLocaleString()}
+                                    </span>
+                                </div>
+                                <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                                    {message.content}
+                                </p>
+                                {message.media_type && message.media_type !== "text" && (
+                                    <div className="mt-1 text-xs text-cyan-600 flex items-center gap-1">
+                                        <FileDown className="h-3 w-3" />
+                                        {message.media_type}
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
-                ))}
-                <div ref={bottomRef} />
+                        ))}
+                        <div ref={bottomRef} />
+                    </>
+                )}
             </div>
         </div>
+    );
+}
+
+function ChatSearchResults({
+    loading,
+    error,
+    hasSearched,
+    results,
+    query,
+    onRetry,
+    onClear,
+}: {
+    loading: boolean;
+    error: string | null;
+    hasSearched: boolean;
+    results: EvidenceSearchRow[];
+    query: string;
+    onRetry: () => void;
+    onClear: () => void;
+}) {
+    if (loading) {
+        return (
+            <div
+                role="status"
+                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600"
+            >
+                <span
+                    aria-hidden="true"
+                    className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-[#197e74] motion-reduce:animate-none"
+                />
+                Searching this chat…
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div
+                role="alert"
+                className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+            >
+                <div className="flex flex-wrap items-center gap-3">
+                    <TriangleAlert aria-hidden="true" className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1">{error}</span>
+                    <button
+                        type="button"
+                        onClick={onRetry}
+                        className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                    >
+                        <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Retry
+                    </button>
+                </div>
+                <p className="mt-2 text-xs text-red-700">
+                    Clear the search to return to the conversation.
+                </p>
+            </div>
+        );
+    }
+
+    if (!hasSearched) {
+        return null;
+    }
+
+    if (results.length === 0) {
+        return (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
+                <h2 className="font-bold text-slate-900">No matches in this chat</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                    No captured messages in this conversation match “{query}”.
+                </p>
+                <button
+                    type="button"
+                    onClick={onClear}
+                    className="mt-3 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                >
+                    Back to the conversation
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <>
+            {results.map((row) => {
+                const senderKey = row.sender_key || "unknown";
+                return (
+                    <article
+                        key={row.id}
+                        className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+                    >
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span
+                                title={senderKey}
+                                className="rounded border border-[#197e74]/30 bg-[#197e74]/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#12645c]"
+                            >
+                                {senderKey}
+                            </span>
+                            {row.sender_pseudonym && row.sender_pseudonym !== senderKey && (
+                                <span className="font-mono text-[10px] text-slate-400">
+                                    {row.sender_pseudonym}
+                                </span>
+                            )}
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-slate-600">
+                                {row.media_type || "text"}
+                            </span>
+                            <time
+                                dateTime={row.created_at || undefined}
+                                className="ml-auto whitespace-nowrap font-mono text-[11px] text-slate-500"
+                            >
+                                {row.created_at ? new Date(row.created_at).toLocaleString() : "Unknown time"}
+                            </time>
+                        </div>
+                        <div className="mt-2">
+                            <HighlightedSnippet snippet={row.snippet} />
+                        </div>
+                    </article>
+                );
+            })}
+        </>
     );
 }
 
