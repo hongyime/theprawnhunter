@@ -7,6 +7,25 @@ import { supabase } from "@/lib/supabase";
 import NeoCard from "@/components/NeoCard";
 import NeoButton from "@/components/NeoButton";
 
+/**
+ * Map a Supabase auth failure to a short, human sentence. The page never
+ * renders the raw provider message.
+ */
+export function magicLinkErrorMessage(message: string): string {
+    const normalized = message.toLowerCase();
+    if (normalized.includes("rate") || normalized.includes("too many")) {
+        return "Too many sign-in attempts. Wait a minute and try again.";
+    }
+    if (
+        normalized.includes("signups not allowed") ||
+        (normalized.includes("signup") && normalized.includes("disabled"))
+    ) {
+        return "Access is limited to operator accounts.";
+    }
+    return "We couldn't send a sign-in link. Check the address and try again.";
+}
+
+
 export default function SignInPage() {
     const { signIn, loading, error } = useAuth();
     const router = useRouter();
@@ -14,6 +33,8 @@ export default function SignInPage() {
     const [password, setPassword] = useState("");
     const [localError, setLocalError] = useState<string | null>(null);
     const [oauthLoading, setOauthLoading] = useState(false);
+    const [magicLinkLoading, setMagicLinkLoading] = useState(false);
+    const [magicLinkSentTo, setMagicLinkSentTo] = useState<string | null>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -44,6 +65,34 @@ export default function SignInPage() {
         // On success Supabase redirects the browser — no need to setLoading(false)
     };
 
+    const handleMagicLink = async (event: React.FormEvent) => {
+        event.preventDefault();
+        setLocalError(null);
+        const address = email.trim();
+        if (!address) {
+            setLocalError("Enter your email address to receive a sign-in link.");
+            return;
+        }
+        setMagicLinkLoading(true);
+        try {
+            const { error: otpError } = await supabase.auth.signInWithOtp({
+                email: address,
+                options: {
+                    emailRedirectTo: `${window.location.origin}/`,
+                },
+            });
+            if (otpError) {
+                setLocalError(magicLinkErrorMessage(otpError.message));
+            } else {
+                setMagicLinkSentTo(address);
+            }
+        } catch {
+            setLocalError("We couldn't send a sign-in link. Please try again.");
+        } finally {
+            setMagicLinkLoading(false);
+        }
+    };
+
     return (
         <div className="min-h-screen flex items-center justify-center bg-slate-100">
             <NeoCard className="max-w-md w-full space-y-8 p-8">
@@ -53,6 +102,9 @@ export default function SignInPage() {
                     </h2>
                     <p className="mt-2 text-center text-sm text-slate-600">
                         Sign in to access the evidence dashboard
+                    </p>
+                    <p className="mt-1 text-center text-xs text-slate-500">
+                        Access is limited to operator accounts.
                     </p>
                 </div>
 
@@ -80,60 +132,87 @@ export default function SignInPage() {
                         <span className="bg-white px-2 text-slate-400">or email</span>
                     </div>
                 </div>
-                
-                <form className="space-y-6" onSubmit={handleSubmit}>
-                    <div className="space-y-4">
-                        <div>
-                            <label htmlFor="email" className="block text-sm font-medium text-slate-700">
-                                Email address
-                            </label>
-                            <input
-                                id="email"
-                                name="email"
-                                type="email"
-                                autoComplete="email"
-                                required
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm"
-                                placeholder="you@example.com"
-                            />
-                        </div>
-                        
-                        <div>
-                            <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-                                Password
-                            </label>
-                            <input
-                                id="password"
-                                name="password"
-                                type="password"
-                                autoComplete="current-password"
-                                required
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm"
-                                placeholder="••••••••"
-                            />
-                        </div>
-                    </div>
 
-                    {(error || localError) && (
-                        <div className="rounded-md bg-red-50 p-4">
-                            <p className="text-sm text-red-800">{error || localError}</p>
-                        </div>
-                    )}
-
-                    <div>
-                        <NeoButton
-                            type="submit"
-                            disabled={loading}
-                            className="w-full flex justify-center py-2 px-4 text-sm font-medium text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                {magicLinkSentTo ? (
+                    <div
+                        role="status"
+                        aria-live="polite"
+                        className="space-y-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center"
+                    >
+                        <p className="text-sm font-medium text-emerald-900">
+                            Check your inbox — link sent to {magicLinkSentTo}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setMagicLinkSentTo(null)}
+                            className="text-sm font-medium text-emerald-800 underline hover:text-emerald-900"
                         >
-                            {loading ? "Signing in..." : "Sign in"}
-                        </NeoButton>
+                            Use a different email
+                        </button>
                     </div>
-                </form>
+                ) : (
+                    <form className="space-y-6" onSubmit={handleSubmit}>
+                        <div className="space-y-4">
+                            <div>
+                                <label htmlFor="email" className="block text-sm font-medium text-slate-700">
+                                    Email address
+                                </label>
+                                <input
+                                    id="email"
+                                    name="email"
+                                    type="email"
+                                    autoComplete="email"
+                                    required
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm"
+                                    placeholder="you@example.com"
+                                />
+                            </div>
+
+                            <div>
+                                <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+                                    Password
+                                </label>
+                                <input
+                                    id="password"
+                                    name="password"
+                                    type="password"
+                                    autoComplete="current-password"
+                                    required
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm"
+                                    placeholder="••••••••"
+                                />
+                            </div>
+                        </div>
+
+                        {(error || localError) && (
+                            <div className="rounded-md bg-red-50 p-4">
+                                <p role="alert" className="text-sm text-red-800">{error || localError}</p>
+                            </div>
+                        )}
+
+                        <div className="space-y-3">
+                            <NeoButton
+                                type="submit"
+                                disabled={loading || magicLinkLoading}
+                                className="w-full flex justify-center py-2 px-4 text-sm font-medium text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {loading ? "Signing in..." : "Sign in"}
+                            </NeoButton>
+                            <NeoButton
+                                type="button"
+                                onClick={handleMagicLink}
+                                disabled={magicLinkLoading || loading || oauthLoading}
+                                className="w-full flex justify-center py-2 px-4 text-sm font-medium text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {magicLinkLoading ? "Sending link..." : "Email me a sign-in link"}
+                            </NeoButton>
+                        </div>
+                    </form>
+                )}
 
                 <div className="border-t border-slate-200 pt-6 text-center">
                     <a

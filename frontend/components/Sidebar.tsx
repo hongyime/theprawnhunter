@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { supabase } from "@/lib/supabase";
 import {
+    Activity,
     BarChart3,
     BellRing,
     ChevronLeft,
     ChevronRight,
+    History,
     LayoutDashboard,
     ListChecks,
     MessageSquareText,
@@ -50,10 +52,12 @@ const NAV_ITEMS: readonly NavItem[] = [
   { view: "findings", label: "Findings", icon: ListChecks },
   { view: "search", label: "Search", icon: Search },
   { view: "watchlists", label: "Watchlists", icon: BellRing },
+  { view: "watchlistHits", label: "Watchlist Hits", icon: History },
   { view: "chat", label: "Chat Feed", icon: MessageSquareText },
   { view: "botTelemetry", label: "Bot Intel", icon: Radar },
   { view: "globalTelemetry", label: "All Telemetry", icon: BarChart3 },
   { view: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { view: "ops", label: "Ops", icon: Activity },
 ];
 
 export function showsTargetsPanel(view: DashboardView): boolean {

@@ -157,10 +157,12 @@ describe("Sidebar", () => {
       "Findings",
       "Search",
       "Watchlists",
+      "Watchlist Hits",
       "Chat Feed",
       "Bot Intel",
       "All Telemetry",
       "Dashboard",
+      "Ops",
     ]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
@@ -374,7 +376,7 @@ describe("Sidebar", () => {
     expect(screen.queryByText("Loading targets…")).not.toBeInTheDocument();
   });
 
-  it("collapses by default and exposes all seven destinations without visible labels", async () => {
+  it("collapses by default and exposes all nine destinations without visible labels", async () => {
     renderSidebar();
     await screen.findByText("3 of 3 targets");
 
@@ -382,10 +384,12 @@ describe("Sidebar", () => {
       "Findings",
       "Search",
       "Watchlists",
+      "Watchlist Hits",
       "Chat Feed",
       "Bot Intel",
       "All Telemetry",
       "Dashboard",
+      "Ops",
     ]) {
       const button = screen.getByRole("button", { name: label });
       expect(button).toHaveAttribute("title", label);
@@ -416,6 +420,26 @@ describe("Sidebar", () => {
     ).toBeInTheDocument();
   });
 
+  it("routes the new Watchlist Hits and Ops entries from the collapsed rail", async () => {
+    const user = userEvent.setup();
+    const onViewChange = vi.fn();
+    renderSidebar({ onViewChange });
+    await screen.findByText("3 of 3 targets");
+
+    const hits = screen.getByRole("button", { name: "Watchlist Hits" });
+    expect(hits).toHaveAttribute("title", "Watchlist Hits");
+    expect(screen.queryByText("Watchlist Hits")).not.toBeInTheDocument();
+
+    await user.click(hits);
+    expect(onViewChange).toHaveBeenCalledWith("watchlistHits");
+
+    const ops = screen.getByRole("button", { name: "Ops" });
+    expect(ops).toHaveAttribute("title", "Ops");
+
+    await user.click(ops);
+    expect(onViewChange).toHaveBeenCalledWith("ops");
+  });
+
   it.each(["chat", "botTelemetry"] as const)(
     "renders the targets panel for the %s view",
     async (view) => {
@@ -432,6 +456,8 @@ describe("Sidebar", () => {
     "findings",
     "search",
     "watchlists",
+    "watchlistHits",
+    "ops",
     "dashboard",
     "globalTelemetry",
   ] as const)("omits the targets panel for the %s view", async (view) => {

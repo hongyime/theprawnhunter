@@ -7,6 +7,8 @@ import FindingsQueue from "@/components/FindingsQueue";
 import SearchView from "@/components/SearchView";
 import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
 import WatchlistView from "@/components/WatchlistView";
+import WatchlistHitsView from "@/components/WatchlistHitsView";
+import OpsPanel from "@/components/OpsPanel";
 import DashboardView from "@/components/DashboardView";
 import { LucideMenu, LucideX, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -17,6 +19,8 @@ export type DashboardView =
   | "findings"
   | "search"
   | "watchlists"
+  | "watchlistHits"
+  | "ops"
   | "chat"
   | "botTelemetry"
   | "globalTelemetry"
@@ -244,6 +248,10 @@ export default function Home() {
           />
         ) : activeView === "watchlists" ? (
           <WatchlistView />
+        ) : activeView === "watchlistHits" ? (
+          <WatchlistHitsView />
+        ) : activeView === "ops" ? (
+          <OpsPanel />
         ) : activeView === "dashboard" ? (
           <DashboardView />
         ) : activeView === "globalTelemetry" ? (

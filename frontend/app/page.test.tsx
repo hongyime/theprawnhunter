@@ -61,6 +61,12 @@ vi.mock('@/components/Sidebar', () => ({
       <button data-testid="sidebar-view-change" onClick={() => onViewChange && onViewChange('botTelemetry')} disabled={!onViewChange}>
         Change View
       </button>
+      <button data-testid="sidebar-watchlist-hits" onClick={() => onViewChange && onViewChange('watchlistHits')} disabled={!onViewChange}>
+        Watchlist Hits
+      </button>
+      <button data-testid="sidebar-ops" onClick={() => onViewChange && onViewChange('ops')} disabled={!onViewChange}>
+        Ops
+      </button>
       <button data-testid="sidebar-select" onClick={() => onSelect && onSelect({ id: 'test-uuid', created_at: '2024-01-01', source: 'test' } as Credential)} disabled={!onSelect}>
         Select
       </button>
@@ -90,6 +96,18 @@ vi.mock('@/components/FindingsQueue', () => ({
 vi.mock('@/components/TelemetryAnalyticsView', () => ({
   default: () => (
     <div data-testid="telemetry-view">Telemetry View</div>
+  ),
+}));
+
+vi.mock('@/components/WatchlistHitsView', () => ({
+  default: () => (
+    <div data-testid="watchlist-hits-view">Watchlist Hits View</div>
+  ),
+}));
+
+vi.mock('@/components/OpsPanel', () => ({
+  default: () => (
+    <div data-testid="ops-panel">Ops Panel</div>
   ),
 }));
 
@@ -218,8 +236,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
     });
   });
 
-  it('clicks view-change button and renders bot telemetry', async () => {
-    const mockSession = { user: { email: 'test@example.com' } };
+  it('clicks view-change button and renders bot telemetry', async () => {    const mockSession = { user: { email: 'test@example.com' } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
@@ -243,6 +260,62 @@ describe('Dashboard Gate (Production page.tsx)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('telemetry-view')).toBeDefined();
     });
+  });
+
+  it('renders the watchlist hits view without the targets panel', async () => {
+    const mockSession = { user: { email: 'test@example.com' } };
+    mockGetSession.mockResolvedValue({
+      data: { session: mockSession },
+      error: null
+    });
+
+    render(
+      <AuthProvider>
+        <Home />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sidebar')).toBeDefined();
+    });
+
+    await userEvent.click(screen.getByTestId('sidebar-watchlist-hits'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('watchlist-hits-view')).toBeDefined();
+    });
+    expect(screen.getByTestId('sidebar-activeView').textContent).toBe('watchlistHits');
+    expect(screen.queryByText('Drill-down targets')).toBeNull();
+    expect(screen.queryByTestId('ops-panel')).toBeNull();
+    expect(screen.queryByTestId('chat-window')).toBeNull();
+  });
+
+  it('renders the ops panel without the targets panel', async () => {
+    const mockSession = { user: { email: 'test@example.com' } };
+    mockGetSession.mockResolvedValue({
+      data: { session: mockSession },
+      error: null
+    });
+
+    render(
+      <AuthProvider>
+        <Home />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sidebar')).toBeDefined();
+    });
+
+    await userEvent.click(screen.getByTestId('sidebar-ops'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ops-panel')).toBeDefined();
+    });
+    expect(screen.getByTestId('sidebar-activeView').textContent).toBe('ops');
+    expect(screen.queryByText('Drill-down targets')).toBeNull();
+    expect(screen.queryByTestId('watchlist-hits-view')).toBeNull();
+    expect(screen.queryByTestId('chat-window')).toBeNull();
   });
 
   it('sign-out button calls signOut', async () => {
