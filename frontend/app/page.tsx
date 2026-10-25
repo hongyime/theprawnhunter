@@ -6,6 +6,7 @@ import ChatWindow from "@/components/ChatWindow";
 import FindingsQueue from "@/components/FindingsQueue";
 import SearchView from "@/components/SearchView";
 import TelemetryAnalyticsView from "@/components/TelemetryAnalyticsView";
+import WatchlistView from "@/components/WatchlistView";
 import { LucideMenu, LucideX, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
@@ -14,6 +15,7 @@ import NeoCard from "@/components/NeoCard";
 export type DashboardView =
   | "findings"
   | "search"
+  | "watchlists"
   | "chat"
   | "botTelemetry"
   | "globalTelemetry";
@@ -149,6 +151,8 @@ export default function Home() {
                 ? "Findings queue"
                 : activeView === "search"
                 ? "Search evidence"
+                : activeView === "watchlists"
+                ? "Watchlists"
                 : selected?.meta?.bot_username
                 ? `@${selected.meta.bot_username}`
                 : "The Prawn Hunter"}
@@ -222,6 +226,8 @@ export default function Home() {
               handleFindingDrilldown(credentialId, "chat")
             }
           />
+        ) : activeView === "watchlists" ? (
+          <WatchlistView />
         ) : activeView === "globalTelemetry" ? (
           <TelemetryAnalyticsView scope="global" />
         ) : activeView === "botTelemetry" ? (
