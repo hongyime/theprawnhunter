@@ -134,6 +134,15 @@ export default function SignInPage() {
                         </NeoButton>
                     </div>
                 </form>
+
+                <div className="border-t border-slate-200 pt-6 text-center">
+                    <a
+                        href="/about"
+                        className="text-sm font-medium text-cyan-700 hover:text-cyan-800 hover:underline"
+                    >
+                        Learn more about The Prawn Hunter
+                    </a>
+                </div>
             </NeoCard>
         </div>
     );
