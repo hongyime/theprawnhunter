@@ -8,6 +8,211 @@ from .broadcast import (
 )
 from .common import *
 
+# --- Health alerting ---------------------------------------------------------
+# Each probe writes only Redis state; alerting happens once, after every probe
+# has been evaluated. States are keyed per signal so a flapping signal cannot
+# suppress a different signal's transition.
+HEALTH_ALERT_STATE_PREFIX = "health:alert:state:"
+HEALTH_ALERT_SIGNALS = ("bot_listener_lock", "heartbeat", "api_detailed")
+HEALTH_ALERT_STATE_TTL_SECONDS = 30 * 24 * 3600
+HEALTH_HEARTBEAT_KEY = "system:heartbeat:last_seen"
+HEALTH_HEARTBEAT_STALE_SECONDS = 35 * 60
+HEALTH_ALERT_API_TIMEOUT_SECONDS = 10.0
+_BOT_POLL_LOCK_MATCH = "bot_listener:poll_lock:*"
+
+
+def _health_api_base_url() -> str:
+    """Resolve the internal API base from existing env conventions.
+
+    ``API_BASE_URL`` is already used by ``scripts/ops/ops_report.py``; workers
+    inside Compose can override it with the service DNS name. The fallback is
+    the API service's in-network address (``api:8001``) rather than a public
+    host, so no external endpoint is baked in.
+    """
+    from urllib.parse import urlsplit
+
+    for env_name in ("API_BASE_URL", "API_INTERNAL_URL"):
+        value = os.getenv(env_name)
+        if value:
+            return value.rstrip("/")
+
+    webhook_url = os.getenv("HONEYPOT_WEBHOOK_URL")
+    if webhook_url:
+        parts = urlsplit(webhook_url)
+        if parts.scheme and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}"
+
+    return f"http://api:{os.getenv('API_PORT', '8001')}"
+
+
+async def _probe_bot_listener_lock() -> dict[str, Any]:
+    """Check that at least one bot poller holds a fresh poll lock.
+
+    ``_renew_poll_lock`` refreshes the TTL every ``LOCK_TTL_SECONDS // 3``
+    seconds, so a live poller always has a positive TTL bounded by the lock
+    TTL. ``-1`` (no expiry) and ``-2`` (missing) are both stale.
+    """
+    from app.core.constants import LOCK_TTL_SECONDS
+
+    keys = list(redis_client.scan_iter(match=_BOT_POLL_LOCK_MATCH, count=100))
+    if not keys:
+        return {"healthy": False, "detail": "no active poll lock"}
+
+    fresh_ttls: list[int] = []
+    stale_count = 0
+    for key in keys:
+        ttl = redis_client.ttl(key)
+        if isinstance(ttl, int) and 0 < ttl <= LOCK_TTL_SECONDS:
+            fresh_ttls.append(ttl)
+        else:
+            stale_count += 1
+
+    if not fresh_ttls:
+        return {
+            "healthy": False,
+            "detail": f"{len(keys)} poll lock(s) present but none fresh (stale={stale_count})",
+        }
+    return {
+        "healthy": True,
+        "detail": f"{len(fresh_ttls)} fresh poll lock(s), min_ttl={min(fresh_ttls)}s",
+    }
+
+
+async def _probe_heartbeat() -> dict[str, Any]:
+    """Check ``system:heartbeat:last_seen`` freshness."""
+    raw = redis_client.get(HEALTH_HEARTBEAT_KEY)
+    if raw is None:
+        return {"healthy": False, "detail": "heartbeat key missing"}
+    try:
+        last_seen = float(raw)
+    except (TypeError, ValueError):
+        return {"healthy": False, "detail": "heartbeat value not numeric"}
+
+    age_seconds = max(0, int(time.time() - last_seen))
+    healthy = age_seconds <= HEALTH_HEARTBEAT_STALE_SECONDS
+    return {
+        "healthy": healthy,
+        "detail": (
+            f"heartbeat age {age_seconds}s "
+            f"(stale after {HEALTH_HEARTBEAT_STALE_SECONDS}s)"
+        ),
+    }
+
+
+async def _probe_api_detailed() -> dict[str, Any]:
+    """Call the local API's protected ``/health/detailed`` endpoint."""
+    url = f"{_health_api_base_url()}/health/detailed"
+    headers = {"X-Monitor-Key": settings.MONITOR_API_KEY}
+    async with httpx.AsyncClient(timeout=HEALTH_ALERT_API_TIMEOUT_SECONDS) as client:
+        response = await client.get(url, headers=headers)
+
+    if response.status_code != 200:
+        return {
+            "healthy": False,
+            "detail": f"HTTP {response.status_code}",
+        }
+    try:
+        payload = response.json()
+    except Exception:
+        return {"healthy": False, "detail": "invalid JSON from /health/detailed"}
+
+    status = payload.get("status") if isinstance(payload, dict) else None
+    return {
+        "healthy": status == "healthy",
+        "detail": f"status={status!r}",
+    }
+
+
+async def _run_health_probe(name: str, probe) -> dict[str, Any]:
+    """Run one probe defensively — a single failure never aborts the others."""
+    try:
+        result = await probe()
+    except Exception as exc:
+        logger.warning(f"[HealthAlert] probe {name} failed: {type(exc).__name__}: {exc}")
+        return {"healthy": False, "detail": f"probe error: {type(exc).__name__}"}
+    if not isinstance(result, dict):
+        return {"healthy": False, "detail": "probe returned invalid result"}
+    result.setdefault("healthy", False)
+    return result
+
+
+def _read_health_alert_state(signal: str) -> str | None:
+    try:
+        return redis_client.get(f"{HEALTH_ALERT_STATE_PREFIX}{signal}")
+    except Exception as exc:
+        logger.warning(f"[HealthAlert] state read failed for {signal}: {exc}")
+        return None
+
+
+def _write_health_alert_state(signal: str, state: str) -> None:
+    try:
+        redis_client.setex(
+            f"{HEALTH_ALERT_STATE_PREFIX}{signal}",
+            HEALTH_ALERT_STATE_TTL_SECONDS,
+            state,
+        )
+    except Exception as exc:
+        logger.warning(f"[HealthAlert] state write failed for {signal}: {exc}")
+
+
+async def _health_alert_logic() -> dict[str, Any]:
+    probes = {
+        "bot_listener_lock": _probe_bot_listener_lock,
+        "heartbeat": _probe_heartbeat,
+        "api_detailed": _probe_api_detailed,
+    }
+    names = list(HEALTH_ALERT_SIGNALS)
+    results = await asyncio.gather(
+        *(_run_health_probe(name, probes[name]) for name in names)
+    )
+    checks = dict(zip(names, results, strict=True))
+
+    transitions: list[tuple[str, str, str]] = []
+    baseline_states: list[tuple[str, str]] = []
+    for name, result in checks.items():
+        current = "healthy" if result.get("healthy") else "unhealthy"
+        previous = _read_health_alert_state(name)
+        if previous is None and current == "healthy":
+            baseline_states.append((name, current))
+            continue
+        if previous != current:
+            transitions.append((name, current, str(result.get("detail", ""))))
+
+    if transitions:
+        lines = ["Health state change:"]
+        for name, current, detail in transitions:
+            if current == "healthy":
+                lines.append(f"✅ {name}: recovered to healthy")
+            else:
+                lines.append(f"❌ {name}: unhealthy — {detail}")
+        try:
+            await get_broadcaster().send_log("\n".join(lines))
+        except Exception as exc:
+            logger.warning(f"[HealthAlert] failed to post alert: {exc}")
+
+        # Persist after the alert attempt (successful or not) so a failing
+        # broadcaster cannot turn one transition into an alert storm.
+        for name, current, _detail in transitions:
+            _write_health_alert_state(name, current)
+
+    for name, current in baseline_states:
+        _write_health_alert_state(name, current)
+
+    return {
+        "checks": checks,
+        "transitions": [
+            {"signal": name, "state": current} for name, current, _detail in transitions
+        ],
+    }
+
+
+@app.task(name="flow.health_alert")
+def health_alert():
+    """Alert on bot listener / heartbeat / API health state transitions."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_health_alert_logic())
+
 
 @app.task(name="flow.system_heartbeat")
 def system_heartbeat():

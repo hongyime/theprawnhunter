@@ -314,6 +314,10 @@ app.conf.update(
             "task": "flow.queue_monitor",
             "schedule": crontab(minute="*/5"),
         },
+        "health-alert-5min": {
+            "task": "flow.health_alert",
+            "schedule": crontab(minute="*/5"),
+        },
         "close-revoked-topics-5min": {
             "task": "flow.close_revoked_topics",
             "schedule": crontab(
@@ -662,6 +666,7 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "rescrape-active-hourly": 600,
     "system-heartbeat-30min": 300,
     "queue-monitor-5min": 240,
+    "health-alert-5min": 240,
     "close-revoked-topics-5min": 240,
     "mute-monitor-topics-daily": 1800,
     "canary-flow-check-30min": 300,
