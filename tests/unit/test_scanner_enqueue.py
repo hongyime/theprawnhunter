@@ -8,6 +8,7 @@ broker. The 24h Redis soft-dedupe and own-bot filter are preserved exactly.
 from __future__ import annotations
 
 import hashlib
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -119,24 +120,27 @@ async def test_results_are_staged_with_source_and_meta(monkeypatch, staged, brok
 
 
 @pytest.mark.asyncio
-async def test_queue_failure_returns_partial_count_and_does_not_raise(monkeypatch, staged, caplog):
+async def test_queue_failure_attempts_every_candidate_then_raises(monkeypatch, staged, caplog):
     monkeypatch.setattr(common, "redis_client", _Redis())
+    caplog.set_level(logging.INFO, logger=common.logger.name)
 
     def fail_batch_then_drop_one(entries):
         if len(entries) > 1:
             raise RuntimeError("postgrest down")
-        if entries[0]["token"] == TOKEN_B:
+        if entries[0]["token"] == TOKEN_A:
             raise RuntimeError("row rejected")
         return 1
 
     staged.behaviour["fn"] = fail_batch_then_drop_one
     results = [{"token": TOKEN_A, "meta": {}}, {"token": TOKEN_B, "meta": {}}, {"token": TOKEN_C, "meta": {}}]
 
-    queued = await common._save_credentials_async(results, "pastebin")
+    with pytest.raises(RuntimeError, match="postgrest down"):
+        await common._save_credentials_async(results, "pastebin")
 
-    assert queued == 2
     assert len(staged.calls) == 4  # one failed batch + one retry per candidate
-    assert "postgrest down" in caplog.text
+    attempted_tokens = [call[0]["token"] for call in staged.calls[1:]]
+    assert attempted_tokens == [TOKEN_A, TOKEN_B, TOKEN_C]
+    assert "staged 2, soft-deduped 0, failed 1" in caplog.text
     assert TOKEN_A not in caplog.text and TOKEN_B not in caplog.text
 
 

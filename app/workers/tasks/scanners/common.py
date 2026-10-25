@@ -151,7 +151,9 @@ async def _save_credentials_async(results, source_name: str):
 
     Failure isolation: if a queue write fails (DB down), the error is logged and
     the remaining candidates are retried one-by-one so a single bad row cannot
-    abort a scanner run. The returned count is what was actually staged.
+    abort a scanner run. If any candidate still cannot be staged, the first
+    failure is raised after the summary log so callers (firehose, `_run_scanner`)
+    keep their retry path; the returned count is what was actually staged.
     """
     from app.services.validation_queue_srv import enqueue
 
@@ -174,30 +176,43 @@ async def _save_credentials_async(results, source_name: str):
         entries.append({"token": token, "source": source_name, "meta": meta})
 
     enqueued = 0
+    failed = 0
+    first_error: Exception | None = None
     if entries:
         try:
             enqueued = await enqueue(entries)
         except Exception as exc:
-            # Do not abort the scanner run: retry per-item to salvage the batch.
-            logger.error(
-                f"🔍 [Enqueue] staging {len(entries)} tokens from {source_name} "
-                f"failed, retrying individually: {exc}"
-            )
-            for entry in entries:
-                try:
-                    enqueued += await enqueue([entry])
-                except Exception as item_exc:
-                    logger.error(
-                        f"🔍 [Enqueue] dropping candidate from {source_name} "
-                        f"after queue write failure: {item_exc}"
-                    )
+            first_error = exc
+            if len(entries) == 1:
+                # Nothing else in the batch to salvage; the caller must retry.
+                failed = 1
+                logger.error(
+                    f"🔍 [Enqueue] staging candidate from {source_name} failed: {exc}"
+                )
+            else:
+                # Do not abort the scanner run: retry per-item to salvage the batch.
+                logger.error(
+                    f"🔍 [Enqueue] staging {len(entries)} tokens from {source_name} "
+                    f"failed, retrying individually: {exc}"
+                )
+                for entry in entries:
+                    try:
+                        enqueued += await enqueue([entry])
+                    except Exception as item_exc:
+                        failed += 1
+                        logger.error(
+                            f"🔍 [Enqueue] dropping candidate from {source_name} "
+                            f"after queue write failure: {item_exc}"
+                        )
 
-    if enqueued or skipped_dedup:
+    if enqueued or skipped_dedup or entries:
         logger.info(
             f"🔍 [Enqueue] {enqueued}/{len(results)} tokens from {source_name} "
-            f"(staged {enqueued}, soft-deduped {skipped_dedup}) "
+            f"(staged {enqueued}, soft-deduped {skipped_dedup}, failed {failed}) "
             f"queued for priority validation"
         )
+    if failed and first_error is not None:
+        raise first_error
     return enqueued
 
 from datetime import UTC  # noqa: E402 — intentional deferred import

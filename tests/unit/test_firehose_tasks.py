@@ -302,7 +302,7 @@ async def test_missing_login_token_logs_and_returns_without_request(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_queue_failure_clears_shared_mark_and_retries_result(monkeypatch, firehose_env, caplog):
-    from app.workers.tasks import flow_tasks, validation_tasks
+    from app.workers.tasks import flow_tasks
 
     token = "123456789:" + ("A" * 34) + "z"
     commit_url = "https://api.github.com/repos/owner/repo/commits/sha-token"
@@ -316,17 +316,19 @@ async def test_queue_failure_clears_shared_mark_and_retries_result(monkeypatch, 
             )
         return httpx.Response(200, json={"files": [{"patch": token}]})
 
-    def queue_token(item, source):
-        queue_calls.append((item, source))
+    async def queue_entries(entries):
+        entries = list(entries)
+        queue_calls.append(entries)
         if len(queue_calls) == 1:
             raise RuntimeError("validation queue is down")
+        return len(entries)
 
     class QuietBroadcaster:
         async def send_log(self, _message):
             return True
 
     install_github_reply(monkeypatch, handler)
-    monkeypatch.setattr(validation_tasks, "validate_token", SimpleNamespace(delay=queue_token))
+    monkeypatch.setattr("app.services.validation_queue_srv.enqueue", queue_entries)
     monkeypatch.setattr(flow_tasks, "get_broadcaster", lambda: QuietBroadcaster())
     caplog.set_level(logging.WARNING, logger=firehose_tasks.logger.name)
 
