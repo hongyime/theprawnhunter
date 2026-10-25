@@ -137,24 +137,25 @@ def _token_already_validated(token: str) -> bool:
 
 async def _save_credentials_async(results, source_name: str):
     """
-    Enqueue each token for async validation on the dedicated `validation` queue.
+    Stage each candidate in the encrypted `validation_queue` for priority dispatch.
 
-    Returns the number of tokens ENQUEUED (not saved) — the actual save happens
-    later in worker-validators with global Redis-backed rate limiting.
+    Returns the number of tokens actually staged (inserted into the queue) — not
+    saved. The dispatcher leases rows highest-priority-first and hands them to
+    worker-validators, which still apply global Redis-backed rate limiting.
 
-    This replaces the old in-line VALIDATE_BATCH_CAP=50 batch validation, which:
-      * silently dropped tokens beyond cap on big result sets
-      * blocked the scanner queue for 10-15 min per run
-      * burst getMe calls triggered Telegram per-IP secondary rate limits
-        that cascaded into bot_restricted cooldowns
+    This replaces the old `validate_token.delay(item, source_name)` broker fanout,
+    which put the plaintext token on the Celery broker and validated FIFO. Now the
+    broker only ever sees queue row ids: tokens are encrypted at rest by
+    :func:`app.services.validation_queue_srv.enqueue` and deduplicated there by
+    ``token_hash``.
 
-    Now: scanners return immediately after enqueue. Validators consume the
-    queue at a controlled rate (default 30 calls / 10s globally, env-tunable
-    via VALIDATE_RATE_MAX / VALIDATE_RATE_WINDOW).
+    Failure isolation: if a queue write fails (DB down), the error is logged and
+    the remaining candidates are retried one-by-one so a single bad row cannot
+    abort a scanner run. The returned count is what was actually staged.
     """
-    from app.workers.tasks.validation_tasks import validate_token
+    from app.services.validation_queue_srv import enqueue
 
-    enqueued = 0
+    entries: list[dict] = []
     skipped_dedup = 0
     for item in results:
         token = item.get("token")
@@ -164,15 +165,38 @@ async def _save_credentials_async(results, source_name: str):
         if _token_already_validated(token):
             skipped_dedup += 1
             continue
-        # Fire-and-forget — validation worker handles dedup, getMe, save
-        validate_token.delay(item, source_name)
-        enqueued += 1
+        raw_meta = item.get("meta")
+        meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+        chat_id = item.get("chat_id")
+        if chat_id is not None and "chat_id" not in meta:
+            meta["chat_id"] = chat_id
+        # Plaintext token stays in memory only; enqueue encrypts it before storage.
+        entries.append({"token": token, "source": source_name, "meta": meta})
+
+    enqueued = 0
+    if entries:
+        try:
+            enqueued = await enqueue(entries)
+        except Exception as exc:
+            # Do not abort the scanner run: retry per-item to salvage the batch.
+            logger.error(
+                f"🔍 [Enqueue] staging {len(entries)} tokens from {source_name} "
+                f"failed, retrying individually: {exc}"
+            )
+            for entry in entries:
+                try:
+                    enqueued += await enqueue([entry])
+                except Exception as item_exc:
+                    logger.error(
+                        f"🔍 [Enqueue] dropping candidate from {source_name} "
+                        f"after queue write failure: {item_exc}"
+                    )
 
     if enqueued or skipped_dedup:
         logger.info(
             f"🔍 [Enqueue] {enqueued}/{len(results)} tokens from {source_name} "
-            f"(soft-deduped {skipped_dedup}) "
-            f"queued for async validation"
+            f"(staged {enqueued}, soft-deduped {skipped_dedup}) "
+            f"queued for priority validation"
         )
     return enqueued
 
