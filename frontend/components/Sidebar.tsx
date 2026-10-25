@@ -7,6 +7,10 @@ import type { Credential, DashboardView } from "@/app/page";
 
 export const TARGET_FETCH_LIMIT = 2000;
 export const SEARCH_DEBOUNCE_MS = 250;
+/** Below this length the sidebar filters the loaded rows in the browser. */
+export const SERVER_SEARCH_MIN_QUERY = 2;
+/** RPC result cap; the migration clamps this to 1..200 as well. */
+export const SERVER_SEARCH_LIMIT = 200;
 
 export type SidebarCredential = Credential & { status?: string | null };
 
@@ -34,6 +38,17 @@ export function matchesTargetQuery(cred: SidebarCredential, query: string): bool
   return haystack.some(
     (value) => typeof value === "string" && value.toLowerCase().includes(needle),
   );
+}
+
+/** Keeps the first row per id so merged server/client results render once. */
+export function dedupeTargetsById(
+  targets: readonly SidebarCredential[],
+): SidebarCredential[] {
+  const seen = new Map<string, SidebarCredential>();
+  for (const target of targets) {
+    if (!seen.has(target.id)) seen.set(target.id, target);
+  }
+  return [...seen.values()];
 }
 
 /**
@@ -102,6 +117,8 @@ export default function Sidebar({
     const [debouncedQuery, setDebouncedQuery] = useState("");
     const [activeStatuses, setActiveStatuses] = useState<string[]>([]);
     const [activeChatTypes, setActiveChatTypes] = useState<string[]>([]);
+    const [serverTargets, setServerTargets] = useState<SidebarCredential[] | null>(null);
+    const [serverSearchError, setServerSearchError] = useState<string | null>(null);
     const filterInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -130,14 +147,67 @@ export default function Sidebar({
         return () => clearTimeout(timer);
     }, [query]);
 
+    useEffect(() => {
+        const trimmed = debouncedQuery.trim();
+        if (trimmed.length < SERVER_SEARCH_MIN_QUERY) {
+            setServerTargets(null);
+            setServerSearchError(null);
+            return;
+        }
+
+        let active = true;
+        setServerSearchError(null);
+
+        async function searchOnServer() {
+            try {
+                const { data, error } = await supabase.rpc("search_targets", {
+                    q: trimmed,
+                    lim: SERVER_SEARCH_LIMIT,
+                });
+                if (!active) return;
+                if (error) {
+                    setServerTargets(null);
+                    setServerSearchError(error.message || "Server search failed");
+                    return;
+                }
+                setServerTargets(
+                    dedupeTargetsById(
+                        Array.isArray(data) ? (data as SidebarCredential[]) : [],
+                    ),
+                );
+            } catch (err) {
+                if (!active) return;
+                setServerTargets(null);
+                setServerSearchError(
+                    err instanceof Error ? err.message : "Server search failed",
+                );
+            }
+        }
+
+        searchOnServer();
+
+        return () => {
+            active = false;
+        };
+    }, [debouncedQuery]);
+
+    const serverSearchActive = serverTargets !== null;
+    const sourceCredentials = serverTargets ?? credentials;
+
     const filteredCredentials = useMemo(
         () =>
-            filterTargets(credentials, {
-                query: debouncedQuery,
+            filterTargets(sourceCredentials, {
+                query: serverSearchActive ? "" : debouncedQuery,
                 statuses: activeStatuses,
                 chatTypes: activeChatTypes,
             }),
-        [credentials, debouncedQuery, activeStatuses, activeChatTypes],
+        [
+            sourceCredentials,
+            serverSearchActive,
+            debouncedQuery,
+            activeStatuses,
+            activeChatTypes,
+        ],
     );
 
     const filtersActive =
@@ -383,8 +453,17 @@ export default function Sidebar({
                 >
                     {loading
                         ? "Loading targets…"
-                        : `${filteredCredentials.length} of ${credentials.length} targets`}
+                        : `${filteredCredentials.length} of ${sourceCredentials.length} targets`}
                 </div>
+                {serverSearchError && (
+                    <p
+                        role="note"
+                        data-testid="server-search-note"
+                        className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+                    >
+                        Server search unavailable — showing matches from loaded targets.
+                    </p>
+                )}
             </div>
             <div
                 role="list"

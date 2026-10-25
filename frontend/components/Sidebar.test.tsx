@@ -5,13 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardView } from "@/app/page";
 
 const mockFrom = vi.hoisted(() => vi.fn());
+const mockRpc = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: mockFrom },
+  supabase: { from: mockFrom, rpc: mockRpc },
 }));
 
 import Sidebar, {
   SEARCH_DEBOUNCE_MS,
+  SERVER_SEARCH_LIMIT,
   TARGET_FETCH_LIMIT,
   type SidebarCredential,
 } from "./Sidebar";
@@ -20,6 +22,13 @@ type QueryResult = {
   data: SidebarCredential[] | null;
   error: { message: string } | null;
 };
+
+type RpcResult = {
+  data: unknown;
+  error: { message: string } | null;
+};
+
+type RpcCall = { name: string; args: { q: string; lim: number } };
 
 type Chain = {
   select: (columns: string) => Chain;
@@ -65,6 +74,7 @@ let rows: SidebarCredential[] = [];
 let selectArgs: string[] = [];
 let limitArgs: number[] = [];
 let pendingResult: Promise<QueryResult> | null = null;
+let rpcCalls: RpcCall[] = [];
 
 function installMock() {
   mockFrom.mockImplementation(() => {
@@ -83,6 +93,24 @@ function installMock() {
   });
 }
 
+function serverMatches(query: string): SidebarCredential[] {
+  const needle = query.trim().toLowerCase();
+  return rows.filter((cred) =>
+    [cred.meta?.bot_username, cred.meta?.chat_title, cred.chat_name].some(
+      (value) => typeof value === "string" && value.toLowerCase().includes(needle),
+    ),
+  );
+}
+
+function installRpcMock() {
+  mockRpc.mockImplementation(
+    async (name: string, args: { q: string; lim: number }): Promise<RpcResult> => {
+      rpcCalls.push({ name, args });
+      return { data: serverMatches(args.q), error: null };
+    },
+  );
+}
+
 function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   const props = {
     selected: null,
@@ -94,13 +122,23 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   return render(<Sidebar {...props} />);
 }
 
+async function flushAsync() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 beforeEach(() => {
   mockFrom.mockReset();
+  mockRpc.mockReset();
   rows = ROWS;
   selectArgs = [];
   limitArgs = [];
   pendingResult = null;
+  rpcCalls = [];
   installMock();
+  installRpcMock();
 });
 
 afterEach(() => {
@@ -128,6 +166,7 @@ describe("Sidebar", () => {
     expect(limitArgs).toEqual([TARGET_FETCH_LIMIT]);
     expect(selectArgs[0]).toContain("status");
     expect(selectArgs[0]).toContain("chat_type");
+    expect(mockRpc).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Dashboard" })).toHaveClass("bg-white");
   });
 
@@ -139,20 +178,20 @@ describe("Sidebar", () => {
     const input = screen.getByRole("searchbox", { name: "Search targets" });
 
     await user.type(input, "ALPHA_BOT");
-    expect(await screen.findByText("1 of 3 targets")).toBeInTheDocument();
+    expect(await screen.findByText("1 of 1 targets")).toBeInTheDocument();
     expect(screen.getByText("@alpha_bot / 1001")).toBeInTheDocument();
     expect(screen.queryByText("@beta_bot / 1002")).not.toBeInTheDocument();
 
     await user.clear(input);
     await user.type(input, "beta channel");
     expect(await screen.findByText("@beta_bot / 1002")).toBeInTheDocument();
-    expect(screen.getByText("1 of 3 targets")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 targets")).toBeInTheDocument();
     expect(screen.queryByText("@alpha_bot / 1001")).not.toBeInTheDocument();
 
     await user.clear(input);
     await user.type(input, "Gamma Group");
     expect(await screen.findByText("@gamma_bot / 1003")).toBeInTheDocument();
-    expect(screen.getByText("1 of 3 targets")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 targets")).toBeInTheDocument();
   });
 
   it("combines a status chip with the text query using AND semantics", async () => {
@@ -167,7 +206,7 @@ describe("Sidebar", () => {
 
     const input = screen.getByRole("searchbox", { name: "Search targets" });
     await user.type(input, "beta");
-    expect(await screen.findByText("0 of 3 targets")).toBeInTheDocument();
+    expect(await screen.findByText("0 of 1 targets")).toBeInTheDocument();
     expect(screen.getByText("No targets match")).toBeInTheDocument();
   });
 
@@ -194,7 +233,7 @@ describe("Sidebar", () => {
     await screen.findByText("3 of 3 targets");
 
     await user.type(screen.getByRole("searchbox", { name: "Search targets" }), "zzz-no-such");
-    expect(await screen.findByText("0 of 3 targets")).toBeInTheDocument();
+    expect(await screen.findByText("0 of 0 targets")).toBeInTheDocument();
     expect(screen.getByText("No targets match")).toBeInTheDocument();
   });
 
@@ -207,13 +246,10 @@ describe("Sidebar", () => {
     expect(status).toHaveTextContent("3 of 3 targets");
   });
 
-  it("debounces rapid typing into a single filter pass", async () => {
+  it("debounces rapid typing into exactly one RPC call", async () => {
     vi.useFakeTimers();
     renderSidebar();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await flushAsync();
     expect(screen.getByText("3 of 3 targets")).toBeInTheDocument();
 
     const input = screen.getByRole("searchbox", { name: "Search targets" });
@@ -222,12 +258,100 @@ describe("Sidebar", () => {
     fireEvent.change(input, { target: { value: "alp" } });
 
     expect(screen.getByText("3 of 3 targets")).toBeInTheDocument();
+    expect(mockRpc).not.toHaveBeenCalled();
 
     act(() => {
       vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
     });
+    await flushAsync();
 
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith("search_targets", {
+      q: "alp",
+      lim: SERVER_SEARCH_LIMIT,
+    });
+    expect(screen.getByText("1 of 1 targets")).toBeInTheDocument();
+    expect(screen.getByText("@alpha_bot / 1001")).toBeInTheDocument();
+  });
+
+  it("keeps client filtering below the two-character server threshold", async () => {
+    vi.useFakeTimers();
+    renderSidebar();
+    await flushAsync();
+
+    const input = screen.getByRole("searchbox", { name: "Search targets" });
+    fireEvent.change(input, { target: { value: "a" } });
+    act(() => {
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    await flushAsync();
+
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(screen.getByText("3 of 3 targets")).toBeInTheDocument();
+  });
+
+  it("renders RPC rows even when the client text matcher would exclude them", async () => {
+    const user = userEvent.setup();
+    renderSidebar();
+    await screen.findByText("3 of 3 targets");
+
+    mockRpc.mockResolvedValueOnce({ data: [ROWS[0]], error: null });
+
+    await user.type(screen.getByRole("searchbox", { name: "Search targets" }), "zzz");
+
+    expect(await screen.findByText("1 of 1 targets")).toBeInTheDocument();
+    expect(screen.getByText("@alpha_bot / 1001")).toBeInTheDocument();
+    expect(screen.queryByText("@beta_bot / 1002")).not.toBeInTheDocument();
+  });
+
+  it("applies status and chat-type chips to the server result set", async () => {
+    const user = userEvent.setup();
+    renderSidebar();
+    await screen.findByText("3 of 3 targets");
+
+    mockRpc.mockImplementation(
+      async (name: string, args: { q: string; lim: number }): Promise<RpcResult> => {
+        rpcCalls.push({ name, args });
+        return { data: [ROWS[0], ROWS[1]], error: null };
+      },
+    );
+
+    await user.type(screen.getByRole("searchbox", { name: "Search targets" }), "bot");
+    expect(await screen.findByText("2 of 2 targets")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "active" }));
+    expect(await screen.findByText("1 of 2 targets")).toBeInTheDocument();
+    expect(screen.getByText("@alpha_bot / 1001")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "channel" }));
+    expect(await screen.findByText("0 of 2 targets")).toBeInTheDocument();
+    expect(screen.getByText("No targets match")).toBeInTheDocument();
+  });
+
+  it("falls back to client filtering with an inline note when the RPC fails", async () => {
+    const user = userEvent.setup();
+    renderSidebar();
+    await screen.findByText("3 of 3 targets");
+
+    mockRpc.mockImplementation(
+      async (name: string, args: { q: string; lim: number }): Promise<RpcResult> => {
+        rpcCalls.push({ name, args });
+        return {
+          data: null,
+          error: { message: "permission denied for function search_targets" },
+        };
+      },
+    );
+
+    await user.type(screen.getByRole("searchbox", { name: "Search targets" }), "beta");
+
+    expect(await screen.findByTestId("server-search-note")).toHaveTextContent(
+      "Server search unavailable",
+    );
     expect(screen.getByText("1 of 3 targets")).toBeInTheDocument();
+    expect(screen.getByText("@beta_bot / 1002")).toBeInTheDocument();
+    expect(screen.queryByText("@alpha_bot / 1001")).not.toBeInTheDocument();
+    expect(screen.queryByText("No targets match")).not.toBeInTheDocument();
   });
 
   it("shows a loading state until the target fetch resolves", async () => {
