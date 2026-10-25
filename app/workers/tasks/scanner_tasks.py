@@ -27,6 +27,9 @@ from app.workers.tasks.scanners.providers import replit as _provider_20
 from app.workers.tasks.scanners.providers import postman as _provider_21
 from app.workers.tasks.scanners.providers import dockerhub as _provider_22
 from app.workers.tasks.scanners.providers import searchcode as _provider_23
+from app.workers.tasks.scanners.providers import npm as _provider_24
+from app.workers.tasks.scanners.providers import pypi as _provider_25
+from app.workers.tasks.scanners.providers import ci_logs as _provider_26
 
 _IMPLEMENTATIONS = (_common,
     _provider_0,
@@ -52,7 +55,10 @@ _IMPLEMENTATIONS = (_common,
     _provider_20,
     _provider_21,
     _provider_22,
-    _provider_23)
+    _provider_23,
+    _provider_24,
+    _provider_25,
+    _provider_26)
 for _implementation in _IMPLEMENTATIONS:
     for _name, _value in vars(_implementation).items():
         if not _name.startswith("__"):

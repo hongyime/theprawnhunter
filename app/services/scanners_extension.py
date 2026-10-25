@@ -15,6 +15,9 @@ from app.infrastructure.scanners.providers import netlas as _provider_8
 from app.infrastructure.scanners.providers import replit as _provider_9
 from app.infrastructure.scanners.providers import postman as _provider_10
 from app.infrastructure.scanners.providers import searchcode as _provider_11
+from app.infrastructure.scanners.providers import npm as _provider_12
+from app.infrastructure.scanners.providers import pypi as _provider_13
+from app.infrastructure.scanners.providers import ci_logs as _provider_14
 
 _IMPLEMENTATIONS = (_common,
     _provider_0,
@@ -28,7 +31,10 @@ _IMPLEMENTATIONS = (_common,
     _provider_8,
     _provider_9,
     _provider_10,
-    _provider_11)
+    _provider_11,
+    _provider_12,
+    _provider_13,
+    _provider_14)
 for _implementation in _IMPLEMENTATIONS:
     for _name, _value in vars(_implementation).items():
         if not _name.startswith("__"):

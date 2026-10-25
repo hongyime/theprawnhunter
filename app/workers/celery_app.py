@@ -239,6 +239,7 @@ app.conf.update(
         "app.workers.tasks.flows.scrape",
         "app.workers.tasks.flows.honeypot",
         "app.workers.tasks.flows.help_text",
+        "app.workers.tasks.flows.heavy",
         "app.workers.tasks.flow_tasks",  # stable import facade for existing callers
         "app.workers.tasks.scanners.providers.shodan",
         "app.workers.tasks.scanners.providers.urlscan",
@@ -264,6 +265,9 @@ app.conf.update(
         "app.workers.tasks.scanners.providers.postman",
         "app.workers.tasks.scanners.providers.dockerhub",
         "app.workers.tasks.scanners.providers.searchcode",
+        "app.workers.tasks.scanners.providers.npm",
+        "app.workers.tasks.scanners.providers.pypi",
+        "app.workers.tasks.scanners.providers.ci_logs",
         "app.workers.tasks.scanner_tasks",
         "app.workers.tasks.audit_tasks",
         "app.workers.tasks.import_tasks",   # CSV import pipeline
@@ -609,6 +613,26 @@ app.conf.update(
             "task": "scanner.scan_netlas",
             "schedule": crontab(minute=0, hour=3),
         },
+        # npm registry — key-free tarball sweep. Every 6h at :10.
+        "scan-npm-6hours": {
+            "task": "scanner.scan_npm",
+            "schedule": crontab(minute=10, hour="*/6"),
+        },
+        # PyPI package index — key-free sdist sweep. Every 6h at :35.
+        "scan-pypi-6hours": {
+            "task": "scanner.scan_pypi",
+            "schedule": crontab(minute=35, hour="*/6"),
+        },
+        # GitHub Actions CI logs — bounded run-log sweep, daily @ 06:20 UTC.
+        "scan-ci-logs-daily": {
+            "task": "scanner.scan_ci_logs",
+            "schedule": crontab(minute=20, hour=6),
+        },
+        # Validation dispatch — drains the priority staging queue every 15s.
+        "validation-dispatch-15s": {
+            "task": "validation.dispatch_pending",
+            "schedule": 15.0,  # raw seconds — fires every 15s
+        },
         # ============================================
         # RETRY COLD TOKENS
         # ============================================
@@ -708,6 +732,29 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "retry-cold-12hours": 1800,
     "honeypot-evidence-batch-daily": 7200,
     "membership-rotation-15min": 1800,
+    "scan-github-4hours": 900,
+    "scan-shodan-4hours": 900,
+    "scan-urlscan-4hours": 900,
+    "scan-grepapp-6hours": 900,
+    "scan-gist-6hours": 900,
+    "scan-exa-12hours": 1800,
+    "scan-rentry-12hours": 1800,
+    "scan-hastebin-12hours": 1800,
+    "scan-wayback-daily": 7200,
+    "scan-telegram-search-12hours": 1800,
+    "scan-commoncrawl-daily": 7200,
+    "scan-dockerhub-hourly": 600,
+    "scan-sourcegraph-12hours": 1800,
+    "scan-bitbucket-8hours": 900,
+    "scan-searchcode-every-8-hours": 900,
+    "scan-publicwww-12hours": 1800,
+    "scan-shodan-c2-6hours": 900,
+    "scan-postman-12hours": 1800,
+    "scan-netlas-daily": 7200,
+    "scan-npm-6hours": 900,
+    "scan-pypi-6hours": 900,
+    "scan-ci-logs-daily": 7200,
+    "validation-dispatch-15s": 12,
 }
 for _beat_name, _expires in _BEAT_EXPIRY_SECONDS.items():
     app.conf.beat_schedule[_beat_name].setdefault("options", {})["expires"] = _expires
