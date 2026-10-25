@@ -1,0 +1,12 @@
+# Heavy worker extras — ASR / OCR only.
+#
+# Installed exclusively by the `heavy` Dockerfile stage (compose profile
+# `heavy`, service `worker-heavy`). The lean `final` image must never see
+# these: faster-whisper pulls ctranslate2 + onnxruntime + PyAV (hundreds of
+# MiB) and tesseract needs the system OCR binaries.
+#
+# Pillow is intentionally absent — requirements.txt already pins it for the
+# perceptual-hash media forensics in the lean image.
+
+faster-whisper==1.2.1
+pytesseract==0.3.13

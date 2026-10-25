@@ -9,7 +9,8 @@
 #   docker compose --profile bot        up -d   # + Telegram bot listener
 #   docker compose --profile monitoring up -d   # + Flower task monitor
 #   docker compose --profile frontend   up -d   # + Next.js dashboard
-#   docker compose --profile full       up -d   # everything above
+#   docker compose --profile heavy      up -d   # + isolated ASR/OCR worker (large image)
+#   docker compose --profile full       up -d   # all extras except heavy
 #
 # PRODUCTION (lean, tuned via .env + overlay):
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
@@ -31,6 +32,7 @@ x-logging: &default-logging
 x-app-build: &app-build
   build:
     context: .
+    target: final
 
 services:
   # =========================================================================
@@ -143,8 +145,40 @@ services:
     logging: *default-logging
 
   # =========================================================================
-  # OPT-IN EXTRAS — started only with their profile (or --profile full)
+  # OPT-IN EXTRAS — started only with their own profile
+  # (`heavy` is deliberately excluded from `full`; it is a large image.)
   # =========================================================================
+
+  # Isolated ASR/OCR worker. Consumes only the `heavy` queue with one task in
+  # flight, so the whisper model never competes with the lean 4 GiB worker.
+  worker-heavy:
+    <<: *app-build
+    build:
+      context: .
+      target: heavy
+    container_name: theprawnhunter_worker_heavy
+    profiles: ["heavy"]
+    restart: unless-stopped
+    init: true
+    cpus: "${HEAVY_CPUS:-2.00}"
+    mem_limit: "${HEAVY_MEM_LIMIT:-2g}"
+    mem_reservation: "${HEAVY_MEM_RESERVATION:-512m}"
+    env_file: .env
+    command: celery -A app.workers.celery_app worker -Q heavy --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=1
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - sessions:/app/sessions
+      - imports:/app/imports
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis,os; r=redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0')); r.ping()"]
+      interval: 60s
+      timeout: 60s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+
   bot:
     <<: *app-build
     container_name: theprawnhunter_bot

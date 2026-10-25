@@ -66,3 +66,37 @@ USER celery
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["bash"]
+
+# ============================================
+# Stage 3: heavy — ASR/OCR runtime for the opt-in `heavy` Compose profile.
+#
+# Only `worker-heavy` builds this target; every lean service pins target
+# `final`, so heavy dependencies never reach the core image. Models load
+# lazily at runtime, not here. Root is used only for apt/pip, then the
+# image returns to the non-root `celery` user.
+# ============================================
+FROM final AS heavy
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-chi-sim \
+        tesseract-ocr-rus \
+        poppler-utils \
+        ffmpeg \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Heavy-only Python extras; Pillow is already installed from requirements.txt.
+COPY requirements-heavy.txt ./requirements-heavy.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r requirements-heavy.txt \
+    && rm -rf ~/.cache/pip
+
+# Debian's /etc/profile resets PATH, hiding the venv from `sh -l` smoke checks.
+RUN printf '%s\n' 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/venv-path.sh \
+    && chmod 0644 /etc/profile.d/venv-path.sh
+
+USER celery
