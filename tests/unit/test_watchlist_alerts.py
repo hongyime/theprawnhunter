@@ -1,6 +1,7 @@
 """Watchlist alert dispatch: one alert per hit, failure-isolated."""
 
 import logging
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -50,6 +51,45 @@ class _FakeDB:
         return _FakeQuery(self.tables.get(name, []))
 
 
+class _FakeRedis:
+    def __init__(self, store=None):
+        self.store = dict(store or {})
+        self.gets = []
+        self.setex_calls = []
+
+    def get(self, key):
+        self.gets.append(key)
+        return self.store.get(key)
+
+    def setex(self, key, ttl, value):
+        self.setex_calls.append((key, ttl, value))
+        self.store[key] = value
+
+
+def _patch_redis(monkeypatch, fake_redis):
+    monkeypatch.setitem(
+        sys.modules,
+        "redis",
+        SimpleNamespace(
+            from_url=lambda _url, decode_responses=True: fake_redis
+        ),
+    )
+
+
+def _patch_group_lookup(broadcaster, *, chat_id=None, error=None):
+    """Give the fake broadcaster a Bot whose ``get_chat`` returns ``chat_id``."""
+    get_chat = AsyncMock()
+    if error is not None:
+        get_chat.side_effect = error
+    else:
+        get_chat.return_value = SimpleNamespace(id=chat_id)
+    broadcaster.bot_tokens = ["123:ABC"]
+    broadcaster._get_bot_instance = lambda _token: SimpleNamespace(
+        get_chat=get_chat
+    )
+    return get_chat
+
+
 def _patch_deeplink_tables(
     monkeypatch,
     broadcaster,
@@ -67,7 +107,10 @@ def _patch_deeplink_tables(
     monkeypatch.setattr(
         watchlist_alerts,
         "settings",
-        SimpleNamespace(MONITOR_GROUP_ID=group_id),
+        SimpleNamespace(
+            MONITOR_GROUP_ID=group_id,
+            REDIS_URL="redis://localhost:6379/0",
+        ),
     )
     fake_db = _FakeDB(
         {
@@ -380,3 +423,121 @@ async def test_missing_monitor_group_id_omits_link_but_sends_alert(
     body = broadcaster.send_watchlist_alert.await_args.args[0]
     assert "AKIAEXAMPLE" in body
     assert "Open in Telegram" not in body
+
+
+def test_internal_group_id_rejects_non_numeric_junk():
+    for junk in ("@theprawnhunter", "abc", "", "   ", "-", None, "123abc", "-100"):
+        assert watchlist_alerts._internal_group_id(junk) is None
+    assert watchlist_alerts._internal_group_id("-1001234567890") == "1234567890"
+    assert watchlist_alerts._internal_group_id("-1234567890") == "1234567890"
+    assert watchlist_alerts._internal_group_id(1234567890) == "1234567890"
+
+
+@pytest.mark.asyncio
+async def test_username_group_id_resolves_numeric_id_for_deeplink(
+    monkeypatch, broadcaster
+):
+    _mock_evaluate(monkeypatch, [_hit()])
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    _patch_deeplink_tables(
+        monkeypatch, broadcaster, group_id="@theprawnhunter"
+    )
+    get_chat = _patch_group_lookup(broadcaster, chat_id=-1009876543210)
+
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert body.endswith(
+        "📎 Open in Telegram: https://t.me/c/9876543210/789/456"
+    )
+    get_chat.assert_awaited_once_with("@theprawnhunter")
+    broadcaster.ensure_topic.assert_awaited_once_with(
+        "@theprawnhunter", "@format_fm_bot"
+    )
+    assert fake_redis.setex_calls == [
+        ("group:numeric_id:@theprawnhunter", 604800, "-1009876543210")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolved_numeric_group_id_is_cached_across_calls(
+    monkeypatch, broadcaster
+):
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    _patch_deeplink_tables(
+        monkeypatch, broadcaster, group_id="@theprawnhunter"
+    )
+    get_chat = _patch_group_lookup(broadcaster, chat_id=-1009876543210)
+
+    first = await watchlist_alerts._resolve_message_deeplink(
+        message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+    second = await watchlist_alerts._resolve_message_deeplink(
+        message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    expected = "https://t.me/c/9876543210/789/456"
+    assert (first, second) == (expected, expected)
+    get_chat.assert_awaited_once_with("@theprawnhunter")
+    assert fake_redis.gets.count("group:numeric_id:@theprawnhunter") == 2
+    assert fake_redis.setex_calls == [
+        ("group:numeric_id:@theprawnhunter", 604800, "-1009876543210")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_chat_failure_omits_link_but_sends_alert(
+    monkeypatch, broadcaster, caplog
+):
+    _mock_evaluate(monkeypatch, [_hit()])
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    _patch_deeplink_tables(
+        monkeypatch, broadcaster, group_id="@theprawnhunter"
+    )
+    _patch_group_lookup(
+        broadcaster, error=RuntimeError("bot api unavailable")
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="app.services.watchlist_alerts"
+    ):
+        sent = await watchlist_alerts.alert_on_matches(
+            "secret AKIAEXAMPLE",
+            message_id="row-1",
+            credential_id=CREDENTIAL_ID,
+        )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert "AKIAEXAMPLE" in body
+    assert "Open in Telegram" not in body
+    assert "could not resolve numeric id" in caplog.text
+    assert fake_redis.setex_calls == []
+
+
+@pytest.mark.asyncio
+async def test_numeric_group_id_skips_get_chat_entirely(
+    monkeypatch, broadcaster
+):
+    _mock_evaluate(monkeypatch, [_hit()])
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    _patch_deeplink_tables(monkeypatch, broadcaster)
+    get_chat = _patch_group_lookup(broadcaster, chat_id=-1009999999999)
+
+    sent = await watchlist_alerts.alert_on_matches(
+        "secret AKIAEXAMPLE", message_id="row-1", credential_id=CREDENTIAL_ID
+    )
+
+    assert sent == 1
+    body = broadcaster.send_watchlist_alert.await_args.args[0]
+    assert "https://t.me/c/1234567890/789/456" in body
+    get_chat.assert_not_awaited()
+    assert fake_redis.gets == []
+    assert fake_redis.setex_calls == []

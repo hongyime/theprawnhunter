@@ -31,6 +31,8 @@ SNIPPET_LIMIT = 300
 CREDENTIAL_PREFIX_LENGTH = 8
 DEEPLINK_PREFIX = "📎 Open in Telegram: "
 DEEPLINK_TEMPLATE = "https://t.me/c/{internal_group_id}/{thread_id}/{msg_id}"
+GROUP_ID_CACHE_PREFIX = "group:numeric_id:"
+GROUP_ID_CACHE_TTL = 7 * 24 * 60 * 60
 
 
 def _short_credential(credential_id: Any) -> str:
@@ -84,6 +86,59 @@ def build_message_deeplink(
     )
 
 
+def _group_id_cache_key(group_id: Any) -> str:
+    """Return the Redis key holding the numeric id for a group reference."""
+    return f"{GROUP_ID_CACHE_PREFIX}{group_id}"
+
+
+async def _resolve_numeric_group_id(broadcaster: Any, group_id: Any) -> int | None:
+    """Resolve a username/`@handle` group reference to its numeric chat id.
+
+    Cached in Redis for :data:`GROUP_ID_CACHE_TTL` so this costs one Bot API
+    call per process lifetime, not one per alert. Never raises; returns
+    ``None`` when the lookup or cache is unavailable.
+    """
+    cache_key = _group_id_cache_key(group_id)
+    client = None
+    try:
+        import redis
+
+        client = redis.from_url(
+            getattr(settings, "REDIS_URL", ""), decode_responses=True
+        )
+        cached = client.get(cache_key)
+        if cached is not None:
+            try:
+                return int(cached)
+            except (TypeError, ValueError):
+                logger.debug(
+                    f"[WatchlistAlert] invalid cached group id for {group_id}"
+                )
+    except Exception as exc:  # noqa: BLE001 - cache is optional
+        logger.debug(f"[WatchlistAlert] group id cache read failed: {exc}")
+
+    try:
+        bot = broadcaster._get_bot_instance(broadcaster.bot_tokens[0])
+        chat = await bot.get_chat(group_id)
+        numeric_id = getattr(chat, "id", None)
+        if numeric_id is None:
+            return None
+        numeric_id = int(numeric_id)
+    except Exception as exc:  # noqa: BLE001 - link is optional
+        logger.warning(
+            f"[WatchlistAlert] could not resolve numeric id for group {group_id}: {exc}"
+        )
+        return None
+
+    if client is not None:
+        try:
+            client.setex(cache_key, GROUP_ID_CACHE_TTL, str(numeric_id))
+        except Exception as exc:  # noqa: BLE001 - cache is optional
+            logger.debug(f"[WatchlistAlert] group id cache write failed: {exc}")
+
+    return numeric_id
+
+
 async def _resolve_message_deeplink(
     *,
     message_id: Any,
@@ -103,6 +158,13 @@ async def _resolve_message_deeplink(
     try:
         from app.services.broadcaster_srv import _username_from_meta
         from app.workers.tasks.flow_tasks import get_broadcaster
+
+        broadcaster = get_broadcaster()
+        numeric_group_id = group_id
+        if _internal_group_id(group_id) is None:
+            numeric_group_id = await _resolve_numeric_group_id(broadcaster, group_id)
+            if numeric_group_id is None:
+                return None
 
         credential_res = await execute_async(
             db.table("discovered_credentials")
@@ -132,8 +194,10 @@ async def _resolve_message_deeplink(
         if telegram_msg_id is None:
             return None
 
-        thread_id = await get_broadcaster().ensure_topic(group_id, username)
-        return build_message_deeplink(group_id, thread_id, telegram_msg_id)
+        thread_id = await broadcaster.ensure_topic(group_id, username)
+        return build_message_deeplink(
+            numeric_group_id, thread_id, telegram_msg_id
+        )
     except Exception as exc:  # noqa: BLE001 - links must degrade silently
         logger.warning(
             f"[WatchlistAlert] deep link skipped for message {message_id}: {exc}"
