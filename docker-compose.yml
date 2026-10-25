@@ -179,6 +179,34 @@ services:
       start_period: 60s
     logging: *default-logging
 
+  # Local sentence-embedding HTTP service. Uses the heavy image because
+  # sentence-transformers pulls PyTorch; 2 GiB is enough for MiniLM.
+  # It binds loopback *inside* the container: run one-off tools in the same
+  # namespace, e.g.
+  #   docker compose --profile heavy exec embed-api \
+  #     python scripts/ops/backfill_embeddings.py --dry-run
+  embed-api:
+    <<: *app-build
+    build:
+      context: .
+      target: heavy
+    container_name: theprawnhunter_embed_api
+    profiles: ["heavy"]
+    restart: unless-stopped
+    init: true
+    cpus: "${EMBED_API_CPUS:-1.00}"
+    mem_limit: "${EMBED_API_MEM_LIMIT:-2g}"
+    mem_reservation: "${EMBED_API_MEM_RESERVATION:-512m}"
+    env_file: .env
+    command: uvicorn app.services.embed_api:app --host 127.0.0.1 --port 8020
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging: *default-logging
+
   bot:
     <<: *app-build
     container_name: theprawnhunter_bot

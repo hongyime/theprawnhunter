@@ -10,3 +10,9 @@
 
 faster-whisper==1.2.1
 pytesseract==0.3.13
+
+# Local embeddings for the embed-api service (profile `heavy`). Pulls torch +
+# transformers; faster-whisper's ctranslate2 is a separate inference runtime and
+# does not pin torch, so there is no resolver conflict. Pinned alone because the
+# transitive torch/transformers/scikit-learn versions are resolved by pip.
+sentence-transformers==5.1.2
