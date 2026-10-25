@@ -129,6 +129,15 @@ class Settings(BaseSettings):
     OUTPOST_LEASE_SECONDS: int = 300
     OUTPOST_MAX_ACTIVE: int = 3
 
+    # /starthunter onboarding
+    # Per-user gate on the interactive Telethon login flow. Attempts are
+    # counted in Redis over STARTHUNTER_RATE_WINDOW_HOURS; once a subject
+    # exceeds STARTHUNTER_RATE_LIMIT_PER_DAY attempts inside that window they
+    # are refused. Set STARTHUNTER_RATE_LIMIT_PER_DAY=0 to disable the gate
+    # entirely (useful for bulk multi-account onboarding).
+    STARTHUNTER_RATE_LIMIT_PER_DAY: int = 3
+    STARTHUNTER_RATE_WINDOW_HOURS: int = 24
+
     # Honeypot mode — after successful takeover of a stolen webhook, optionally
     # re-register a webhook pointing to OUR public receiver so we can observe
     # what the attacker's C2 was expecting to receive. Requires a public HTTPS
@@ -297,6 +306,8 @@ class Settings(BaseSettings):
         'OUTPOST_LEASE_SIZE',
         'OUTPOST_LEASE_SECONDS',
         'OUTPOST_MAX_ACTIVE',
+        'STARTHUNTER_RATE_LIMIT_PER_DAY',
+        'STARTHUNTER_RATE_WINDOW_HOURS',
     )
     @classmethod
     def validate_non_negative_ints(cls, v: int) -> int:
