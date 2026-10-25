@@ -5,6 +5,7 @@ import {
   MessageSquareText,
   RefreshCw,
   Search as SearchIcon,
+  Sparkles,
   TriangleAlert,
 } from "lucide-react";
 
@@ -22,6 +23,28 @@ export type EvidenceSearchRow = {
 
 export const SEARCH_DEBOUNCE_MS = 300;
 export const SEARCH_RESULT_LIMIT = 50;
+export const SEMANTIC_NOTICE = "Semantic unavailable — showing keyword results";
+
+type SearchMode = "fts" | "semantic";
+
+type SemanticHit = {
+  message_id: string;
+  credential_id: string | null;
+  distance: number | null;
+};
+
+/** Semantic hits carry no snippet/sender fields; render them via safe defaults. */
+function semanticRows(hits: SemanticHit[]): EvidenceSearchRow[] {
+  return hits.map((hit) => ({
+    id: hit.message_id,
+    credential_id: hit.credential_id,
+    sender_key: null,
+    sender_pseudonym: null,
+    snippet: null,
+    media_type: null,
+    created_at: null,
+  }));
+}
 
 const CHIP_TONES = [
   "border-[#197e74]/30 bg-[#197e74]/10 text-[#12645c]",
@@ -108,6 +131,9 @@ export default function SearchView({
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
+  const [semantic, setSemantic] = useState(false);
+  const [resultMode, setResultMode] = useState<SearchMode>("fts");
+  const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmedQuery = query.trim();
 
@@ -138,27 +164,80 @@ export default function SearchView({
       setLoading(false);
       setError(null);
       setHasSearched(false);
+      setNotice(null);
       return;
     }
 
     let active = true;
     setLoading(true);
     setError(null);
+    setNotice(null);
 
-    const timer = window.setTimeout(async () => {
+    async function runFts(): Promise<EvidenceSearchRow[]> {
       const { data, error: rpcError } = await supabase.rpc("search_evidence", {
         q: trimmedQuery,
         credential_id: null,
         lim: SEARCH_RESULT_LIMIT,
       });
-      if (!active) return;
-      if (rpcError) {
-        setResults([]);
-        setError(`Search failed: ${rpcError.message}`);
-      } else {
-        setResults((data as EvidenceSearchRow[] | null) ?? []);
-        setError(null);
+      if (rpcError) throw new Error(rpcError.message);
+      return (data as EvidenceSearchRow[] | null) ?? [];
+    }
+
+    async function runSemantic(): Promise<EvidenceSearchRow[]> {
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? "";
+      if (!apiBase) throw new Error("semantic route not configured");
+      const response = await fetch(`${apiBase}/monitor/semantic-search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          q: trimmedQuery,
+          credential_id: null,
+          limit: SEARCH_RESULT_LIMIT,
+        }),
+      });
+      if (!response.ok) throw new Error(`semantic route returned ${response.status}`);
+      const payload = (await response.json()) as {
+        results?: SemanticHit[];
+        fallback?: boolean;
+      };
+      if (payload?.fallback) throw new Error("semantic fallback");
+      return semanticRows(payload?.results ?? []);
+    }
+
+    const timer = window.setTimeout(async () => {
+      let rows: EvidenceSearchRow[] = [];
+      let mode: SearchMode = "fts";
+      let fallbackNotice: string | null = null;
+
+      if (semantic) {
+        try {
+          rows = await runSemantic();
+          mode = "semantic";
+        } catch {
+          fallbackNotice = SEMANTIC_NOTICE;
+        }
       }
+
+      if (mode === "fts") {
+        try {
+          rows = await runFts();
+        } catch (error) {
+          if (!active) return;
+          setResults([]);
+          setResultMode("fts");
+          setNotice(fallbackNotice);
+          setError(`Search failed: ${(error as Error).message}`);
+          setHasSearched(true);
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (!active) return;
+      setResults(rows);
+      setResultMode(mode);
+      setNotice(fallbackNotice);
+      setError(null);
       setHasSearched(true);
       setLoading(false);
     }, SEARCH_DEBOUNCE_MS);
@@ -167,14 +246,16 @@ export default function SearchView({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [trimmedQuery, retryToken]);
+  }, [trimmedQuery, retryToken, semantic]);
 
   const resultSummary = loading
     ? "Searching evidence…"
     : error
       ? "Search error"
       : hasSearched
-        ? `${results.length} ${results.length === 1 ? "match" : "matches"} for “${trimmedQuery}”`
+        ? `${results.length} ${results.length === 1 ? "match" : "matches"} ${
+            resultMode === "semantic" ? "(semantic) " : ""
+          }for “${trimmedQuery}”`
         : "Search captured evidence across every bot.";
 
   return (
@@ -202,6 +283,19 @@ export default function SearchView({
           <kbd className="hidden shrink-0 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 md:inline">
             /
           </kbd>
+          <button
+            type="button"
+            aria-pressed={semantic}
+            aria-label="Semantic search"
+            onClick={() => setSemantic((value) => !value)}
+            className={`flex shrink-0 items-center gap-1 rounded border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
+              semantic
+                ? "border-[#197e74] bg-[#197e74]/10 text-[#12645c]"
+                : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50"
+            }`}
+          >
+            <Sparkles aria-hidden="true" className="h-3 w-3" /> Semantic
+          </button>
         </div>
         <p
           id="search-result-summary"
@@ -214,6 +308,15 @@ export default function SearchView({
       </div>
 
       <div className="mx-auto flex max-w-5xl flex-col gap-3 p-4 md:p-7">
+        {!loading && !error && notice && (
+          <p
+            role="status"
+            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          >
+            {notice}
+          </p>
+        )}
+
         {loading && (
           <div className="space-y-3" aria-hidden="true">
             {[0, 1, 2].map((index) => (
@@ -297,6 +400,16 @@ export default function SearchView({
                   )}
                   <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-slate-600">
                     {row.media_type || "text"}
+                  </span>
+                  <span
+                    data-testid="result-mode"
+                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide ${
+                      resultMode === "semantic"
+                        ? "border-[#197e74]/30 bg-[#197e74]/10 text-[#12645c]"
+                        : "border-slate-300 bg-white text-slate-500"
+                    }`}
+                  >
+                    {resultMode === "semantic" ? "Semantic" : "FTS"}
                   </span>
                   <time
                     dateTime={row.created_at || undefined}

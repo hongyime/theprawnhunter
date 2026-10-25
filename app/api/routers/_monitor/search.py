@@ -1,6 +1,12 @@
 """Monitor search resource routes."""
 
+import os
 from datetime import timedelta
+
+import httpx
+from pydantic import BaseModel
+
+from app.services.embed_api import DIMENSIONS as _EMBED_DIMENSIONS
 
 from .common import *
 
@@ -183,3 +189,113 @@ async def search_messages(
         "limit": limit,
         "matches": matches,
     }
+
+
+# Semantic search degrades instead of erroring: any embed-api problem returns
+# HTTP 200 with fallback=true so the dashboard can rerun the FTS RPC.
+
+_SEMANTIC_LIMIT_MAX = 100
+
+_EMBED_DEFAULT_URL = "http://127.0.0.1:8020"
+
+_EMBED_TIMEOUT_SECONDS = 30.0
+
+
+class SemanticSearchIn(BaseModel):
+    """Body of POST /monitor/semantic-search."""
+
+    q: str
+    credential_id: UUID | None = None
+    limit: int = 25
+
+
+class SemanticUnavailableError(RuntimeError):
+    """The embed service could not turn the query into a 384-d vector."""
+
+
+def _embed_base_url() -> str:
+    """Resolve the embed-api base URL (env override, then the Compose default).
+
+    Setting the variable to an empty/whitespace value disables the path without
+    attempting any network call.
+    """
+    raw = os.getenv("EMBED_API_URL")
+    if raw is None:
+        return _EMBED_DEFAULT_URL
+    configured = raw.strip()
+    if not configured:
+        raise SemanticUnavailableError("embed_api_url_unset")
+    return configured.rstrip("/")
+
+
+async def _embed_query(text: str) -> list[float]:
+    """Embed one query string via ``POST {EMBED_API_URL}/embed``.
+
+    Raises :class:`SemanticUnavailableError` for every failure (connection, timeout,
+    non-200, malformed body, wrong dimensionality) so the route can degrade.
+    """
+    endpoint = f"{_embed_base_url()}/embed"
+    try:
+        async with httpx.AsyncClient(timeout=_EMBED_TIMEOUT_SECONDS) as client:
+            response = await client.post(endpoint, json={"texts": [text]})
+    except Exception as exc:
+        raise SemanticUnavailableError("embed_unreachable") from exc
+
+    if response.status_code != 200:
+        raise SemanticUnavailableError(f"embed_http_{response.status_code}")
+
+    try:
+        payload = response.json()
+        vector = payload["vectors"][0]
+        embedding = [float(value) for value in vector]
+    except Exception as exc:
+        raise SemanticUnavailableError("embed_malformed_response") from exc
+
+    if len(embedding) != _EMBED_DIMENSIONS:
+        raise SemanticUnavailableError("embed_wrong_dimensions")
+    return embedding
+
+
+@router.post("/semantic-search", dependencies=[Depends(require_monitor_key)])
+async def semantic_search(body: SemanticSearchIn):
+    """Embed the query locally, then run the operator-gated ``semantic_search``.
+
+    Returns ``{results: [{message_id, credential_id, distance}], fallback,
+    reason}``. If the embed service fails for any reason (including an
+    unreachable host or a non-200), the response is still HTTP 200 with
+    ``fallback: true`` and no results, telling the client to use FTS.
+    """
+    query = body.q.strip()
+    limit = min(max(body.limit, 1), _SEMANTIC_LIMIT_MAX)
+
+    if not query:
+        return {"results": [], "fallback": True, "reason": "empty_query"}
+
+    try:
+        embedding = await _embed_query(query)
+    except SemanticUnavailableError as exc:
+        logger.warning("monitor/semantic-search embedding unavailable (%s)", exc)
+        return {"results": [], "fallback": True, "reason": str(exc)}
+
+    params = {
+        "query_embedding": embedding,
+        "credential_id": str(body.credential_id) if body.credential_id else None,
+        "lim": limit,
+    }
+    try:
+        res = await execute_async(db.rpc("semantic_search", params))
+    except Exception as exc:
+        logger.warning("monitor/semantic-search RPC unavailable (%s)", exc)
+        return {"results": [], "fallback": True, "reason": "rpc_unavailable"}
+
+    rows = res.data if isinstance(res.data, list) else []
+    results = [
+        {
+            "message_id": row.get("message_id"),
+            "credential_id": row.get("credential_id"),
+            "distance": row.get("distance"),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    return {"results": results, "fallback": False, "reason": None}
