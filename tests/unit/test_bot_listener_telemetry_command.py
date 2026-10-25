@@ -66,6 +66,4 @@ async def test_telemetry_command_restricts_non_admin(monkeypatch):
 
     await bot_listener.telemetry_command(update, None)
 
-    assert update.message.replies == [
-        {"text": "⚠️ This command is restricted to administrators."}
-    ]
+    assert update.message.replies == [{"text": "Admin only."}]

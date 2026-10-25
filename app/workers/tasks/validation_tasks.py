@@ -628,6 +628,34 @@ def refresh_pending_tokens():
     return _run_sync(_refresh_pending_tokens_async())
 
 
+async def _pending_queue_hashes(hashes: list[str]) -> set[str]:
+    """Token hashes already staged as ``pending`` in ``validation_queue``.
+
+    The refresh sweep must not re-stage a candidate that is waiting for the
+    dispatcher. A failed lookup is non-fatal: ``enqueue`` still dedupes on
+    ``token_hash``, so falling back to "nothing pending" cannot duplicate rows.
+    """
+    if not hashes:
+        return set()
+    try:
+        res = await async_execute(
+            db.table("validation_queue")
+            .select("token_hash")
+            .eq("status", "pending")
+            .in_("token_hash", hashes)
+        )
+    except Exception as e:
+        logger.warning(
+            f"[Refresh] pending-queue lookup failed ({e}); relying on enqueue dedupe"
+        )
+        return set()
+    return {
+        str(row.get("token_hash"))
+        for row in (res.data or [])
+        if row.get("token_hash")
+    }
+
+
 async def _refresh_pending_tokens_async():
     if redis_client.get("system:paused"):
         return "paused"
@@ -661,7 +689,7 @@ async def _refresh_pending_tokens_async():
     except Exception as _swallowed:
         logger.debug(f"[suppressed] {_swallowed}")
 
-    enqueued = 0
+    entries: list[dict] = []
     for row in rows:
         encrypted_token = row.get("bot_token")
         if not encrypted_token:
@@ -673,15 +701,30 @@ async def _refresh_pending_tokens_async():
             continue
         if not token:
             continue
-        # Re-enqueue (validate_token handles dedup, Redis dedup, getMe)
-        validate_token.apply_async(
-            args=[{"token": token, "meta": row.get("meta") or {}}, "refresh_pending"],
-            queue="validation",
+        entries.append(
+            {
+                "token": token,
+                "source": "refresh_pending",
+                "meta": row.get("meta") or {},
+            }
         )
-        enqueued += 1
-        if enqueued % 50 == 0:
-            await asyncio.sleep(1)  # pace the enqueue burst
-    logger.info(f"[Refresh] re-enqueued {enqueued} pending tokens")
+
+    enqueued = 0
+    if entries:
+        pending_hashes = await _pending_queue_hashes(
+            [validation_queue_srv.token_hash(entry["token"]) for entry in entries]
+        )
+        stageable = [
+            entry
+            for entry in entries
+            if validation_queue_srv.token_hash(entry["token"]) not in pending_hashes
+        ]
+        if stageable:
+            try:
+                enqueued = await validation_queue_srv.enqueue(stageable)
+            except Exception as e:
+                logger.error(f"[Refresh] staging pending tokens failed: {e}")
+    logger.info(f"[Refresh] re-staged {enqueued} pending tokens")
     return f"refreshed:{enqueued}"
 
 

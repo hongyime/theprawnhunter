@@ -8,6 +8,13 @@ from .common import *
 from .session_lifecycle import UserAgentSessionUnavailableError
 
 
+def _subject_label(user_id: object) -> str:
+    try:
+        return pseudonymize_engagement_subject(user_id)[:12]
+    except Exception:
+        return "redacted"
+
+
 class UserAgentGroupArchive:
     async def invite_bot_to_group(self, bot_username: str, group_id: int | str) -> bool:
         """
@@ -737,8 +744,8 @@ class UserAgentGroupArchive:
                             )
                         except Exception as exc:
                             logger.warning(
-                                "    ⚠️ [UserAgent] Cannot verify admin status for bot id=%s; skipping cleanup: %s",
-                                user.id,
+                                "    ⚠️ [UserAgent] Cannot verify admin status for bot subject=%s; skipping cleanup: %s",
+                                _subject_label(user.id),
                                 type(exc).__name__,
                             )
                             continue
@@ -774,14 +781,14 @@ class UserAgentGroupArchive:
                             )
                         except Exception as exc:
                             logger.warning(
-                                "    ⚠️ [UserAgent] Removed bot id=%s but could not clear its ban: %s",
-                                user.id,
+                                "    ⚠️ [UserAgent] Removed bot subject=%s but could not clear its ban: %s",
+                                _subject_label(user.id),
                                 type(exc).__name__,
                             )
                     except Exception as exc:
                         logger.error(
-                            "    ❌ [UserAgent] Failed to remove bot id=%s: %s",
-                            user.id,
+                            "    ❌ [UserAgent] Failed to remove bot subject=%s: %s",
+                            _subject_label(user.id),
                             type(exc).__name__,
                         )
 
