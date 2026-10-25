@@ -120,6 +120,8 @@ Copy `.env.template` → `.env`. Values are never shown here — names only.
 | `MONITOR_API_KEY` | Protects all `/monitor/*` and `/health/detailed` endpoints |
 | `FLOWER_BASIC_AUTH` | `user:password` for Flower; stack refuses to start on `admin:changeme` |
 
+`MONITOR_API_KEY` is **server-only**. Never give it a `NEXT_PUBLIC_` prefix: that would bake the key into the browser bundle. The dashboard reaches protected monitor routes through server-side route handlers that inject the key from this non-public variable.
+
 ### Optional — Operations
 
 | Variable | Default | Purpose |
@@ -154,6 +156,7 @@ Copy `.env.template` → `.env`. Values are never shown here — names only.
 | `WHITELISTED_BOT_IDS` | `""` | Comma-separated numeric bot IDs to keep in monitor group |
 | `PROTECTED_BOT_IDS` | `""` | Comma-separated bot IDs never to scan/validate/broadcast |
 | `ALLOW_PUBLIC_STARTHUNTER` | `False` | If `True`, any user can DM the bot to add a session (dangerous) |
+| `API_BASE_URL` | `http://127.0.0.1:8011` | Server-only base URL the dashboard's semantic-search route handler proxies to |
 | `DATABASE_URL` | (unset) | Postgres DSN for direct `psql`-based migrations |
 | `EXTENSION_WRITE_SECRET` | (Supabase DB only) | Set via `ALTER DATABASE postgres SET app.extension_write_secret = '...'` |
 
@@ -226,7 +229,12 @@ Requires `frontend/.env.local`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_KEY=<anon-key>
+
+# Optional, browser-visible backend base URL.
+# NEXT_PUBLIC_API_BASE=http://localhost:8011
 ```
+
+`NEXT_PUBLIC_API_BASE` is optional and browser-visible. It is not used for authenticated monitor routes; semantic search goes through the same-origin `/api/semantic-search` proxy instead, so `MONITOR_API_KEY` never reaches the browser.
 
 ---
 
@@ -235,6 +243,8 @@ NEXT_PUBLIC_SUPABASE_KEY=<anon-key>
 ### Dashboard
 
 Sign in at `https://theprawnhunter.vercel.app/signin` with GitHub. After first login, an admin must set `app_metadata = {"operator": true}` on your Supabase user account to grant access to data.
+
+Search defaults to full-text search (FTS) and needs no extra configuration. The **Semantic** toggle sends the query to the same-origin `/api/semantic-search` route handler, which forwards it to `API_BASE_URL` with the server-only `MONITOR_API_KEY` as `X-Monitor-Key`. Semantic results require the `heavy` profile's `embed-api` service (`docker compose --profile heavy up -d embed-api`) plus `API_BASE_URL` and `MONITOR_API_KEY` in the frontend server environment. If the proxy is unconfigured or the upstream call fails, the handler returns `200 {results: [], fallback: true, reason}` and the dashboard reruns the FTS query with an inline notice.
 
 Dashboard authorization requires a signed-in UUID, the authenticated JWT role and the **JSON boolean** `true` in admin-controlled `app_metadata.operator`. Missing, false, null, string or numeric values do not authorize access; user-editable metadata is never used. Refresh the session after an administrator changes the claim, because an existing JWT keeps its previous claims until refreshed or expired.
 
