@@ -47,15 +47,40 @@ def _human_scroll(page, rounds: int = 4) -> None:
         time.sleep(random.uniform(0.6, 1.8))
 
 
+RESULT_ROWS = ".result-item, .result, table tbody tr, .result-list > *"
+
+
+def _has_results(page) -> bool:
+    try:
+        return page.locator(RESULT_ROWS).count() > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _needs_attention(page) -> str | None:
-    body = page.content().lower()
-    if any(marker in body for marker in CAPTCHA_MARKERS):
-        return "captcha"
-    if any(marker in body for marker in LOGIN_MARKERS):
-        return "login"
-    if "result" not in body and "fofa" in page.url:
-        return "results-missing"
-    return None
+    if _has_results(page):
+        return None
+    for selector in ("#captcha", ".verify-wrap", ".nc-container", "iframe[src*='captcha']"):
+        try:
+            if page.locator(selector).count() > 0:
+                return "captcha"
+        except Exception:  # noqa: BLE001
+            pass
+    for selector in ("form[action*='/login']", ".login-form", "#login-form"):
+        try:
+            if page.locator(selector).count() > 0:
+                return "login"
+        except Exception:  # noqa: BLE001
+            pass
+    return "results-missing"
+
+
+def _wait_for_results(page, seconds: int = 25) -> bool:
+    try:
+        page.wait_for_selector(RESULT_ROWS, timeout=seconds * 1000)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _extract(page) -> list[dict]:
@@ -77,7 +102,12 @@ def _post(results: list[dict], query: str) -> dict:
                 "token": row["token"],
                 "chat_id": row.get("chat_id"),
                 "valid": None,
-                "meta": {"source": "fofa_browser", "query": query, "context": row.get("context", "")[:300]},
+                "meta": {
+                    "source": "fofa_browser",
+                    "query": query,
+                    "context": (row.get("context") or "")[:300],
+                    **({"url": row["url"]} if row.get("url") else {}),
+                },
             }
             for row in results
         ],
@@ -90,6 +120,45 @@ def _post(results: list[dict], query: str) -> dict:
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.loads(response.read().decode() or "{}")
+
+
+def _result_urls(page, limit: int) -> list[str]:
+    """Return de-duplicated http(s) URLs exposed by the current result rows."""
+    urls: list[str] = []
+    try:
+        anchors = page.locator(".hsxa-meta-data-item a[href^='http']")
+        for index in range(min(anchors.count(), limit * 4)):
+            href = anchors.nth(index).get_attribute("href") or ""
+            if href and href not in urls and "fofa.info" not in href:
+                urls.append(href)
+            if len(urls) >= limit:
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    return urls
+
+
+def _sweep_host(url: str, timeout: float) -> list[dict]:
+    """Best-effort fetch of a result host, swept for tokens."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read(2_000_000).decode("utf-8", errors="ignore")
+    except Exception as error:  # noqa: BLE001 - one host must not stop the run
+        print(f"[fofa] host fetch skipped {url}: {type(error).__name__}")
+        return []
+    return [
+        {
+            "token": hit["token"],
+            "chat_id": hit.get("chat_id"),
+            "context": hit.get("context", ""),
+            "url": url,
+        }
+        for hit in sweep_text_for_tokens(body, "fofa_host", max_bytes=2_000_000)
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,6 +178,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--login-wait", type=int, default=300, help="seconds to wait for a manual login/captcha solve")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--fetch-hosts",
+        type=int,
+        default=0,
+        help="also fetch the first N result URLs and sweep their bodies for tokens",
+    )
+    parser.add_argument("--fetch-timeout", type=float, default=6.0)
     args = parser.parse_args(argv)
 
     from playwright.sync_api import sync_playwright
@@ -122,10 +198,18 @@ def main(argv: list[str] | None = None) -> int:
     with sync_playwright() as pw:
         browser = None
         context = None
+        reused = False
         if args.cdp:
             browser = pw.chromium.connect_over_cdp(args.cdp)
             context = browser.contexts[0] if browser.contexts else browser.new_context()
-            print(f"[fofa] attached to {args.cdp}")
+            existing = [p for p in context.pages if "fofa.info" in (p.url or "")]
+            if existing:
+                page = existing[0]
+                reused = True
+                print(f"[fofa] attached to {args.cdp}, reusing the open FOFA tab")
+            else:
+                page = context.pages[0] if context.pages else context.new_page()
+                print(f"[fofa] attached to {args.cdp}, no FOFA tab found; using an existing tab")
         else:
             context = pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile),
@@ -133,7 +217,8 @@ def main(argv: list[str] | None = None) -> int:
                 args=["--disable-blink-features=AutomationControlled"],
                 viewport={"width": 1440, "height": 900},
             )
-        page = context.new_page()
+        if not args.cdp:
+            page = context.new_page()
         try:
             for query in args.query:
                 encoded = base64.b64encode(query.encode()).decode()
@@ -144,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception as error:  # noqa: BLE001 - slow/blocked pages still get a manual window
                     print(f"[fofa] navigation slow ({type(error).__name__}); leaving the window open")
                 _jitter()
+                _wait_for_results(page)
                 _human_scroll(page)
 
                 reason = _needs_attention(page)
@@ -159,16 +245,26 @@ def main(argv: list[str] | None = None) -> int:
                     _jitter(3, 8)
 
                 results = _extract(page)
+                if args.fetch_hosts:
+                    seen = {row["token"] for row in results}
+                    urls = _result_urls(page, args.fetch_hosts)
+                    print(f"[fofa] fetching {len(urls)} host page(s)")
+                    for host_url in urls:
+                        for row in _sweep_host(host_url, args.fetch_timeout):
+                            if row["token"] not in seen:
+                                seen.add(row["token"])
+                                results.append(row)
                 print(f"[fofa] query {query!r}: {len(results)} token(s)")
                 total += len(results)
                 if results and not args.dry_run:
                     print(f"[fofa] ingest response: {_post(results, query)}")
                 _jitter(4, 10)
         finally:
-            try:
-                page.close()
-            except Exception:  # noqa: BLE001
-                pass
+            if not reused:
+                try:
+                    page.close()
+                except Exception:  # noqa: BLE001
+                    pass
             if not args.cdp and args.close:
                 context.close()
             elif not args.cdp:
