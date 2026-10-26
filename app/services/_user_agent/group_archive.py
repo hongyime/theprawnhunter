@@ -903,6 +903,7 @@ class UserAgentGroupArchive:
                 text,
                 reply_to=thread_id if thread_id and thread_id != 1 else None,
                 link_preview=False,
+                silent=True,
             )
             return getattr(sent, "id", None)
         except Exception as error:  # noqa: BLE001

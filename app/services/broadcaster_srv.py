@@ -594,6 +594,7 @@ class BroadcasterService:
                                     _sent = await bot.send_photo(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
+                                        disable_notification=True,
                                         photo=media_bytes,
                                         caption=media_caption,
                                         filename=filename,
@@ -602,6 +603,7 @@ class BroadcasterService:
                                     _sent = await bot.send_document(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
+                                        disable_notification=True,
                                         document=media_bytes,
                                         caption=media_caption,
                                         filename=filename,
@@ -611,6 +613,7 @@ class BroadcasterService:
                                     _sent = await bot.send_video(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
+                                        disable_notification=True,
                                         video=media_bytes,
                                         caption=media_caption,
                                         filename=filename,
@@ -619,6 +622,7 @@ class BroadcasterService:
                                     _sent = await bot.send_audio(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
+                                        disable_notification=True,
                                         audio=media_bytes,
                                         caption=media_caption,
                                         filename=filename,
@@ -627,6 +631,7 @@ class BroadcasterService:
                                     _sent = await bot.send_animation(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
+                                        disable_notification=True,
                                         animation=media_bytes,
                                         caption=media_caption,
                                         filename=filename,
@@ -649,6 +654,7 @@ class BroadcasterService:
                                             await bot.send_message(
                                                 chat_id=group_id,
                                                 message_thread_id=bot_thread_id,
+                                                disable_notification=True,
                                                 text=_part,
                                                 link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
                                             )
@@ -679,6 +685,7 @@ class BroadcasterService:
                                     summary = await bot.send_message(
                                         chat_id=group_id,
                                         message_thread_id=bot_thread_id,
+                                        disable_notification=True,
                                         text=to_send_text,
                                         link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
                                     )
@@ -708,6 +715,7 @@ class BroadcasterService:
                             _sent = await bot.send_message(
                                 chat_id=group_id,
                                 message_thread_id=bot_thread_id,
+                                disable_notification=True,
                                 text=_part,
                                 link_preview_options=LinkPreviewOptions(is_disabled=True) if urls else None,
                             )
@@ -1109,6 +1117,7 @@ class BroadcasterService:
             sent = await bot.send_message(
                 chat_id=group_id,
                 message_thread_id=bot_thread_id,
+                disable_notification=True,
                 text=text,
                 parse_mode=parse_mode,
             )

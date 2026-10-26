@@ -41,6 +41,10 @@ class _FakeQuery:
         self.filters.append(("or", condition))
         return self
 
+    def in_(self, key, values):
+        self.filters.append(("in", key, list(values)))
+        return self
+
     def order(self, *_args, **_kwargs):
         return self
 

