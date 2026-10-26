@@ -95,6 +95,16 @@ def _post(results: list[dict], query: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", default=DEFAULT_PROFILE)
+    parser.add_argument(
+        "--cdp",
+        default=os.environ.get("FOFA_CDP_URL"),
+        help="attach to a running Chrome (e.g. http://127.0.0.1:9222); never closes it",
+    )
+    parser.add_argument(
+        "--close",
+        action="store_true",
+        help="close the launched browser when finished (default: leave it open)",
+    )
     parser.add_argument("--query", action="append", required=True)
     parser.add_argument("--login-wait", type=int, default=300, help="seconds to wait for a manual login/captcha solve")
     parser.add_argument("--headless", action="store_true")
@@ -110,13 +120,20 @@ def main(argv: list[str] | None = None) -> int:
 
     total = 0
     with sync_playwright() as pw:
-        context = pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile),
-            headless=args.headless,
-            args=["--disable-blink-features=AutomationControlled"],
-            viewport={"width": 1440, "height": 900},
-        )
-        page = context.pages[0] if context.pages else context.new_page()
+        browser = None
+        context = None
+        if args.cdp:
+            browser = pw.chromium.connect_over_cdp(args.cdp)
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            print(f"[fofa] attached to {args.cdp}")
+        else:
+            context = pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile),
+                headless=args.headless,
+                args=["--disable-blink-features=AutomationControlled"],
+                viewport={"width": 1440, "height": 900},
+            )
+        page = context.new_page()
         try:
             for query in args.query:
                 encoded = base64.b64encode(query.encode()).decode()
@@ -148,7 +165,14 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"[fofa] ingest response: {_post(results, query)}")
                 _jitter(4, 10)
         finally:
-            context.close()
+            try:
+                page.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if not args.cdp and args.close:
+                context.close()
+            elif not args.cdp:
+                print("[fofa] browser left open (pass --close to close it)")
 
     print(f"[fofa] done, {total} token(s) found")
     return 0
