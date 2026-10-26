@@ -318,15 +318,15 @@ app.conf.update(
         # Heartbeat every 30 minutes
         "system-heartbeat-30min": {
             "task": "flow.system_heartbeat",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="2,32"),
         },
         "queue-monitor-5min": {
             "task": "flow.queue_monitor",
-            "schedule": crontab(minute="*/5"),
+            "schedule": crontab(minute="1,6,11,16,21,26,31,36,41,46,51,56"),
         },
         "health-alert-5min": {
             "task": "flow.health_alert",
-            "schedule": crontab(minute="*/5"),
+            "schedule": crontab(minute="2,7,12,17,22,27,32,37,42,47,52,57"),
         },
         "close-revoked-topics-5min": {
             "task": "flow.close_revoked_topics",
@@ -344,7 +344,7 @@ app.conf.update(
         },
         "canary-flow-check-30min": {
             "task": "flow.canary_flow_check",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="8,38"),
         },
         # LOGIC-001: findings-pipeline canary. Independent of raw broadcast so
         # the ENABLE_RAW_MESSAGE_BROADCAST toggle doesn't blind operators to
@@ -381,7 +381,7 @@ app.conf.update(
         # Persistent Insight Queue producers — bounded and idempotent.
         "produce-findings-15min": {
             "task": "flow.produce_findings",
-            "schedule": crontab(minute="*/15"),
+            "schedule": crontab(minute="3,18,33,48"),
             "kwargs": {"credential_limit": 2000, "message_limit": 50000},
         },
         "build-entity-graph-hourly": {
@@ -391,7 +391,7 @@ app.conf.update(
         },
         "route-finding-deltas-5min": {
             "task": "flow.route_finding_deltas",
-            "schedule": crontab(minute="*/5"),
+            "schedule": crontab(minute="3,8,13,18,23,28,33,38,43,48,53,58"),
         },
         "daily-top-findings-0805-utc": {
             "task": "flow.daily_findings_digest",
@@ -409,7 +409,7 @@ app.conf.update(
         # Attribution graph — weekly on Tuesdays @ 08:00 UTC
         "attribution-graph-weekly": {
             "task": "flow.attribution_graph_report",
-            "schedule": crontab(minute=0, hour=8, day_of_week=2),
+            "schedule": crontab(minute=25, hour=8, day_of_week=2),
         },
         # Honeypot redirect sweep — sends redirect messages to captured users.
         # Every 30 seconds for real-time response to honeypot captures.
@@ -424,7 +424,7 @@ app.conf.update(
         },
         "membership-rotation-15min": {
             "task": "validation.membership_rotation",
-            "schedule": crontab(minute="*/15"),
+            "schedule": crontab(minute="9,24,39,54"),
         },
         # Level 2: Multi-touch redirect reminder sweeps (every 24h).
         # Sends second and third reminder messages to users who didn't migrate.
@@ -455,7 +455,7 @@ app.conf.update(
         # Enables cross-bot duplicate detection (same photo → common operator).
         "hash-exfil-media-30min": {
             "task": "flow.hash_exfil_media",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="14,44"),
             "kwargs": {"max_messages": 100},
         },
         # Reconcile topics from DB (source of truth) — hourly.
@@ -470,7 +470,7 @@ app.conf.update(
         # Every 30 min.
         "audit-user-agent-membership-30min": {
             "task": "flow.audit_user_agent_group_membership",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="20,50"),
         },
         # Duplicate report — daily @ 08:15 UTC.
         "media-duplicate-report-daily": {
@@ -482,7 +482,7 @@ app.conf.update(
         # over the last hour and alerts if > 20. Runs every 15 min.
         "takeover-spike-check-15min": {
             "task": "flow.takeover_spike_check",
-            "schedule": crontab(minute="*/15"),
+            "schedule": crontab(minute="13,28,43,58"),
         },
         # Observability — exfiltration latency percentile report (P50/P95/P99)
         # over the last 1000 messages. Runs every 6h at minute :10.
@@ -492,21 +492,21 @@ app.conf.update(
         },
         # Automated retention cleanup — daily @ 03:00 UTC to maintain database
         # size under Supabase free-tier limits without manual intervention.
-        "watchlist-backfill-6hours": {
+        "watchlist-backfill-hourly": {
             "task": "flow.backfill_watchlists",
-            "schedule": crontab(minute=25, hour="*/6"),
+            "schedule": crontab(minute=13),
         },
         "ensure-session-admins-6hours": {
             "task": "flow.ensure_session_admins",
-            "schedule": crontab(minute=40, hour="*/6"),
+            "schedule": crontab(minute=39, hour="*/6"),
         },
         "api-key-health-daily": {
             "task": "flow.api_key_health",
             "schedule": crontab(minute=15, hour=7),
         },
-        "virustotal-enrich-6hours": {
+        "virustotal-enrich-2hours": {
             "task": "flow.virustotal_enrich",
-            "schedule": crontab(minute=50, hour="*/6"),
+            "schedule": crontab(minute=47, hour="*/2"),
         },
         "retention-cleanup-daily": {
             "task": "flow.automated_retention_cleanup",
@@ -515,28 +515,28 @@ app.conf.update(
         # Periodic Help Guide (Every 6 hours)
         "system-help-6hours": {
             "task": "flow.system_help",
-            "schedule": crontab(minute=30, hour="*/6"),
+            "schedule": crontab(minute=50, hour="*/6"),
         },
         # ============================================
         # STAGGERED SCANS
         # ============================================
         "scan-github-4hours": {
             "task": "scanner.scan_github",
-            "schedule": crontab(minute=0, hour=f"*/{int(os.getenv('SCAN_INTERVAL_HOURS', 4))}"),
+            "schedule": crontab(minute=3, hour=f"*/{int(os.getenv('SCAN_INTERVAL_HOURS', 4))}"),
         },
         "scan-shodan-4hours": {
             "task": "scanner.scan_shodan",
-            "schedule": crontab(minute=20, hour=f"*/{int(os.getenv('SCAN_INTERVAL_HOURS', 4))}"),
+            "schedule": crontab(minute=23, hour=f"*/{int(os.getenv('SCAN_INTERVAL_HOURS', 4))}"),
         },
         "scan-urlscan-4hours": {
             "task": "scanner.scan_urlscan",
-            "schedule": crontab(minute=40, hour=f"*/{int(os.getenv('SCAN_INTERVAL_HOURS', 4))}"),
+            "schedule": crontab(minute=33, hour=f"*/{int(os.getenv('SCAN_INTERVAL_HOURS', 4))}"),
         },
         # FOFA — key-gated: FofaService returns [] with no FOFA_EMAIL/FOFA_KEY,
         # so this entry is inert until a key is configured.
         "scan-fofa-4hours": {
             "task": "scanner.scan_fofa",
-            "schedule": crontab(minute=15, hour="*/4"),
+            "schedule": crontab(minute=51, hour="*/4"),
         },
         # scan-gitlab-6hours: DISABLED — gitlab.com free tier has global blob
         # search disabled (returns "403 Forbidden - Global Search is disabled
@@ -544,40 +544,40 @@ app.conf.update(
         # OR refactoring scanner to project-scoped search.
         "scan-grepapp-6hours": {
             "task": "scanner.scan_grepapp",
-            "schedule": crontab(minute=25, hour="*/6"),
+            "schedule": crontab(minute=27, hour="*/6"),
         },
         "scan-gist-6hours": {
             "task": "scanner.scan_gist",
-            "schedule": crontab(minute=45, hour="*/6"),
+            "schedule": crontab(minute=43, hour="*/6"),
         },
         # scan-pastebin-12hours: DISABLED — Pastebin scraping API requires
         # paid IP whitelist ($30 + manual approval). Exa scanner already
         # covers pastebin.com via includeDomains with full content extraction.
         "scan-exa-12hours": {
             "task": "scanner.scan_exa",
-            "schedule": crontab(minute=35, hour="*/12"),
+            "schedule": crontab(minute=31, hour="*/12"),
         },
         "scan-rentry-12hours": {
             "task": "scanner.scan_rentry",
-            "schedule": crontab(minute=40, hour="*/12"),
+            "schedule": crontab(minute=41, hour="*/12"),
         },
         "scan-hastebin-12hours": {
             "task": "scanner.scan_hastebin",
-            "schedule": crontab(minute=45, hour="*/12"),
+            "schedule": crontab(minute=49, hour="*/12"),
         },
         # Wayback Machine — historical URL scanner (free, no key)
         # 04:00 UTC slot avoids overlap with regular scanners + quietest period
         # for archive.org's ~1 req/sec courtesy budget.
         "scan-wayback-daily": {
             "task": "scanner.scan_wayback",
-            "schedule": crontab(minute=0, hour=4),
+            "schedule": crontab(minute=21, hour=4),
         },
         # Telegram MTProto self-search — uses UserAgent session to query
         # Telegram's own message index. 12h cadence respects per-account
         # FloodWait budget. Catches leaks discussed in public channels.
         "scan-telegram-search-12hours": {
             "task": "scanner.scan_telegram_search",
-            "schedule": crontab(minute=20, hour="*/12"),
+            "schedule": crontab(minute=24, hour="*/12"),
         },
         # Bundle 2.2: re-validate pending tokens daily — recovers chat_id
         # for bots that activated AFTER initial discovery (dormant→active).
@@ -595,17 +595,17 @@ app.conf.update(
         # Daily backfill from latest crawl. ~500 URLs/run, ~2 min runtime.
         "scan-commoncrawl-daily": {
             "task": "scanner.scan_commoncrawl",
-            "schedule": crontab(minute=0, hour=2),  # 02:00 UTC
+            "schedule": crontab(minute=12, hour=2),  # 02:00 UTC
         },
         "scan-dockerhub-hourly": {
             "task": "scanner.scan_dockerhub",
-            "schedule": crontab(minute=10),
+            "schedule": crontab(minute=5),
         },
         # Sourcegraph — public code search over ~91k indexed repos with
         # api.telegram.org. Free, no auth. SSE stream search.
         "scan-sourcegraph-12hours": {
             "task": "scanner.scan_sourcegraph",
-            "schedule": crontab(minute=10, hour="*/12"),
+            "schedule": crontab(minute=11, hour="*/12"),
         },
         # scan-google-12hours: DISABLED — GCP project access issue, replaced by Exa.
         # Re-enable by uncommenting once Custom Search API is properly bound to billing.
@@ -616,38 +616,38 @@ app.conf.update(
         # PublicWWW — HTML source code search (free tier 200 req/day)
         "scan-publicwww-12hours": {
             "task": "scanner.scan_publicwww",
-            "schedule": crontab(minute=15, hour="*/12"),
+            "schedule": crontab(minute=19, hour="*/12"),
         },
         "scan-shodan-c2-6hours": {
             "task": "scanner.scan_shodan_c2",
-            "schedule": crontab(minute=10, hour="*/6"),
+            "schedule": crontab(minute=53, hour="*/6"),
         },
         # scan-replit-12hours: DISABLED — Replit now requires Apollo persisted
         # query hashes + session cookie. Public GraphQL search no longer works.
         # Postman public workspaces — free, no key. 12h cadence.
         "scan-postman-12hours": {
             "task": "scanner.scan_postman",
-            "schedule": crontab(minute=50, hour="*/12"),
+            "schedule": crontab(minute=57, hour="*/12"),
         },
         # Netlas — once daily (budget: 45+90=135 req/day across 2 accounts)
         "scan-netlas-daily": {
             "task": "scanner.scan_netlas",
-            "schedule": crontab(minute=0, hour=3),
+            "schedule": crontab(minute=44, hour=3),
         },
         # npm registry — key-free tarball sweep. Every 6h at :10.
-        "scan-npm-6hours": {
+        "scan-npm-3hours": {
             "task": "scanner.scan_npm",
-            "schedule": crontab(minute=10, hour="*/6"),
+            "schedule": crontab(minute=17, hour="*/3"),
         },
         # PyPI package index — key-free sdist sweep. Every 6h at :35.
-        "scan-pypi-6hours": {
+        "scan-pypi-3hours": {
             "task": "scanner.scan_pypi",
-            "schedule": crontab(minute=35, hour="*/6"),
+            "schedule": crontab(minute=37, hour="*/3"),
         },
         # GitHub Actions CI logs — bounded run-log sweep, daily @ 06:20 UTC.
         "scan-ci-logs-daily": {
             "task": "scanner.scan_ci_logs",
-            "schedule": crontab(minute=20, hour=6),
+            "schedule": crontab(minute=36, hour=6),
         },
         # Validation dispatch — drains the priority staging queue every 15s.
         "validation-dispatch-15s": {
@@ -657,9 +657,9 @@ app.conf.update(
         # ============================================
         # RETRY COLD TOKENS
         # ============================================
-        "scan-searxng-6hours": {
+        "scan-searxng-2hours": {
             "task": "scanner.scan_searxng",
-            "schedule": crontab(minute=55, hour="*/6"),
+            "schedule": crontab(minute=7, hour="*/2"),
         },
         "retry-cold-12hours": {
             "task": "scanner.retry_cold",
@@ -701,7 +701,7 @@ app.conf.update(
         # ============================================
         "import-csv-5min": {
             "task": "system.import_csv",
-            "schedule": crontab(minute="*/5"),
+            "schedule": crontab(minute="4,9,14,19,24,29,34,39,44,49,54,59"),
         },
     },
 )
@@ -744,10 +744,10 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "takeover-spike-check-15min": 300,
     "exfil-latency-report-6hours": 900,
     "retention-cleanup-daily": 1800,
-    "virustotal-enrich-6hours": 1800,
+    "virustotal-enrich-2hours": 1800,
     "api-key-health-daily": 3600,
     "ensure-session-admins-6hours": 600,
-    "watchlist-backfill-6hours": 3600,
+    "watchlist-backfill-hourly": 3600,
     "system-help-6hours": 900,
     "validation-refresh-pending-daily": 1800,
     "validation-backfill-scoring": 300,
@@ -759,7 +759,7 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "cleanup-matkap-bots-hourly": 600,
     "import-csv-5min": 240,
     "retry-cold-12hours": 1800,
-    "scan-searxng-6hours": 900,
+    "scan-searxng-2hours": 900,
     "honeypot-evidence-batch-daily": 7200,
     "membership-rotation-15min": 1800,
     "scan-github-4hours": 900,
@@ -781,8 +781,8 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "scan-shodan-c2-6hours": 900,
     "scan-postman-12hours": 1800,
     "scan-netlas-daily": 7200,
-    "scan-npm-6hours": 900,
-    "scan-pypi-6hours": 900,
+    "scan-npm-3hours": 900,
+    "scan-pypi-3hours": 900,
     "scan-ci-logs-daily": 7200,
     "validation-dispatch-15s": 12,
 }
