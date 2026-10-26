@@ -22,24 +22,27 @@ from app.infrastructure.database import execute_async
 
 async def run(credentials: int, per_credential: int, apply: bool) -> int:
     seen: list[str] = []
-    offset = 0
-    while len(seen) < credentials and offset < 40_000:
-        page = await execute_async(
+    cursor = None
+    while len(seen) < credentials:
+        query = (
             db.table("exfiltrated_messages")
-            .select("credential_id")
+            .select("credential_id,created_at")
             .order("created_at", desc=True)
-            .range(offset, offset + 999)
+            .limit(300)
         )
+        if cursor:
+            query = query.lt("created_at", cursor)
+        page = await execute_async(query)
         rows = page.data or []
         if not rows:
             break
+        cursor = rows[-1].get("created_at")
         for row in rows:
             cid = row.get("credential_id")
             if cid and cid not in seen:
                 seen.append(cid)
             if len(seen) >= credentials:
                 break
-        offset += 1000
 
     total = 0
     for cid in seen:

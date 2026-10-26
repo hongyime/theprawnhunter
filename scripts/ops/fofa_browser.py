@@ -140,13 +140,12 @@ def _result_urls(page, limit: int) -> list[str]:
 
 def _sweep_host(url: str, timeout: float) -> list[dict]:
     """Best-effort fetch of a result host, swept for tokens."""
-    import urllib.error
-    import urllib.request
-
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(2_000_000).decode("utf-8", errors="ignore")
+        import httpx
+
+        with httpx.Client(timeout=timeout, verify=False, follow_redirects=True) as client:
+            response = client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            body = response.text[:2_000_000]
     except Exception as error:  # noqa: BLE001 - one host must not stop the run
         print(f"[fofa] host fetch skipped {url}: {type(error).__name__}")
         return []
