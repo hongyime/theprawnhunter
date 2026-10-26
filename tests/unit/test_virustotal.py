@@ -136,7 +136,7 @@ async def test_minute_budget_stops_requests(monkeypatch):
     from datetime import UTC, datetime
 
     minute = datetime.now(UTC).strftime("%Y%m%d%H%M")
-    redis.store[f"vt:minute:{minute}"] = "4"
+    redis.store[f"vt:minute:{minute}"] = str(service.per_minute)
     monkeypatch.setattr(
         virustotal_srv.httpx,
         "AsyncClient",
@@ -182,3 +182,47 @@ def test_host_and_staleness_helpers():
     assert task._host_from_url("not a url") is None
     assert task._is_stale({}) is True
     assert task._is_stale({"vt_checked_at": "2999-01-01T00:00:00+00:00"}) is False
+
+
+@pytest.mark.asyncio
+async def test_alert_sent_once_for_malicious_host(monkeypatch):
+    from app.workers.tasks.flows import virustotal as task
+
+    sent = []
+
+    class _Recorder:
+        async def send_alert(self, message):
+            sent.append(message)
+            return True
+
+    import app.workers.tasks.flow_tasks as flow_tasks_mod
+
+    monkeypatch.setattr(flow_tasks_mod, "get_broadcaster", lambda: _Recorder())
+    monkeypatch.setattr(task, "redis_client", _FakeRedis())
+
+    verdict = {"malicious": 9, "suspicious": 1, "reputation": -90, "checked_at": "2026-10-26T00:00:00+00:00"}
+    await task._alert_once("evil.example", verdict, "credential c1")
+    await task._alert_once("evil.example", verdict, "credential c1")
+
+    assert len(sent) == 1
+    assert "evil.example" in sent[0]
+    assert "9 malicious" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_enrichment_never_raises_when_service_breaks(monkeypatch):
+    from app.workers.tasks.flows import virustotal as task
+
+    class _Boom:
+        enabled = True
+        alert_threshold = 2
+
+        async def _enrich_credentials(self, *a, **kw):
+            raise RuntimeError("vt exploded")
+
+    monkeypatch.setattr(task, "_enrich_credentials", _Boom()._enrich_credentials)
+    import app.services.virustotal_srv as vt_mod
+
+    monkeypatch.setattr(vt_mod, "virustotal", _Boom())
+
+    assert await task._virustotal_enrich_async(1, 1) == "virustotal:error"

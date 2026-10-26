@@ -210,8 +210,12 @@ class Settings(BaseSettings):
     GOOGLE_CSE_ID: str | None = None
     PUBLICWWW_KEY: str | None = None
     POSTMAN_API_KEY: str | None = None
-    # VirusTotal free tier: 4 requests/minute, 500/day. Used only for host reputation.
+    # VirusTotal host reputation. Limits are per plan: free tier is 4/min and
+    # 500/day; raise these for a premium key. 429s pause enrichment automatically.
     VIRUSTOTAL_API_KEY: str | None = None
+    VIRUSTOTAL_REQUESTS_PER_MINUTE: int = 4
+    VIRUSTOTAL_REQUESTS_PER_DAY: int = 500
+    VIRUSTOTAL_ALERT_THRESHOLD: int = 2
     # Netlas — two accounts, rotated automatically to stay within daily limits
     # Account 1: 50 req/day, 2500 search coins  Account 2: 100 req/day, 5000 search coins
     NETLAS_API_KEY_1: str | None = None

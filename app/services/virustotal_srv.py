@@ -14,8 +14,6 @@ from app.core.logger import get_logger
 logger = get_logger(__name__)
 
 API_BASE = "https://www.virustotal.com/api/v3"
-REQUESTS_PER_MINUTE = 4
-REQUESTS_PER_DAY = 500
 CACHE_TTL_SECONDS = 24 * 3600
 RETRY_AFTER_KEY = "vt:cooldown"
 
@@ -57,6 +55,18 @@ class VirusTotalService:
         return self._redis
 
     @property
+    def per_minute(self) -> int:
+        return max(1, int(getattr(settings, "VIRUSTOTAL_REQUESTS_PER_MINUTE", 4) or 4))
+
+    @property
+    def per_day(self) -> int:
+        return max(1, int(getattr(settings, "VIRUSTOTAL_REQUESTS_PER_DAY", 500) or 500))
+
+    @property
+    def alert_threshold(self) -> int:
+        return max(1, int(getattr(settings, "VIRUSTOTAL_ALERT_THRESHOLD", 2) or 2))
+
+    @property
     def enabled(self) -> bool:
         return bool(self.api_key) and not self._auth_failed
 
@@ -69,9 +79,9 @@ class VirusTotalService:
         try:
             if client.get(RETRY_AFTER_KEY):
                 return True
-            return int(client.get(f"vt:daily:{day}") or 0) >= REQUESTS_PER_DAY or int(
+            return int(client.get(f"vt:daily:{day}") or 0) >= self.per_day or int(
                 client.get(f"vt:minute:{minute}") or 0
-            ) >= REQUESTS_PER_MINUTE
+            ) >= self.per_minute
         except Exception:  # noqa: BLE001 - never block enrichment on cache errors
             return False
 
