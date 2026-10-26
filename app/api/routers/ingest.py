@@ -110,6 +110,8 @@ async def ingest_extension_credentials(payload: ExtensionIngestRequest):
             base_meta["query"] = payload.query
         if item.valid is not None:
             base_meta["valid"] = item.valid
+        if item.bot_username:
+            base_meta["bot_username"] = item.bot_username
         if item.meta:
             base_meta.update(item.meta)
 

