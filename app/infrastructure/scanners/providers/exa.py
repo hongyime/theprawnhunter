@@ -109,12 +109,14 @@ class ExaService:
             except (TypeError, ValueError, OverflowError):
                 return None
 
-    async def _request_once(self, query: str, api_key: str) -> list[dict[str, Any]]:
+    async def _request_once(
+        self, query: str, api_key: str, include_domains: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         headers = {"x-api-key": api_key, "Content-Type": "application/json"}
         payload = {
             "query": query,
             "numResults": MAX_RESULTS,
-            "includeDomains": self.PASTE_DOMAINS,
+            "includeDomains": include_domains or self.PASTE_DOMAINS,
             "contents": {"text": {"maxCharacters": MAX_TEXT_CHARACTERS}},
             "type": "keyword",
         }
@@ -150,10 +152,12 @@ class ExaService:
             raise ExaSearchFailure(f"HTTP {status}: {detail}")
         raise ExaSearchFailure(f"unexpected HTTP status {status}: {detail}")
 
-    async def _request_with_retries(self, query: str, api_key: str) -> list[dict[str, Any]]:
+    async def _request_with_retries(
+        self, query: str, api_key: str, include_domains: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         for attempt in range(MAX_ATTEMPTS):
             try:
-                return await self._request_once(query, api_key)
+                return await self._request_once(query, api_key, include_domains)
             except _ExaRateLimited as error:
                 retry_after = self._retry_after_seconds(error.retry_after)
                 wait_seconds = retry_after if retry_after is not None else 2 ** (attempt + 1)
@@ -191,7 +195,9 @@ class ExaService:
                 await asyncio.sleep(wait_seconds)
         raise ExaSearchFailure(f"search {query!r} ended without a reply")
 
-    async def _search(self, query: str) -> list[dict[str, Any]]:
+    async def _search(
+        self, query: str, include_domains: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         keys = self._configured_keys()
         if not keys:
             raise ExaKeyFailure(f"no non-empty Exa API key is configured for search {query!r}")
@@ -201,7 +207,7 @@ class ExaService:
         rejected = []
         for index, key in enumerate(ordered_keys, start=1):
             try:
-                return await self._request_with_retries(query, key)
+                return await self._request_with_retries(query, key, include_domains)
             except _ExaKeyRejected as error:
                 rejected.append(error.status_code)
                 if index < len(ordered_keys):
@@ -219,14 +225,31 @@ class ExaService:
                 ) from error
         raise ExaKeyFailure(f"no configured Exa key completed search {query!r}")
 
+    async def search_raw(
+        self,
+        query: str,
+        *,
+        include_domains: list[str] | None = None,
+        raise_on_error: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return raw provider results (urls/text) without token filtering."""
+        try:
+            return await self._search(query, include_domains)
+        except Exception as error:  # noqa: BLE001 - callers decide how loud to be
+            if raise_on_error:
+                raise
+            logger.warning(f"[Exa] Raw search {query!r} failed: {error}")
+            return []
+
     async def search(
         self,
         query: str = '"api.telegram.org/bot"',
         *,
         raise_on_error: bool = False,
+        include_domains: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         try:
-            exa_results = await self._search(query)
+            exa_results = await self._search(query, include_domains)
             results = []
             for item in exa_results:
                 if not isinstance(item, dict):

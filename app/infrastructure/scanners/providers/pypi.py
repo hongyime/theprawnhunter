@@ -45,6 +45,7 @@ class PypiService:
     """
 
     SEARCH_URL = "https://pypi.org/search/"
+    DISCOVERY_DOMAIN = "pypi.org"
     QUERIES = [
         "telegram bot token",
         "api.telegram.org/bot",
@@ -217,6 +218,28 @@ class PypiService:
             results.append({"token": hit["token"], "meta": meta})
         return results, False, True
 
+    async def _discover_via_exa(self, search_query: str) -> list[str]:
+        """Discover PyPI packages through Exa when the search page is bot-blocked."""
+        try:
+            from app.infrastructure.scanners.providers.exa import ExaService
+
+            hits = await ExaService().search_raw(
+                f'"{search_query}"', include_domains=[self.DISCOVERY_DOMAIN]
+            )
+        except Exception as error:  # noqa: BLE001 - discovery is best-effort
+            logger.warning(f"[PyPI] Exa discovery failed for {search_query!r}: {error}")
+            return []
+
+        names: list[str] = []
+        for hit in hits:
+            url = str(hit.get("url") or "")
+            match = re.search(r"pypi\.org/project/([^/?#]+)", url)
+            if match:
+                from urllib.parse import unquote
+
+                names.append(unquote(match.group(1)))
+        return names[: self.SEARCH_RESULTS_PER_QUERY]
+
     async def search(self, query: str | None = None) -> list[dict[str, Any]]:
         """Search PyPI for exposed Telegram bot tokens."""
         results: list[dict[str, Any]] = []
@@ -252,6 +275,12 @@ class PypiService:
                     names = self._parse_package_names(response.text)[
                         : self.SEARCH_RESULTS_PER_QUERY
                     ]
+                    if not names and "Client Challenge" in response.text:
+                        logger.info(
+                            "[PyPI] Search %r is bot-protected; using Exa domain discovery.",
+                            search_query,
+                        )
+                        names = await self._discover_via_exa(search_query)
                     if not names:
                         logger.warning(
                             "[PyPI] Search %r returned no package snippets; "
