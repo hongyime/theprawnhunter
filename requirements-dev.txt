@@ -6,3 +6,5 @@ pytest-cov==4.1.0
 ruff==0.1.9
 mypy==1.8.0
 types-requests==2.31.0.10
+# ops: FOFA browser runner (scripts/ops/fofa_browser.py)
+playwright>=1.40
