@@ -818,6 +818,103 @@ class UserAgentGroupArchive:
             finally:
                 await self._disconnect()
 
+    async def eligible_anonymous_senders(self, group_id: int | str) -> list[str]:
+        """Return session paths whose account may post anonymously in the group.
+
+        Requires both ``anonymous`` and ``post_messages`` admin rights; the
+        flags are read from Telegram and cannot be set through the API.
+        Cached in Redis for an hour so broadcasting does not re-query per message.
+        """
+        from app.core.redis_srv import redis_srv
+
+        cache_key = f"user_agent:anon_senders:{group_id}"
+        try:
+            cached = redis_srv.get(cache_key)
+            if cached:
+                import json
+
+                return json.loads(cached)
+        except Exception:  # noqa: BLE001
+            pass
+
+        eligible: list[str] = []
+        for path in self.sessions:
+            client = None
+            try:
+                from telethon import TelegramClient
+
+                client = TelegramClient(
+                    path.replace(".session", ""),
+                    settings.TELEGRAM_API_ID,
+                    settings.TELEGRAM_API_HASH,
+                )
+                await client.connect()
+                if not await client.is_user_authorized():
+                    continue
+                entity = await client.get_entity(group_id)
+                me = await client.get_me()
+                from telethon.tl.functions.channels import GetParticipantRequest
+
+                part = (
+                    await client(GetParticipantRequest(channel=entity, participant=me.id))
+                ).participant
+                rights = getattr(part, "admin_rights", None)
+                if getattr(rights, "anonymous", False) and getattr(rights, "post_messages", False):
+                    eligible.append(path)
+            except Exception as error:  # noqa: BLE001
+                logger.debug(f"[UserAgent] sender probe skipped {path}: {type(error).__name__}")
+            finally:
+                if client is not None:
+                    try:
+                        await client.disconnect()
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        try:
+            import json
+
+            redis_srv.setex(cache_key, 3600, json.dumps(eligible))
+        except Exception:  # noqa: BLE001
+            pass
+        return eligible
+
+    async def send_anonymous_message(
+        self,
+        group_id: int | str,
+        thread_id: int | None,
+        text: str,
+        session_path: str,
+    ) -> int | None:
+        """Send one message as an anonymous admin; returns its message id."""
+        client = None
+        try:
+            from telethon import TelegramClient
+
+            client = TelegramClient(
+                session_path.replace(".session", ""),
+                settings.TELEGRAM_API_ID,
+                settings.TELEGRAM_API_HASH,
+            )
+            await client.connect()
+            if not await client.is_user_authorized():
+                return None
+            sent = await client.send_message(
+                group_id,
+                text,
+                reply_to=thread_id if thread_id and thread_id != 1 else None,
+                link_preview=False,
+            )
+            return getattr(sent, "id", None)
+        except Exception as error:  # noqa: BLE001
+            logger.warning(f"[UserAgent] anonymous send failed via {session_path[-24:]}: {type(error).__name__}")
+            return None
+        finally:
+            if client is not None:
+                try:
+                    await client.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+
     async def delete_old_messages(
         self,
         group_id: int | str,

@@ -221,6 +221,8 @@ class Settings(BaseSettings):
     # Prune old text logs from the General topic only. Off by default: this task
     # once ran topic-less and wiped every topic in the group.
     GENERAL_TOPIC_CLEANUP_ENABLED: bool = False
+    # Fall back to anonymous-admin user sessions when the bot pool is exhausted.
+    BROADCAST_USE_USER_SESSIONS: bool = False
     # Netlas — two accounts, rotated automatically to stay within daily limits
     # Account 1: 50 req/day, 2500 search coins  Account 2: 100 req/day, 5000 search coins
     NETLAS_API_KEY_1: str | None = None

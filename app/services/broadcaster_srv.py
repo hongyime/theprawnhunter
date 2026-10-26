@@ -726,6 +726,14 @@ class BroadcasterService:
                     if not last_failure.retryable:
                         raise last_failure from e
 
+        if not sent_via_media:
+            fallback_id = await self._send_via_anonymous_session(
+                "\n\n".join(text_parts), bot_thread_id
+            )
+            if fallback_id:
+                logger.info("[Broadcaster] Sent via anonymous admin session (bot pool exhausted).")
+                return fallback_id
+
         logger.error("❌ All identities failed to send message.")
         if last_failure:
             raise last_failure
@@ -872,6 +880,47 @@ class BroadcasterService:
         if last_exc is not None:
             self._warn_system_log_failure(last_exc)
         return False
+
+    async def _send_via_anonymous_session(
+        self, text: str, message_thread_id: int | None
+    ) -> int | None:
+        """Fallback sender: post through an anonymous admin account.
+
+        Only accounts whose Telegram admin rights show both ``anonymous`` and
+        ``post_messages`` are used, and sends happen one at a time so message
+        order is preserved.
+        """
+        if not getattr(settings, "BROADCAST_USE_USER_SESSIONS", False):
+            return None
+        try:
+            from app.services.user_agent_srv import user_agent
+
+            senders = await user_agent.eligible_anonymous_senders(settings.MONITOR_GROUP_ID)
+            if not senders:
+                return None
+            index = 0
+            try:
+                from app.core.redis_srv import redis_srv
+
+                raw = redis_srv.get("user_agent:anon_sender_index")
+                index = int(raw or 0) % len(senders)
+            except Exception:  # noqa: BLE001
+                index = 0
+            path = senders[index]
+            sent_id = await user_agent.send_anonymous_message(
+                settings.MONITOR_GROUP_ID, message_thread_id, text, path
+            )
+            if sent_id:
+                try:
+                    from app.core.redis_srv import redis_srv
+
+                    redis_srv.setex("user_agent:anon_sender_index", 86400, str((index + 1) % len(senders)))
+                except Exception:  # noqa: BLE001
+                    pass
+            return sent_id
+        except Exception as error:  # noqa: BLE001 - fallback must never mask the bot error
+            logger.warning(f"[Broadcaster] Anonymous-session fallback failed: {type(error).__name__}")
+            return None
 
     async def _resolve_named_topic_id(
         self,
