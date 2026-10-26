@@ -249,7 +249,6 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
             db.table("exfiltrated_messages")
             .select("id,credential_id,telegram_msg_id")
             .eq("is_broadcasted", False)
-            .gte("telegram_msg_id", 0)
         )
 
     rows: list[dict[str, Any]] = []
@@ -922,9 +921,7 @@ async def _broadcast_logic():
                             sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
                             if sent_message_id and isinstance(msg.get("telegram_msg_id"), int) and msg["telegram_msg_id"] < 0:
                                 try:
-                                    pin_key = f"pin:honeypot:{thread_id}"
-                                    if redis_client.set(pin_key, "1", nx=True, ex=3600):
-                                        await broadcaster.pin_message(group_id, sent_message_id)
+                                    await broadcaster.pin_message(group_id, sent_message_id)
                                 except Exception as pin_error:
                                     logger.debug(f"[Broadcast] honeypot pin skipped: {pin_error}")
                             send_success = True

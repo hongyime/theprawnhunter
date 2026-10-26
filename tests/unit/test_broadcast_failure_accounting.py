@@ -148,8 +148,7 @@ async def test_fetch_pending_broadcasts_falls_back_when_next_retry_missing(monke
     assert messages == [{"id": "msg-1"}]
     assert calls[0].used_or is True
     assert calls[1].used_or is False
-    assert ("gte", "telegram_msg_id", 0) in calls[0].filters
-    assert ("gte", "telegram_msg_id", 0) in calls[1].filters
+    assert ("gte", "telegram_msg_id", 0) not in calls[0].filters
     assert flow_tasks._BROADCAST_RELIABILITY_COLUMNS_AVAILABLE is False
 
 
