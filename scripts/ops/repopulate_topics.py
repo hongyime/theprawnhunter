@@ -20,7 +20,9 @@ from app.core.database import db
 from app.infrastructure.database import execute_async
 
 
-async def run(credentials: int, per_credential: int, apply: bool) -> int:
+async def run(
+    credentials: int, per_credential: int, apply: bool, since_days: int | None = None
+) -> int:
     seen: list[str] = []
     cursor = None
     while len(seen) < credentials:
@@ -46,13 +48,20 @@ async def run(credentials: int, per_credential: int, apply: bool) -> int:
 
     total = 0
     for cid in seen:
-        rows = await execute_async(
+        query = (
             db.table("exfiltrated_messages")
             .select("id")
             .eq("credential_id", cid)
             .order("created_at", desc=True)
             .limit(per_credential)
         )
+        if since_days is not None:
+            from datetime import UTC, datetime, timedelta
+
+            query = query.gte(
+                "created_at", (datetime.now(UTC) - timedelta(days=since_days)).isoformat()
+            )
+        rows = await execute_async(query)
         ids = [r["id"] for r in rows.data or []]
         if not ids:
             continue
@@ -81,10 +90,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--credentials", type=int, default=30)
     parser.add_argument("--per-credential", type=int, default=15)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--since-days",
+        type=int,
+        default=None,
+        help="only re-queue messages newer than N days (default: the newest N per topic)",
+    )
     args = parser.parse_args(argv)
     if not args.apply:
         print("Dry run. Pass --apply to re-queue.\n")
-    return asyncio.run(run(args.credentials, args.per_credential, args.apply))
+    return asyncio.run(
+        run(args.credentials, args.per_credential, args.apply, args.since_days)
+    )
 
 
 if __name__ == "__main__":
