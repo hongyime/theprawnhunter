@@ -185,7 +185,7 @@ async def _download(file_meta: dict, credential_id: str | None) -> bytes | None:
 # ==============================================
 # ASR
 # ==============================================
-@app.task(name="heavy.transcribe_media")
+@app.task(name="heavy.transcribe_media", soft_time_limit=5400, time_limit=5700)
 def transcribe_media(message_id: str):
     """Transcribe a voice/audio/video-note message into ``file_meta``."""
     from app.workers.celery_app import get_worker_loop
@@ -310,7 +310,7 @@ def _is_image_media(media_type: str, file_meta: dict) -> bool:
     return file_name.endswith(OCR_IMAGE_EXTENSIONS)
 
 
-@app.task(name="heavy.ocr_media")
+@app.task(name="heavy.ocr_media", soft_time_limit=5400, time_limit=5700)
 def ocr_media(message_id: str):
     """OCR a photo/document image into ``file_meta``."""
     from app.workers.celery_app import get_worker_loop
@@ -592,7 +592,7 @@ async def _select_backfill_batch() -> tuple[list[tuple[dict, list[str]]], int]:
     return selected, scanned
 
 
-@app.task(name="heavy.backfill_media_text")
+@app.task(name="heavy.backfill_media_text", soft_time_limit=3600, time_limit=3900)
 def backfill_media_text(dry_run: bool = True):
     """Backfill transcripts/OCR for media messages that never got them.
 

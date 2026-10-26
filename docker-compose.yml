@@ -321,7 +321,7 @@ services:
   #        docker compose --profile honeypot up -d
   #   Full guide: docs/deployment/cloudflare_tunnel.md
   cloudflared:
-    image: cloudflare/cloudflared:latest  # pin a dated tag for prod, e.g. :2025.2.0
+    image: cloudflare/cloudflared:2026.10.4  # >=2026.10.2 required (compromised third-party certs)
     container_name: theprawnhunter_cloudflared
     profiles: ["honeypot", "full"]
     restart: unless-stopped
