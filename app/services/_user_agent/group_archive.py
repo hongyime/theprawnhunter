@@ -818,7 +818,24 @@ class UserAgentGroupArchive:
             finally:
                 await self._disconnect()
 
-    async def delete_old_messages(self, group_id: int | str, age_hours: int, topic_id: int | None = None) -> int:
+    async def delete_old_messages(
+        self,
+        group_id: int | str,
+        age_hours: int,
+        topic_id: int | None = None,
+        *,
+        text_only: bool = True,
+    ) -> int:
+        """Delete old messages from ONE topic.
+
+        ``topic_id=None`` is refused: Telethon treats it as "no filter", which
+        would wipe every topic in the supergroup.
+        """
+        if topic_id is None:
+            logger.error(
+                "    [UserAgent] delete_old_messages refused a topic-less delete; pass the General topic id (1)"
+            )
+            return 0
         async with self.lock:
             if not await self.start():
                 return 0
@@ -833,6 +850,8 @@ class UserAgentGroupArchive:
                 cutoff = now - datetime.timedelta(hours=age_hours)
                 async for message in self.client.iter_messages(entity, reply_to=topic_id):
                     if not isinstance(message, Message):
+                        continue
+                    if text_only and message.media is not None:
                         continue
                     if message.date < cutoff:
                         try:

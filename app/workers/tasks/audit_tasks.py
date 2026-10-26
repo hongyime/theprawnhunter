@@ -492,11 +492,16 @@ def cleanup_general_topic():
 async def _cleanup_general_topic_async():
     from app.services.user_agent_srv import user_agent
 
+    if not getattr(settings, "GENERAL_TOPIC_CLEANUP_ENABLED", False):
+        return "General cleanup disabled (GENERAL_TOPIC_CLEANUP_ENABLED=False)"
+
     group_id = settings.MONITOR_GROUP_ID
     logger.info("🧹 **General Cleanup**: Starting message pruning...")
 
     try:
-        deleted = await user_agent.delete_old_messages(group_id, age_hours=12, topic_id=None)
+        deleted = await user_agent.delete_old_messages(
+            group_id, age_hours=12, topic_id=1, text_only=True
+        )
 
         if deleted > 0:
             result_msg = f"🧹 **General Cleanup**: Pruned {deleted} old system messages (>12h)."

@@ -218,6 +218,9 @@ class Settings(BaseSettings):
     VIRUSTOTAL_ALERT_THRESHOLD: int = 2
     # Self-hosted meta-search endpoint (aggregates Google/Bing/Brave/DDG).
     SEARXNG_URL: str = "http://searxng:8080"
+    # Prune old text logs from the General topic only. Off by default: this task
+    # once ran topic-less and wiped every topic in the group.
+    GENERAL_TOPIC_CLEANUP_ENABLED: bool = False
     # Netlas — two accounts, rotated automatically to stay within daily limits
     # Account 1: 50 req/day, 2500 search coins  Account 2: 100 req/day, 5000 search coins
     NETLAS_API_KEY_1: str | None = None
