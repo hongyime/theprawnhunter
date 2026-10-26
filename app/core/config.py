@@ -216,6 +216,8 @@ class Settings(BaseSettings):
     VIRUSTOTAL_REQUESTS_PER_MINUTE: int = 4
     VIRUSTOTAL_REQUESTS_PER_DAY: int = 500
     VIRUSTOTAL_ALERT_THRESHOLD: int = 2
+    # Self-hosted meta-search endpoint (aggregates Google/Bing/Brave/DDG).
+    SEARXNG_URL: str = "http://searxng:8080"
     # Netlas — two accounts, rotated automatically to stay within daily limits
     # Account 1: 50 req/day, 2500 search coins  Account 2: 100 req/day, 5000 search coins
     NETLAS_API_KEY_1: str | None = None

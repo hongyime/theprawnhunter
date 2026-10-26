@@ -144,6 +144,21 @@ services:
       start_period: 30s
     logging: *default-logging
 
+  # Key-free meta-search (aggregates Google/Bing/Brave/DDG) used by the
+  # searxng scanner. Loopback-only, JSON output enabled in the mounted settings.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: theprawnhunter_searxng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: http://127.0.0.1:8888/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-prawn-local-searxng}
+    logging: *default-logging
+
   # =========================================================================
   # OPT-IN EXTRAS — started only with their own profile
   # (`heavy` is deliberately excluded from `full`; it is a large image.)

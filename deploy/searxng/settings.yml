@@ -1,0 +1,11 @@
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+  safe_search: 0
+
+server:
+  limiter: false
+  public_instance: false

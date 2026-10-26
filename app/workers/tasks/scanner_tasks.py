@@ -27,6 +27,7 @@ from app.workers.tasks.scanners.providers import replit as _provider_20
 from app.workers.tasks.scanners.providers import postman as _provider_21
 from app.workers.tasks.scanners.providers import dockerhub as _provider_22
 from app.workers.tasks.scanners.providers import searchcode as _provider_23
+from app.workers.tasks.scanners.providers import searxng as _provider_24
 from app.workers.tasks.scanners.providers import npm as _provider_24
 from app.workers.tasks.scanners.providers import pypi as _provider_25
 from app.workers.tasks.scanners.providers import ci_logs as _provider_26

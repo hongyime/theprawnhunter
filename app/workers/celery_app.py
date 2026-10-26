@@ -267,6 +267,7 @@ app.conf.update(
         "app.workers.tasks.scanners.providers.postman",
         "app.workers.tasks.scanners.providers.dockerhub",
         "app.workers.tasks.scanners.providers.searchcode",
+        "app.workers.tasks.scanners.providers.searxng",
         "app.workers.tasks.scanners.providers.npm",
         "app.workers.tasks.scanners.providers.pypi",
         "app.workers.tasks.scanners.providers.ci_logs",
@@ -646,6 +647,10 @@ app.conf.update(
         # ============================================
         # RETRY COLD TOKENS
         # ============================================
+        "scan-searxng-6hours": {
+            "task": "scanner.scan_searxng",
+            "schedule": crontab(minute=55, hour="*/6"),
+        },
         "retry-cold-12hours": {
             "task": "scanner.retry_cold",
             "schedule": crontab(minute=50, hour="*/12"),
@@ -742,6 +747,7 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "cleanup-matkap-bots-hourly": 600,
     "import-csv-5min": 240,
     "retry-cold-12hours": 1800,
+    "scan-searxng-6hours": 900,
     "honeypot-evidence-batch-daily": 7200,
     "membership-rotation-15min": 1800,
     "scan-github-4hours": 900,
