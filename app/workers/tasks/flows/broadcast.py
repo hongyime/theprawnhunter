@@ -921,6 +921,7 @@ async def _broadcast_logic():
                             sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
                             if sent_message_id and isinstance(msg.get("telegram_msg_id"), int) and msg["telegram_msg_id"] < 0:
                                 try:
+                                    await asyncio.sleep(random.uniform(0.4, 2.6))
                                     await broadcaster.pin_message(group_id, sent_message_id)
                                 except Exception as pin_error:
                                     logger.debug(f"[Broadcast] honeypot pin skipped: {pin_error}")

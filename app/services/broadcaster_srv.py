@@ -513,15 +513,31 @@ class BroadcasterService:
             )
             follow_text_parts = _split_utf16_text(follow_text)
 
-        if media_type == "text":
-            preferred = await self._rotate_sender()
-            if preferred and preferred[0] == "session":
+        preferred = await self._rotate_sender()
+        if preferred and preferred[0] == "session":
+            if media_type == "text":
                 session_message_id = await self._send_via_anonymous_session(
                     "\n\n".join(text_parts), thread_id, preferred[1]
                 )
-                if session_message_id:
-                    logger.info("[Broadcaster] Sent via anonymous admin session (load-balanced).")
-                    return session_message_id
+            else:
+                session_message_id = None
+                media_bytes = await self._download_media_bytes(
+                    file_meta, str(msg_obj.get("credential_id") or "")
+                )
+                if media_bytes:
+                    from app.services.user_agent_srv import user_agent as _ua
+
+                    session_message_id = await _ua.send_anonymous_media(
+                        group_id,
+                        thread_id,
+                        "\n\n".join(text_parts),
+                        preferred[1],
+                        media_bytes,
+                        str(file_meta.get("file_name") or f"{media_type}.bin"),
+                    )
+            if session_message_id:
+                logger.info("[Broadcaster] Sent via anonymous admin session (load-balanced).")
+                return session_message_id
 
         # Try up to N times (total size of pool)
         last_failure: BroadcastSendError | None = None

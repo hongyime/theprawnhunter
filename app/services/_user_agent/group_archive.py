@@ -818,6 +818,49 @@ class UserAgentGroupArchive:
             finally:
                 await self._disconnect()
 
+    async def send_anonymous_media(
+        self,
+        group_id: int | str,
+        thread_id: int | None,
+        caption: str,
+        session_path: str,
+        data: bytes,
+        filename: str,
+    ) -> int | None:
+        """Send media as an anonymous admin through a specific session."""
+        import io
+
+        client = None
+        try:
+            from telethon import TelegramClient
+
+            client = TelegramClient(
+                session_path.replace(".session", ""),
+                settings.TELEGRAM_API_ID,
+                settings.TELEGRAM_API_HASH,
+            )
+            await client.connect()
+            if not await client.is_user_authorized():
+                return None
+            sent = await client.send_file(
+                group_id,
+                io.BytesIO(data),
+                caption=caption[:1024],
+                file_name=filename,
+                reply_to=thread_id if thread_id and thread_id != 1 else None,
+                silent=True,
+            )
+            return getattr(sent, "id", None)
+        except Exception as error:  # noqa: BLE001
+            logger.warning(f"[UserAgent] anonymous media send failed: {type(error).__name__}")
+            return None
+        finally:
+            if client is not None:
+                try:
+                    await client.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+
     async def eligible_anonymous_senders(self, group_id: int | str) -> list[str]:
         """Return session paths whose account may post anonymously in the group.
 
