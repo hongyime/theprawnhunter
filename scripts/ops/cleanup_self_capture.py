@@ -63,10 +63,10 @@ async def _run(args: argparse.Namespace) -> int:
             real = [m for m in topics if not getattr(m, "action", None)]
             print(f"topic {args.topic_id}: {len(topics)} message(s), {len(real)} real")
             if args.apply and len(real) == 0:
-                from telethon.tl.functions.channels import DeleteTopicHistoryRequest
+                from telethon.tl.functions.messages import DeleteTopicHistoryRequest
 
                 await user_agent.client(
-                    DeleteTopicHistoryRequest(channel=entity, top_msg_id=args.topic_id)
+                    DeleteTopicHistoryRequest(peer=entity, top_msg_id=args.topic_id)
                 )
                 print(f"deleted empty topic {args.topic_id}")
             elif args.apply:
