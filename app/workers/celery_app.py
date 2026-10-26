@@ -242,6 +242,7 @@ app.conf.update(
         "app.workers.tasks.flows.virustotal",
         "app.workers.tasks.flows.api_keys",
         "app.workers.tasks.flows.session_admins",
+        "app.workers.tasks.flows.watchlist_backfill",
         "app.workers.tasks.flows.heavy",
         "app.workers.tasks.flow_tasks",  # stable import facade for existing callers
         "app.workers.tasks.scanners.providers.shodan",
@@ -491,6 +492,10 @@ app.conf.update(
         },
         # Automated retention cleanup — daily @ 03:00 UTC to maintain database
         # size under Supabase free-tier limits without manual intervention.
+        "watchlist-backfill-6hours": {
+            "task": "flow.backfill_watchlists",
+            "schedule": crontab(minute=25, hour="*/6"),
+        },
         "ensure-session-admins-6hours": {
             "task": "flow.ensure_session_admins",
             "schedule": crontab(minute=40, hour="*/6"),
@@ -742,6 +747,7 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "virustotal-enrich-6hours": 1800,
     "api-key-health-daily": 3600,
     "ensure-session-admins-6hours": 600,
+    "watchlist-backfill-6hours": 3600,
     "system-help-6hours": 900,
     "validation-refresh-pending-daily": 1800,
     "validation-backfill-scoring": 300,
