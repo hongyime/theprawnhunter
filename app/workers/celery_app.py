@@ -239,6 +239,7 @@ app.conf.update(
         "app.workers.tasks.flows.scrape",
         "app.workers.tasks.flows.honeypot",
         "app.workers.tasks.flows.help_text",
+        "app.workers.tasks.flows.virustotal",
         "app.workers.tasks.flows.heavy",
         "app.workers.tasks.flow_tasks",  # stable import facade for existing callers
         "app.workers.tasks.scanners.providers.shodan",
@@ -487,6 +488,10 @@ app.conf.update(
         },
         # Automated retention cleanup — daily @ 03:00 UTC to maintain database
         # size under Supabase free-tier limits without manual intervention.
+        "virustotal-enrich-6hours": {
+            "task": "flow.virustotal_enrich",
+            "schedule": crontab(minute=50, hour="*/6"),
+        },
         "retention-cleanup-daily": {
             "task": "flow.automated_retention_cleanup",
             "schedule": crontab(minute=0, hour=3),
@@ -719,6 +724,7 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "takeover-spike-check-15min": 300,
     "exfil-latency-report-6hours": 900,
     "retention-cleanup-daily": 1800,
+    "virustotal-enrich-6hours": 1800,
     "system-help-6hours": 900,
     "validation-refresh-pending-daily": 1800,
     "validation-backfill-scoring": 300,
