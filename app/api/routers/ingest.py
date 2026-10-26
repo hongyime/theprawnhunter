@@ -173,11 +173,36 @@ async def ingest_extension_credentials(payload: ExtensionIngestRequest):
             if res.data:
                 new_id = res.data[0].get("id")
                 if new_id:
+                    staged = False
                     try:
-                        from app.workers.tasks.flow_tasks import enrich_credential
-                        enrich_credential.delay(new_id)
-                    except Exception as _enrich_err:
-                        logger.warning(f"Could not enqueue enrich_credential for {new_id}: {_enrich_err}")
+                        from app.services.validation_queue_srv import enqueue
+
+                        await enqueue(
+                            [
+                                {
+                                    "token": token,
+                                    "source": payload.source or "extension",
+                                    "meta": {
+                                        **base_meta,
+                                        "credential_id": new_id,
+                                    },
+                                }
+                            ]
+                        )
+                        staged = True
+                    except Exception as _staging_err:
+                        logger.warning(
+                            f"Could not stage ingested token for validation ({new_id}): {_staging_err}"
+                        )
+                    if not staged:
+                        try:
+                            from app.workers.tasks.flow_tasks import enrich_credential
+
+                            enrich_credential.delay(new_id)
+                        except Exception as _enrich_err:
+                            logger.warning(
+                                f"Could not enqueue enrich_credential for {new_id}: {_enrich_err}"
+                            )
         except Exception as e:
             # Usually unique constraint on token_hash or other transient errors
             logger.warning(f"Supabase insert failed for token_hash {token_hash[:12]}...: {e}")
