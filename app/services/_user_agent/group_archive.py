@@ -823,7 +823,7 @@ class UserAgentGroupArchive:
 
         Requires both ``anonymous`` and ``post_messages`` admin rights; the
         flags are read from Telegram and cannot be set through the API.
-        Cached in Redis for an hour so broadcasting does not re-query per message.
+        Cached for five minutes so added/removed accounts take effect quickly.
         """
         from app.core.redis_srv import redis_srv
 
@@ -873,7 +873,7 @@ class UserAgentGroupArchive:
         try:
             import json
 
-            redis_srv.setex(cache_key, 3600, json.dumps(eligible))
+            redis_srv.setex(cache_key, 300, json.dumps(eligible))
         except Exception:  # noqa: BLE001
             pass
         return eligible

@@ -513,6 +513,16 @@ class BroadcasterService:
             )
             follow_text_parts = _split_utf16_text(follow_text)
 
+        if media_type == "text":
+            preferred = await self._rotate_sender()
+            if preferred and preferred[0] == "session":
+                session_message_id = await self._send_via_anonymous_session(
+                    "\n\n".join(text_parts), thread_id, preferred[1]
+                )
+                if session_message_id:
+                    logger.info("[Broadcaster] Sent via anonymous admin session (load-balanced).")
+                    return session_message_id
+
         # Try up to N times (total size of pool)
         last_failure: BroadcastSendError | None = None
         # Telegram message-id of a successful send, or None when the delivery
@@ -881,8 +891,46 @@ class BroadcasterService:
             self._warn_system_log_failure(last_exc)
         return False
 
+    async def _rotate_sender(self) -> tuple[str, str] | None:
+        """Pick the sender for the next message, spread across bots and sessions.
+
+        The pool is rebuilt on each call, so adding/removing bot tokens or
+        Telegram accounts takes effect immediately (account eligibility is
+        cached for an hour by ``eligible_anonymous_senders``).
+        """
+        if not getattr(settings, "BROADCAST_USE_USER_SESSIONS", False):
+            return None
+        senders: list[tuple[str, str]] = []
+        try:
+            for token in self.bot_tokens:
+                if token not in self._failed_tokens:
+                    senders.append(("bot", token))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from app.services.user_agent_srv import user_agent
+
+            for path in await user_agent.eligible_anonymous_senders(settings.MONITOR_GROUP_ID):
+                senders.append(("session", path))
+        except Exception as error:  # noqa: BLE001
+            logger.debug(f"[Broadcaster] sender rotation skipped sessions: {type(error).__name__}")
+        if not senders:
+            return None
+        index = 0
+        try:
+            from app.core.redis_srv import redis_srv
+
+            index = int(redis_srv.get("broadcast:sender_rotation") or 0) % len(senders)
+            redis_srv.setex("broadcast:sender_rotation", 86400, str((index + 1) % len(senders)))
+        except Exception:  # noqa: BLE001
+            index = 0
+        return senders[index]
+
     async def _send_via_anonymous_session(
-        self, text: str, message_thread_id: int | None
+        self,
+        text: str,
+        message_thread_id: int | None,
+        session_path: str | None = None,
     ) -> int | None:
         """Fallback sender: post through an anonymous admin account.
 
@@ -896,6 +944,16 @@ class BroadcasterService:
             from app.services.user_agent_srv import user_agent
 
             senders = await user_agent.eligible_anonymous_senders(settings.MONITOR_GROUP_ID)
+            if session_path:
+                senders = [session_path]
+            if not senders:
+                return None
+            try:
+                from pathlib import Path
+
+                senders = [path for path in senders if Path(path).exists()]
+            except Exception:  # noqa: BLE001
+                pass
             if not senders:
                 return None
             index = 0
@@ -906,18 +964,24 @@ class BroadcasterService:
                 index = int(raw or 0) % len(senders)
             except Exception:  # noqa: BLE001
                 index = 0
-            path = senders[index]
-            sent_id = await user_agent.send_anonymous_message(
-                settings.MONITOR_GROUP_ID, message_thread_id, text, path
-            )
-            if sent_id:
-                try:
-                    from app.core.redis_srv import redis_srv
+            for offset in range(len(senders)):
+                path = senders[(index + offset) % len(senders)]
+                sent_id = await user_agent.send_anonymous_message(
+                    settings.MONITOR_GROUP_ID, message_thread_id, text, path
+                )
+                if sent_id:
+                    try:
+                        from app.core.redis_srv import redis_srv
 
-                    redis_srv.setex("user_agent:anon_sender_index", 86400, str((index + 1) % len(senders)))
-                except Exception:  # noqa: BLE001
-                    pass
-            return sent_id
+                        redis_srv.setex(
+                            "user_agent:anon_sender_index",
+                            86400,
+                            str((index + offset + 1) % len(senders)),
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return sent_id
+            return None
         except Exception as error:  # noqa: BLE001 - fallback must never mask the bot error
             logger.warning(f"[Broadcaster] Anonymous-session fallback failed: {type(error).__name__}")
             return None
@@ -1030,6 +1094,14 @@ class BroadcasterService:
         """Send a raw text message to a specific forum topic thread.
         Returns the sent Telegram message_id, or None on failure.
         """
+        preferred = await self._rotate_sender()
+        if preferred and preferred[0] == "session":
+            session_message_id = await self._send_via_anonymous_session(
+                text, thread_id, preferred[1]
+            )
+            if session_message_id:
+                return session_message_id
+
         await self._wait_for_rate_limit()
         bot = self._get_bot_instance(self.bot_tokens[0])
         try:
