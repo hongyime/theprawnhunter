@@ -240,6 +240,7 @@ app.conf.update(
         "app.workers.tasks.flows.honeypot",
         "app.workers.tasks.flows.help_text",
         "app.workers.tasks.flows.virustotal",
+        "app.workers.tasks.flows.api_keys",
         "app.workers.tasks.flows.heavy",
         "app.workers.tasks.flow_tasks",  # stable import facade for existing callers
         "app.workers.tasks.scanners.providers.shodan",
@@ -488,6 +489,10 @@ app.conf.update(
         },
         # Automated retention cleanup — daily @ 03:00 UTC to maintain database
         # size under Supabase free-tier limits without manual intervention.
+        "api-key-health-daily": {
+            "task": "flow.api_key_health",
+            "schedule": crontab(minute=15, hour=7),
+        },
         "virustotal-enrich-6hours": {
             "task": "flow.virustotal_enrich",
             "schedule": crontab(minute=50, hour="*/6"),
@@ -516,8 +521,12 @@ app.conf.update(
             "task": "scanner.scan_urlscan",
             "schedule": crontab(minute=40, hour=f"*/{int(os.getenv('SCAN_INTERVAL_HOURS', 4))}"),
         },
-        # scan-fofa-4hours: DISABLED — F-coins balance exhausted (F点余额不足).
-        # Re-enable after topping up FOFA credits at fofa.info.
+        # FOFA — key-gated: FofaService returns [] with no FOFA_EMAIL/FOFA_KEY,
+        # so this entry is inert until a key is configured.
+        "scan-fofa-4hours": {
+            "task": "scanner.scan_fofa",
+            "schedule": crontab(minute=15, hour="*/4"),
+        },
         # scan-gitlab-6hours: DISABLED — gitlab.com free tier has global blob
         # search disabled (returns "403 Forbidden - Global Search is disabled
         # for this scope"). Re-enable only if upgrading to paid GitLab plan
@@ -589,10 +598,6 @@ app.conf.update(
         },
         # scan-google-12hours: DISABLED — GCP project access issue, replaced by Exa.
         # Re-enable by uncommenting once Custom Search API is properly bound to billing.
-        "scan-bitbucket-8hours": {
-            "task": "scanner.scan_bitbucket",
-            "schedule": crontab(minute=30, hour="*/8"),
-        },
         "scan-searchcode-every-8-hours": {
             "task": "scanner.scan_searchcode",
             "schedule": crontab(minute=5, hour="*/8"),
@@ -725,6 +730,7 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "exfil-latency-report-6hours": 900,
     "retention-cleanup-daily": 1800,
     "virustotal-enrich-6hours": 1800,
+    "api-key-health-daily": 3600,
     "system-help-6hours": 900,
     "validation-refresh-pending-daily": 1800,
     "validation-backfill-scoring": 300,
@@ -751,8 +757,8 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "scan-commoncrawl-daily": 7200,
     "scan-dockerhub-hourly": 600,
     "scan-sourcegraph-12hours": 1800,
-    "scan-bitbucket-8hours": 900,
     "scan-searchcode-every-8-hours": 900,
+    "scan-fofa-4hours": 900,
     "scan-publicwww-12hours": 1800,
     "scan-shodan-c2-6hours": 900,
     "scan-postman-12hours": 1800,
