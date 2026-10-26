@@ -3,6 +3,7 @@
 from .common import *
 
 from app.infrastructure.database import execute_async
+from app.workers.celery_app import _run_sync  # noqa: E402
 
 VIRUSTOTAL_RECHECK_DAYS = 7
 VIRUSTOTAL_MAX_PER_RUN = 50

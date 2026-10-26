@@ -8,6 +8,8 @@ existing ones.
 
 from .common import *
 
+from app.workers.celery_app import _run_sync  # noqa: E402
+
 FULL_RIGHTS = {
     "change_info": True,
     "post_messages": True,

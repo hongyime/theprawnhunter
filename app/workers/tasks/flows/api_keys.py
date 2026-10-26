@@ -2,6 +2,8 @@
 
 from .common import *
 
+from app.workers.celery_app import _run_sync  # noqa: E402
+
 API_KEY_STATE_PREFIX = "api_key_health:state:"
 API_KEY_STATE_TTL_SECONDS = 30 * 24 * 3600
 

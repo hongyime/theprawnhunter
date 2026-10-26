@@ -3,6 +3,7 @@
 from .common import *
 
 from app.infrastructure.database import execute_async
+from app.workers.celery_app import _run_sync  # noqa: E402
 
 CURSOR_KEY = "watchlist:backfill:cursor"
 DEFAULT_LIMIT = 20_000
