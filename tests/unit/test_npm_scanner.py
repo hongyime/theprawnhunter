@@ -274,5 +274,34 @@ async def test_default_query_set_is_bounded_and_used(monkeypatch):
     results = await service.search()
 
     assert results == []
-    assert 3 <= len(NpmService.QUERIES) <= 5
+    assert 3 <= len(NpmService.QUERIES) <= 8
     assert queries == list(NpmService.QUERIES)
+
+
+@pytest.mark.asyncio
+async def test_resolves_tarball_from_package_metadata_when_search_omits_links(monkeypatch):
+    """The public search API stopped returning links.tarball; resolve it via metadata."""
+    tarball = _tarball({"package/index.js": _with_token(TOKEN_ONE, CHAT_ID)})
+    metadata_calls = []
+
+    def handler(request):
+        url = str(request.url)
+        if url.startswith("https://registry.npmjs.org/-/v1/search"):
+            return _search_reply(
+                [{"name": "pkg-one", "version": "1.0.0"}]  # no "links" key
+            )
+        if url.startswith("https://registry.npmjs.org/pkg-one/1.0.0"):
+            metadata_calls.append(url)
+            return httpx.Response(
+                200, json={"dist": {"tarball": FIRST_TARBALL}}
+            )
+        if url == FIRST_TARBALL:
+            return httpx.Response(200, content=tarball)
+        return httpx.Response(404)
+
+    service = _install(monkeypatch, handler)
+    results = await service.search()
+
+    assert metadata_calls, "metadata endpoint should be consulted"
+    assert [row["token"] for row in results] == [TOKEN_ONE]
+    assert results[0]["meta"]["package"] == "pkg-one"

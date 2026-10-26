@@ -20,9 +20,12 @@ class NpmService:
         "telegram bot token",
         "TELEGRAM_BOT_TOKEN",
         "api.telegram.org/bot",
+        "telegram bot",
+        "tgbot",
+        "telegram bot api",
     ]
 
-    MAX_TARBALLS_PER_RUN = 20
+    MAX_TARBALLS_PER_RUN = 50
     MAX_TARBALL_BYTES = 2_000_000
     SEARCH_RESULTS_SIZE = 20
 
@@ -53,7 +56,7 @@ class NpmService:
                     if fetched >= self.MAX_TARBALLS_PER_RUN:
                         break
 
-                    tarball_url = self._tarball_url(package)
+                    tarball_url = await self._resolve_tarball_url(client, package)
                     if not tarball_url or tarball_url in seen_tarballs:
                         continue
 
@@ -103,6 +106,32 @@ class NpmService:
         if isinstance(url, str) and url:
             return url
         return None
+
+    async def _resolve_tarball_url(
+        self, client: httpx.AsyncClient, package: dict[str, Any]
+    ) -> str | None:
+        direct = self._tarball_url(package)
+        if direct:
+            return direct
+        name = str(package.get("name") or "").strip()
+        if not name:
+            return None
+        version = str(package.get("version") or "").strip()
+        url = (
+            f"https://registry.npmjs.org/{name}/{version}"
+            if version
+            else f"https://registry.npmjs.org/{name}/latest"
+        )
+        try:
+            response = await client.get(url)
+            if response.status_code != 200:
+                return None
+            dist = response.json().get("dist") or {}
+            tarball = dist.get("tarball")
+            return tarball if isinstance(tarball, str) and tarball else None
+        except Exception as error:  # noqa: BLE001 - one package must not stop the run
+            logger.debug(f"[npm] tarball lookup failed for {name}: {error}")
+            return None
 
     async def _search_packages(
         self, client, query: str
