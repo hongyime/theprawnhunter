@@ -5,6 +5,7 @@ import logging
 from app.services.engagement import pseudonymize_engagement_subject
 
 from .common import *
+from app.core.redis_srv import redis_srv  # noqa: E402
 from .session_lifecycle import UserAgentSessionUnavailableError
 
 
@@ -25,6 +26,16 @@ class UserAgentGroupArchive:
         Invites a bot to the specified group (chat/channel).
         """
         async with self.lock:
+            limit_key = f"group:bot_limit_reached:{group_id}"
+            try:
+                if redis_srv.client.get(limit_key):
+                    logger.debug(
+                        f"    ℹ️ [UserAgent] Skipping invite of {bot_username}: group is at its bot limit."
+                    )
+                    return False
+            except Exception:
+                pass
+
             if not await self.start():
                 return False
 
@@ -48,7 +59,17 @@ class UserAgentGroupArchive:
                     raise
                 except Exception as e_channel:
                     if _is_terminal_invite_error(e_channel):
-                        logger.error(f"    ❌ [UserAgent] Terminal invite failure: {e_channel}")
+                        if "too many bots" in str(e_channel).lower():
+                            # Telegram enforces a hard per-group bot cap. Retrying
+                            # for every credential is pure API burn.
+                            with contextlib.suppress(Exception):
+                                redis_srv.client.setex(limit_key, 43200, "1")
+                            logger.warning(
+                                "    🛑 [UserAgent] Group bot limit reached; "
+                                "pausing bot invites for 12h."
+                            )
+                        else:
+                            logger.error(f"    ❌ [UserAgent] Terminal invite failure: {e_channel}")
                         return False
                     logger.debug(f"    ℹ️ [UserAgent] InviteToChannelRequest skipped ({e_channel}), trying AddChatUserRequest...")
                     try:
