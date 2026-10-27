@@ -145,7 +145,7 @@ Copy `.env.template` → `.env`. Values are never shown here — names only.
 | `HONEYPOT_SECRET` | (unset) | Validated against `X-Telegram-Bot-Api-Secret-Token` |
 | `HONEYPOT_ALLOWLIST` | `""` | `AUTO` (all taken-over bots) or comma-separated credential UUIDs |
 | `HONEYPOT_REDIRECT_MODE` | `True` | Wires up redirect infrastructure |
-| `HONEYPOT_REDIRECT_AUTHORIZED` | `False` | Runtime gate — both must be `True` before any redirect sends |
+| `HONEYPOT_REDIRECT_AUTHORIZED` | `True` | Runtime gate — both must be `True` before any redirect sends |
 | `HONEYPOT_REDIRECT_BOT` | `<bot-username>` | Target bot for redirect messages |
 | `HONEYPOT_REDIRECT_DEEPLINK` | `migrate` | `?start=` parameter on the redirect link |
 | `TELEGRAM_DELETE_WEBHOOK_FOR_SCRAPE` | `False` | Deletes third-party webhooks before polling; destructive |
