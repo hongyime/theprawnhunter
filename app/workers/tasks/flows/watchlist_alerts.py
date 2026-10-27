@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 from .common import *
+from app.workers.celery_app import _run_sync  # noqa: E402
 
 MAX_ATTEMPTS = 20
 

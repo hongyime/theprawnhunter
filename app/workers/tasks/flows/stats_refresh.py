@@ -9,6 +9,7 @@ recomputed once a minute from cheap index-only counts instead.
 from __future__ import annotations
 
 from .common import *
+from app.workers.celery_app import _run_sync  # noqa: E402
 
 
 @app.task(
