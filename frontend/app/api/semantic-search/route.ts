@@ -11,6 +11,8 @@
  * existing inline notice.
  */
 
+import { requireOperator } from "@/lib/operator-auth";
+
 export const runtime = "nodejs";
 
 export const SEMANTIC_PROXY_PATH = "/api/semantic-search";
@@ -38,6 +40,9 @@ function upstreamUrl(apiBase: string): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // Only authenticated operators may reach the monitor proxy.
+  const denied = await requireOperator(request);
+  if (denied) return denied;
   const apiBase = (process.env.API_BASE_URL || "").trim();
   const monitorKey = (process.env.MONITOR_API_KEY || "").trim();
 

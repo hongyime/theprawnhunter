@@ -3,12 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockRpc = vi.hoisted(() => vi.fn());
+const mockAuthHeaders = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     rpc: mockRpc,
   },
 }));
+
+vi.mock("@/lib/api-auth", () => ({ authHeaders: mockAuthHeaders }));
 
 import WatchlistHitsView, { type WatchlistHit } from "./WatchlistHitsView";
 
@@ -43,6 +46,9 @@ function hitResult(hits: WatchlistHit[]) {
 describe("WatchlistHitsView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuthHeaders.mockResolvedValue({
+      Authorization: "Bearer test-token",
+    });
     mockRpc.mockResolvedValue(hitResult([namedHit, deletedRuleHit]));
   });
 
@@ -134,7 +140,11 @@ describe("WatchlistHitsView", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         `/api/watchlist-hit-link?hit_id=${encodeURIComponent(namedHit.hit_id)}`,
-        expect.objectContaining({ method: "GET", cache: "no-store" }),
+        expect.objectContaining({
+          method: "GET",
+          cache: "no-store",
+          headers: { Authorization: "Bearer test-token" },
+        }),
       );
     });
     await waitFor(() => {

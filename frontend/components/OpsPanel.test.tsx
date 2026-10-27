@@ -1,3 +1,7 @@
+const mockAuthHeaders = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api-auth", () => ({ authHeaders: mockAuthHeaders }));
+
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,6 +50,9 @@ describe("OpsPanel", () => {
     vi.useRealTimers();
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    mockAuthHeaders.mockResolvedValue({
+      Authorization: "Bearer test-token",
+    });
   });
 
   afterEach(() => {
@@ -72,7 +79,10 @@ describe("OpsPanel", () => {
     expect(screen.getByLabelText("Queue validation")).toHaveTextContent("2");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/ops/status",
-      expect.objectContaining({ cache: "no-store" }),
+      expect.objectContaining({
+        cache: "no-store",
+        headers: { Authorization: "Bearer test-token" },
+      }),
     );
   });
 
@@ -142,7 +152,10 @@ describe("OpsPanel", () => {
     const resumeCall = fetchMock.mock.calls.find(([url]) =>
       String(url).endsWith("/api/ops/resume"),
     );
-    expect(resumeCall?.[1]).toMatchObject({ method: "POST" });
+    expect(resumeCall?.[1]).toMatchObject({
+      method: "POST",
+      headers: { Authorization: "Bearer test-token" },
+    });
   });
 
   it("clears the 30s poll interval on unmount", async () => {

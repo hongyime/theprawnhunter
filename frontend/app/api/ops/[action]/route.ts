@@ -8,6 +8,8 @@
  * error when configuration or the upstream is unavailable.
  */
 
+import { requireOperator } from "@/lib/operator-auth";
+
 export const runtime = "nodejs";
 
 export const OPS_NOT_CONFIGURED_REASON = "ops proxy not configured";
@@ -85,9 +87,12 @@ async function resolveAction(context: RouteContext): Promise<string> {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: RouteContext,
 ): Promise<Response> {
+  // Only authenticated operators may reach the monitor proxy.
+  const denied = await requireOperator(request);
+  if (denied) return denied;
   const action = await resolveAction(context);
   if (action === "status") {
     return proxy("status");
@@ -99,9 +104,12 @@ export async function GET(
 }
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: RouteContext,
 ): Promise<Response> {
+  // Only authenticated operators may reach the monitor proxy.
+  const denied = await requireOperator(request);
+  if (denied) return denied;
   const action = await resolveAction(context);
   if (action === "pause" || action === "resume") {
     return proxy(action);

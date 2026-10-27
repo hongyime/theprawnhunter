@@ -9,6 +9,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
+import { authHeaders } from "@/lib/api-auth";
 import { supabase } from "@/lib/supabase";
 
 export type EvidenceSearchRow = {
@@ -334,7 +335,10 @@ export default function SearchView({
     async function runSemantic(): Promise<EvidenceSearchRow[]> {
       const response = await fetch(SEMANTIC_PROXY_PATH, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await authHeaders()),
+        },
         body: JSON.stringify({
           q: trimmedQuery,
           credential_id: null,

@@ -11,6 +11,8 @@
  * a link from the hit row itself.
  */
 
+import { requireOperator } from "@/lib/operator-auth";
+
 export const runtime = "nodejs";
 
 export const WATCHLIST_HIT_LINK_PATH = "/api/watchlist-hit-link";
@@ -32,6 +34,9 @@ function upstreamUrl(apiBase: string, hitId: string): string {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  // Only authenticated operators may reach the monitor proxy.
+  const denied = await requireOperator(request);
+  if (denied) return denied;
   const apiBase = (process.env.API_BASE_URL || "").trim();
   const monitorKey = (process.env.MONITOR_API_KEY || "").trim();
 

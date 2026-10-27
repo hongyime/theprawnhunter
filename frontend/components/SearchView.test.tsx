@@ -6,6 +6,7 @@ const mockRpc = vi.hoisted(() => vi.fn());
 const mockIn = vi.hoisted(() => vi.fn());
 const mockSelect = vi.hoisted(() => vi.fn());
 const mockFrom = vi.hoisted(() => vi.fn());
+const mockAuthHeaders = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
@@ -13,6 +14,8 @@ vi.mock("@/lib/supabase", () => ({
     from: mockFrom,
   },
 }));
+
+vi.mock("@/lib/api-auth", () => ({ authHeaders: mockAuthHeaders }));
 
 import SearchView, {
   HighlightedSnippet,
@@ -38,6 +41,9 @@ describe("SearchView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuthHeaders.mockResolvedValue({
+      Authorization: "Bearer test-token",
+    });
     mockFrom.mockReturnValue({ select: mockSelect });
     mockSelect.mockReturnValue({ in: mockIn });
     mockIn.mockResolvedValue({ data: [], error: null });
@@ -164,6 +170,7 @@ describe("SearchView", () => {
       credential_id: null,
       limit: 50,
     });
+    expect(init.headers.Authorization).toBe("Bearer test-token");
     expect(init.headers).not.toHaveProperty("X-Monitor-Key");
     expect(JSON.stringify(init.headers ?? {})).not.toMatch(
       /monitor_api_key|x-monitor-key/i,

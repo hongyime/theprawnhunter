@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const mockGetUser = vi.hoisted(() => vi.fn());
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: () => ({ auth: { getUser: mockGetUser } }),
+}));
+
 import {
   GET,
   OPS_NOT_CONFIGURED_REASON,
@@ -10,9 +15,17 @@ import {
 const savedEnv = {
   apiBase: process.env.API_BASE_URL,
   monitorKey: process.env.MONITOR_API_KEY,
+  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  supabaseKey: process.env.NEXT_PUBLIC_SUPABASE_KEY,
 };
 
-function restore(key: "API_BASE_URL" | "MONITOR_API_KEY", value?: string) {
+type EnvKey =
+  | "API_BASE_URL"
+  | "MONITOR_API_KEY"
+  | "NEXT_PUBLIC_SUPABASE_URL"
+  | "NEXT_PUBLIC_SUPABASE_KEY";
+
+function restore(key: EnvKey, value?: string) {
   if (value === undefined) {
     delete process.env[key];
   } else {
@@ -22,6 +35,16 @@ function restore(key: "API_BASE_URL" | "MONITOR_API_KEY", value?: string) {
 
 function context(action: string) {
   return { params: Promise.resolve({ action }) };
+}
+
+function authedRequest(url: string, init: RequestInit = {}): Request {
+  return new Request(url, {
+    ...init,
+    headers: {
+      ...(init.headers as Record<string, string> | undefined),
+      Authorization: "Bearer operator-jwt",
+    },
+  });
 }
 
 async function readJson(response: Response) {
@@ -34,6 +57,12 @@ describe("/api/ops/[action]", () => {
   beforeEach(() => {
     process.env.API_BASE_URL = "http://api.test/";
     process.env.MONITOR_API_KEY = "server-only-secret";
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_KEY = "anon-key";
+    mockGetUser.mockResolvedValue({
+      data: { user: { id: "user-1", app_metadata: { operator: true } } },
+      error: null,
+    });
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -42,6 +71,20 @@ describe("/api/ops/[action]", () => {
     vi.unstubAllGlobals();
     restore("API_BASE_URL", savedEnv.apiBase);
     restore("MONITOR_API_KEY", savedEnv.monitorKey);
+    restore("NEXT_PUBLIC_SUPABASE_URL", savedEnv.supabaseUrl);
+    restore("NEXT_PUBLIC_SUPABASE_KEY", savedEnv.supabaseKey);
+  });
+
+  it("denies an unauthenticated request without touching the upstream", async () => {
+    delete process.env.API_BASE_URL;
+    delete process.env.MONITOR_API_KEY;
+    const response = await POST(
+      new Request("http://dashboard.test/api/ops/pause", { method: "POST" }),
+      context("pause"),
+    );
+    expect(response.status).toBe(401);
+    expect(await readJson(response)).toEqual({ error: "unauthorized" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("proxies GET status to the upstream status path with the key", async () => {
@@ -65,7 +108,7 @@ describe("/api/ops/[action]", () => {
     );
 
     const response = await GET(
-      new Request("http://dashboard.test/api/ops/status"),
+      authedRequest("http://dashboard.test/api/ops/status"),
       context("status"),
     );
 
@@ -89,7 +132,7 @@ describe("/api/ops/[action]", () => {
       );
 
       const response = await POST(
-        new Request(`http://dashboard.test/api/ops/${action}`, { method: "POST" }),
+        authedRequest(`http://dashboard.test/api/ops/${action}`, { method: "POST" }),
         context(action),
       );
 
@@ -110,11 +153,11 @@ describe("/api/ops/[action]", () => {
     delete process.env[missing];
 
     const statusResponse = await GET(
-      new Request("http://dashboard.test/api/ops/status"),
+      authedRequest("http://dashboard.test/api/ops/status"),
       context("status"),
     );
     const pauseResponse = await POST(
-      new Request("http://dashboard.test/api/ops/pause", { method: "POST" }),
+      authedRequest("http://dashboard.test/api/ops/pause", { method: "POST" }),
       context("pause"),
     );
 
@@ -132,7 +175,7 @@ describe("/api/ops/[action]", () => {
     );
 
     const response = await POST(
-      new Request("http://dashboard.test/api/ops/resume", { method: "POST" }),
+      authedRequest("http://dashboard.test/api/ops/resume", { method: "POST" }),
       context("resume"),
     );
 
@@ -150,14 +193,14 @@ describe("/api/ops/[action]", () => {
       }),
     );
     const invalid = await GET(
-      new Request("http://dashboard.test/api/ops/status"),
+      authedRequest("http://dashboard.test/api/ops/status"),
       context("status"),
     );
     expect(invalid.status).toBe(502);
 
     fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
     const unreachable = await GET(
-      new Request("http://dashboard.test/api/ops/status"),
+      authedRequest("http://dashboard.test/api/ops/status"),
       context("status"),
     );
     expect(unreachable.status).toBe(502);
@@ -167,19 +210,19 @@ describe("/api/ops/[action]", () => {
 
   it("rejects unknown actions and mismatched methods", async () => {
     const unknown = await GET(
-      new Request("http://dashboard.test/api/ops/delete"),
+      authedRequest("http://dashboard.test/api/ops/delete"),
       context("delete"),
     );
     expect(unknown.status).toBe(404);
 
     const wrongMethod = await GET(
-      new Request("http://dashboard.test/api/ops/pause"),
+      authedRequest("http://dashboard.test/api/ops/pause"),
       context("pause"),
     );
     expect(wrongMethod.status).toBe(405);
 
     const statusPost = await POST(
-      new Request("http://dashboard.test/api/ops/status", { method: "POST" }),
+      authedRequest("http://dashboard.test/api/ops/status", { method: "POST" }),
       context("status"),
     );
     expect(statusPost.status).toBe(405);

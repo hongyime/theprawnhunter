@@ -1,14 +1,27 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const mockGetUser = vi.hoisted(() => vi.fn());
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: () => ({ auth: { getUser: mockGetUser } }),
+}));
+
 import { POST, SEMANTIC_NOT_CONFIGURED_REASON } from "./route";
 
 const savedEnv = {
   apiBase: process.env.API_BASE_URL,
   monitorKey: process.env.MONITOR_API_KEY,
+  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  supabaseKey: process.env.NEXT_PUBLIC_SUPABASE_KEY,
 };
 
-function restore(key: "API_BASE_URL" | "MONITOR_API_KEY", value?: string) {
+type EnvKey =
+  | "API_BASE_URL"
+  | "MONITOR_API_KEY"
+  | "NEXT_PUBLIC_SUPABASE_URL"
+  | "NEXT_PUBLIC_SUPABASE_KEY";
+
+function restore(key: EnvKey, value?: string) {
   if (value === undefined) {
     delete process.env[key];
   } else {
@@ -16,10 +29,13 @@ function restore(key: "API_BASE_URL" | "MONITOR_API_KEY", value?: string) {
   }
 }
 
-function makeRequest(body: unknown): Request {
+function makeRequest(body: unknown, authorized = true): Request {
   return new Request("http://dashboard.test/api/semantic-search", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(authorized ? { Authorization: "Bearer operator-jwt" } : {}),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -34,6 +50,12 @@ describe("POST /api/semantic-search", () => {
   beforeEach(() => {
     process.env.API_BASE_URL = "http://api.test";
     process.env.MONITOR_API_KEY = "server-only-secret";
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_KEY = "anon-key";
+    mockGetUser.mockResolvedValue({
+      data: { user: { id: "user-1", app_metadata: { operator: true } } },
+      error: null,
+    });
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -42,6 +64,19 @@ describe("POST /api/semantic-search", () => {
     vi.unstubAllGlobals();
     restore("API_BASE_URL", savedEnv.apiBase);
     restore("MONITOR_API_KEY", savedEnv.monitorKey);
+    restore("NEXT_PUBLIC_SUPABASE_URL", savedEnv.supabaseUrl);
+    restore("NEXT_PUBLIC_SUPABASE_KEY", savedEnv.supabaseKey);
+  });
+
+  it("denies an unauthenticated request without touching the upstream", async () => {
+    delete process.env.API_BASE_URL;
+    delete process.env.MONITOR_API_KEY;
+
+    const response = await POST(makeRequest({ q: "bitcoin" }, false));
+
+    expect(response.status).toBe(401);
+    expect(await readJson(response)).toEqual({ error: "unauthorized" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("returns a 200 fallback when the proxy is not configured", async () => {
@@ -128,7 +163,10 @@ describe("POST /api/semantic-search", () => {
   it("returns a 200 fallback for malformed bodies and empty queries", async () => {
     const malformed = new Request("http://dashboard.test/api/semantic-search", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer operator-jwt",
+      },
       body: "{not-json",
     });
 

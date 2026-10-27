@@ -9,6 +9,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
+import { authHeaders } from "@/lib/api-auth";
 import { supabase } from "@/lib/supabase";
 
 export type WatchlistHit = {
@@ -133,7 +134,11 @@ export default function WatchlistHitsView() {
     try {
       const response = await fetch(
         `${WATCHLIST_HIT_LINK_ROUTE}?hit_id=${encodeURIComponent(hit.hit_id)}`,
-        { method: "GET", cache: "no-store" },
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: await authHeaders(),
+        },
       );
       if (!response.ok) {
         throw new Error(`link lookup returned ${response.status}`);

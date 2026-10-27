@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Play, RefreshCw, TriangleAlert } from "lucide-react";
 
+import { authHeaders } from "@/lib/api-auth";
+
 export const OPS_POLL_INTERVAL_MS = 30_000;
 
 export type OpsQueueLengths = {
@@ -44,7 +46,11 @@ export default function OpsPanel() {
     // A poll must never clobber an in-flight optimistic change.
     if (pendingRef.current) return true;
     try {
-      const response = await fetch("/api/ops/status", { cache: "no-store" });
+      const headers = await authHeaders();
+      const response = await fetch("/api/ops/status", {
+        cache: "no-store",
+        headers,
+      });
       const body = (await response.json().catch(() => null)) as OpsStatus | null;
       if (!response.ok || !body) {
         throw new Error("status unavailable");
@@ -121,6 +127,7 @@ export default function OpsPanel() {
       const response = await fetch(`/api/ops/${action}`, {
         method: "POST",
         cache: "no-store",
+        headers: await authHeaders(),
       });
       const body = (await response.json().catch(() => null)) as {
         paused?: unknown;
