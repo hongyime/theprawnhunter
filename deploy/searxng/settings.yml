@@ -9,3 +9,9 @@ search:
 server:
   limiter: false
   public_instance: false
+
+engines:
+  - name: ahmia
+    disabled: true
+  - name: torch
+    disabled: true

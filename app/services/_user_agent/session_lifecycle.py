@@ -416,7 +416,7 @@ class UserAgentSessionLifecycle:
                 await self._release_db_lease()
                 continue
 
-        logger.error("    ❌ [UserAgent] All sessions failed or on cooldown.")
+        logger.info("    ⏸️ [UserAgent] No session available (failed or cooling down).")
         self._emit_all_on_cooldown_warning()
         return False
 
