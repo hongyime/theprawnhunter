@@ -298,6 +298,10 @@ app.conf.update(
         # ============================================
         # BROADCAST & RESCRAPE
         # ============================================
+        "stats-refresh-every-minute": {
+            "task": "stats.refresh_monitor_stats",
+            "schedule": crontab(minute="*"),
+        },
         "broadcast-every-minute": {
             "task": "flow.broadcast_pending",
             # Default every 1 minute. If BROADCAST_INTERVAL_MINUTES=1 and batch=100 msgs × 2s sleep
@@ -711,6 +715,7 @@ app.conf.update(
 # can amplify a backlog (e.g. a stale force-webhook takeover enqueuing 200
 # exfiltrations long after its scheduled run).
 _BEAT_EXPIRY_SECONDS: dict[str, int] = {
+    "stats-refresh-every-minute": 45,
     "broadcast-every-minute": 180,
     "firehose-github-events-30s": 25,
     "rescrape-active-hourly": 600,

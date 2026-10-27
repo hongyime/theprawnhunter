@@ -651,7 +651,9 @@ async def _broadcast_logic():
     # fits inside CLAIM_TIMEOUT_MINUTES=15 with headroom).
     # Raise via BROADCAST_BATCH_SIZE=500 if you have enough bot credentials
     # in the rotation pool to sustain the higher send rate without flood-wait.
-    BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 200))  # noqa: N806 — function-scoped constant
+    # Telegram allows ~20 sends/min per identity; claiming far more than that
+    # per cycle only produces claim updates that are immediately released.
+    BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 60))  # noqa: N806 — function-scoped constant
     messages = await _fetch_pending_broadcast_messages(BROADCAST_BATCH_SIZE, now_iso)
     if not messages:
         # Only log periodically or if verbose debug needed?
