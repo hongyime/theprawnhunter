@@ -304,6 +304,10 @@ app.conf.update(
             "task": "flow.drain_watchlist_alerts",
             "schedule": crontab(minute="*/2"),
         },
+        "prune-failed-broadcasts-hourly": {
+            "task": "flow.prune_failed_broadcasts",
+            "schedule": crontab(minute=9),
+        },
         "media-sweep-archive-hourly": {
             "task": "media.sweep_archive",
             "schedule": crontab(minute=7),
@@ -725,6 +729,7 @@ app.conf.update(
 # can amplify a backlog (e.g. a stale force-webhook takeover enqueuing 200
 # exfiltrations long after its scheduled run).
 _BEAT_EXPIRY_SECONDS: dict[str, int] = {
+    "prune-failed-broadcasts-hourly": 600,
     "media-sweep-archive-hourly": 600,
     "drain-watchlist-alerts-2min": 90,
     "stats-refresh-every-minute": 45,

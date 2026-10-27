@@ -1,10 +1,11 @@
 """Broadcast flow task definitions."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.services.honeypot_rendering import render_honeypot_broadcast
 
 from .common import *
+from app.workers.celery_app import _run_sync  # noqa: E402
 
 MEDIA_ARCHIVE_SESSION_UNAVAILABLE_REASON = "media_archive_session_unavailable"
 TERMINAL_NON_RETRYABLE_BROADCAST_REASONS = frozenset(
@@ -1295,3 +1296,38 @@ async def _filter_to_oldest_per_topic(
             f"deferred behind older ones in their topic"
         )
     return kept
+
+
+@app.task(name="flow.prune_failed_broadcasts")
+def prune_failed_broadcasts():
+    """Delete terminal failures older than a few hours.
+
+    Rows that can never be broadcast (empty service messages, media whose
+    source was already gone) are terminal on first failure. Keeping them
+    forever only adds storage and inspection noise, and they hold no content
+    that could ever reach a topic.
+    """
+    return _run_sync(_prune_failed_broadcasts_async())
+
+
+async def _prune_failed_broadcasts_async(hours: int = 6) -> dict[str, int]:
+    cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+    deleted = 0
+    for _ in range(20):
+        res = await async_execute(
+            db.table("exfiltrated_messages")
+            .select("id")
+            .eq("broadcast_status", "permanent_failed")
+            .lt("created_at", cutoff)
+            .limit(500)
+        )
+        ids = [row["id"] for row in (res.data or []) if row.get("id")]
+        if not ids:
+            break
+        await async_execute(db.table("exfiltrated_messages").delete().in_("id", ids))
+        deleted += len(ids)
+        if len(ids) < 500:
+            break
+    if deleted:
+        logger.info(f"[Broadcast] pruned {deleted} terminal-failure row(s)")
+    return {"deleted": deleted}
