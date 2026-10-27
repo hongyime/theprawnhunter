@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     MEDIA_ARCHIVE_MAX_BYTES: int = 8 * 1024**3
     MEDIA_ARCHIVE_MIN_FREE_BYTES: int = 10 * 1024**3
     MEDIA_ARCHIVE_MAX_FILE_BYTES: int = 50 * 1024**2
-    MEDIA_ARCHIVE_RETENTION_HOURS: int = 48
+    MEDIA_ARCHIVE_RETENTION_HOURS: int = 120
 
     # Heavy media enrichment (ASR/OCR)
     # When enabled, media messages captured by the honeypot/scrape/broadcast
