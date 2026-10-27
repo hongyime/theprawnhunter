@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     WHITELISTED_BOT_IDS: str = "" # Comma-separated IDs (or usernames)
     ANONYMOUS_ADMIN_ID: int = 1087968824  # Telegram anonymous group admin bot ID
     AUTO_ARCHIVE_MEDIA: bool = True
+    # Capture-time media cache (local volume). Bounded so it can never
+    # fill the host: new captures stop once either limit is hit.
+    MEDIA_ARCHIVE_ENABLED: bool = True
+    MEDIA_ARCHIVE_DIR: str = "/data/media-archive"
+    MEDIA_ARCHIVE_MAX_BYTES: int = 8 * 1024**3
+    MEDIA_ARCHIVE_MIN_FREE_BYTES: int = 10 * 1024**3
+    MEDIA_ARCHIVE_MAX_FILE_BYTES: int = 50 * 1024**2
+    MEDIA_ARCHIVE_RETENTION_HOURS: int = 48
 
     # Heavy media enrichment (ASR/OCR)
     # When enabled, media messages captured by the honeypot/scrape/broadcast

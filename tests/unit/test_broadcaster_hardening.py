@@ -361,7 +361,7 @@ async def test_send_document_preserves_original_filename(monkeypatch):
     async def no_wait():
         return None
 
-    async def fake_download(_file_meta, _credential_id):
+    async def fake_download(_file_meta, _credential_id, _telegram_msg_id=None):
         return b"apk-bytes"
 
     monkeypatch.setattr(service, "_wait_for_rate_limit", no_wait)
@@ -410,7 +410,7 @@ async def test_media_upload_failure_does_not_fallback_to_text(monkeypatch):
     async def no_wait():
         return None
 
-    async def fake_download(_file_meta, _credential_id):
+    async def fake_download(_file_meta, _credential_id, _telegram_msg_id=None):
         return b"apk-bytes"
 
     monkeypatch.setattr(service, "_wait_for_rate_limit", no_wait)
@@ -453,7 +453,7 @@ async def test_media_without_download_bytes_uses_archive_path(monkeypatch):
     async def no_wait():
         return None
 
-    async def no_download(_file_meta, _credential_id):
+    async def no_download(_file_meta, _credential_id, _telegram_msg_id=None):
         return None
 
     async def fake_archive(*args):

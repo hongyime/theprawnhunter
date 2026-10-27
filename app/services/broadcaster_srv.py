@@ -378,10 +378,29 @@ class BroadcasterService:
 
         task.add_done_callback(_log_archive_result)
 
-    async def _download_media_bytes(self, file_meta: dict, credential_id: str) -> bytes | None:
-        """Download media bytes using the SOURCE bot's token (not the broadcaster's)."""
+    async def _download_media_bytes(
+        self, file_meta: dict, credential_id: str, telegram_msg_id: int | str | None = None
+    ) -> bytes | None:
+        """Download media bytes, preferring the capture-time cache."""
         if not credential_id or not file_meta:
             return None
+        if telegram_msg_id is not None:
+            try:
+                from app.services import media_archive
+
+                cached = media_archive.path_for(
+                    media_archive.key_for(credential_id, telegram_msg_id, file_meta.get("file_id", ""))
+                )
+                if cached.exists():
+                    data = cached.read_bytes()
+                    if data:
+                        logger.info(
+                            f"    📦 [Broadcaster] using cached media ({len(data)} bytes) "
+                            f"for msg={telegram_msg_id}"
+                        )
+                        return data
+            except Exception as exc:  # noqa: BLE001 - cache is an optimisation
+                logger.debug(f"[Broadcaster] media cache read failed: {exc}")
         try:
             res = await _async_execute(
                 db.table("discovered_credentials")
@@ -553,7 +572,9 @@ class BroadcasterService:
             else:
                 session_message_id = None
                 media_bytes = await self._download_media_bytes(
-                    file_meta, str(msg_obj.get("credential_id") or "")
+                    file_meta,
+                    str(msg_obj.get("credential_id") or ""),
+                    msg_obj.get("telegram_msg_id"),
                 )
                 if media_bytes:
                     from app.services.user_agent_srv import user_agent as _ua
@@ -633,7 +654,11 @@ class BroadcasterService:
                         (file_id or has_telethon_hash) and media_type in ARCHIVE_MEDIA_TYPES
                         and media_type not in NOTE_MEDIA_TYPES
                     ):
-                        media_bytes = await self._download_media_bytes(file_meta, msg_obj.get("credential_id"))
+                        media_bytes = await self._download_media_bytes(
+                            file_meta,
+                            msg_obj.get("credential_id"),
+                            msg_obj.get("telegram_msg_id"),
+                        )
                         if media_bytes:
                             filename = _media_filename(file_meta, media_type)
                             try:
@@ -688,6 +713,18 @@ class BroadcasterService:
 
                                 sent_via_media = True
                                 sent_message_id = getattr(_sent, "message_id", None)
+                                try:
+                                    from app.services import media_archive
+
+                                    media_archive.delete(
+                                        media_archive.key_for(
+                                            msg_obj.get("credential_id"),
+                                            msg_obj.get("telegram_msg_id"),
+                                            file_meta.get("file_id", ""),
+                                        )
+                                    )
+                                except Exception:
+                                    pass
                                 logger.info(
                                     f"    ✅ [Broadcaster] Successfully sent {media_type} "
                                     f"({len(media_bytes)} bytes, filename={filename})"

@@ -241,6 +241,43 @@ async def _enqueue_tokens_from_messages(message_rows: list[dict[str, Any]]) -> i
     return staged
 
 
+_STORE_MEDIA_TYPES = {"photo", "video", "document", "audio", "animation"}
+_MEDIA_CAPTURE_PER_RUN = 25
+
+
+async def _capture_media_for_rows(rows, bot_token: str, credential_id: str) -> int:
+    """Download media bytes while the source is still alive.
+
+    Delivery happens hours later, and by then credential bots have usually
+    deleted their messages, so the only reliable moment to keep the attachment
+    is now. Bounded per run and skipped entirely once the cache hits its cap.
+    """
+    from app.services import media_archive
+
+    captured = 0
+    for row in rows:
+        if captured >= _MEDIA_CAPTURE_PER_RUN:
+            break
+        file_meta = row.get("file_meta") or {}
+        file_id = file_meta.get("file_id")
+        media_type = row.get("media_type")
+        msg_id = row.get("telegram_msg_id")
+        if not file_id or media_type not in _STORE_MEDIA_TYPES or msg_id is None:
+            continue
+        ok, reason = media_archive.capacity_status()
+        if not ok:
+            logger.info(f"[MediaArchive] capture paused ({reason})")
+            break
+        key = media_archive.key_for(credential_id, msg_id, file_id)
+        if media_archive.path_for(key).exists():
+            continue
+        if await media_archive.capture_from_bot(bot_token, file_id, key):
+            captured += 1
+    if captured:
+        logger.info(f"[MediaArchive] captured {captured} file(s) for {credential_id}")
+    return captured
+
+
 async def _index_telemetry_indicators(message_rows: list[dict[str, Any]]) -> int:
     """Best-effort structured indicator indexing for newly inserted messages."""
     if not message_rows:
@@ -556,6 +593,9 @@ async def _exfiltrate_logic(cred_id: str):
                 )
                 await _index_telemetry_indicators(preflight_result.data or valid_updates)
                 await _publish_realtime_deltas(preflight_result.data or [])
+                await _capture_media_for_rows(
+                    preflight_result.data or valid_updates, bot_token, cred_id
+                )
     except Exception as e:
         logger.warning(f"⚠️ [Exfil] Preflight check failed for {cred_id}: {e}")
 

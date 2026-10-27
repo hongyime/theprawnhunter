@@ -261,7 +261,7 @@ async def test_broadcast_succeeds_when_thumbnail_hook_raises(monkeypatch):
     async def no_wait():
         return None
 
-    async def fake_download(_file_meta, _credential_id):
+    async def fake_download(_file_meta, _credential_id, _telegram_msg_id=None):
         return _png_bytes(400, 400)
 
     async def boom(*_args, **_kwargs):
@@ -319,7 +319,7 @@ async def test_broadcast_merges_thumb_path_on_success(monkeypatch):
     async def no_wait():
         return None
 
-    async def fake_download(_file_meta, _credential_id):
+    async def fake_download(_file_meta, _credential_id, _telegram_msg_id=None):
         return _png_bytes(400, 400)
 
     attach_calls = []

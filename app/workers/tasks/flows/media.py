@@ -174,3 +174,16 @@ async def _hash_exfil_media_logic(max_messages: int) -> dict:
         "in_batch_duplicates": duplicate_count,
         "candidates_seen": len(candidate_rows),
     }
+
+
+@app.task(name="media.sweep_archive")
+def sweep_archive():
+    """Delete cache files left behind by crashed or abandoned deliveries."""
+    from app.services import media_archive
+
+    removed = media_archive.sweep()
+    used = media_archive.used_bytes(ttl=1)
+    logger.info(
+        f"[MediaArchive] swept {removed} stale file(s); cache now {used // 1024**2} MB"
+    )
+    return {"removed": removed, "used_bytes": used}

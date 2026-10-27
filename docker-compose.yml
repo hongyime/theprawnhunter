@@ -81,6 +81,7 @@ services:
     volumes:
       - sessions:/app/sessions
       - imports:/app/imports
+      - media_archive:/data/media-archive
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/', timeout=5)"]
       interval: 30s
@@ -363,3 +364,5 @@ volumes:
   beat_schedule:
     external: true
     name: ${BEAT_SCHEDULE_VOLUME_NAME:-telegramhunter_beat_schedule}
+  media_archive:
+    name: theprawnhunter_media_archive
