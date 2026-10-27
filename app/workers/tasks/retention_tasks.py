@@ -40,8 +40,14 @@ async def _automated_retention_cleanup_async() -> dict[str, Any]:
     hp_days = max(1, int(getattr(settings, "RETENTION_HONEYPOT_DAYS", 30)))
     hp_cutoff = (now - timedelta(days=hp_days)).isoformat()
 
+    # Delivered history and the pending backlog age out at different speeds:
+    # pruning delivered rows hard is what keeps a free-tier database inside its
+    # size budget, while the backlog must survive long enough to be delivered.
     msg_days = max(1, int(getattr(settings, "RETENTION_EXFIL_MESSAGE_DAYS", 30)))
-    msg_cutoff = (now - timedelta(days=msg_days)).isoformat()
+    broadcasted_days = max(1, int(getattr(settings, "RETENTION_BROADCASTED_DAYS", msg_days)))
+    pending_days = max(1, int(getattr(settings, "RETENTION_PENDING_DAYS", msg_days * 2)))
+    msg_cutoff = (now - timedelta(days=broadcasted_days)).isoformat()
+    msg_stale_cutoff = (now - timedelta(days=pending_days)).isoformat()
 
     MAX_RETENTION_FETCH_LIMIT = 5000
     MIN_RETENTION_FETCH_LIMIT = 100
@@ -122,7 +128,6 @@ async def _automated_retention_cleanup_async() -> dict[str, Any]:
     # 5. Exfiltrated messages:
     #    a) Broadcasted messages (> 30 days)
     #    b) Stale unbroadcasted/failed messages (> 60 days) to prevent infinite accumulation
-    msg_stale_cutoff = (now - timedelta(days=msg_days * 2)).isoformat()
     try:
         del_broadcasted = await _delete_in_batches(
             "exfiltrated_messages",
