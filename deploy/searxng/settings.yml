@@ -1,4 +1,8 @@
-use_default_settings: true
+use_default_settings:
+  engines:
+    remove:
+      - ahmia
+      - torch
 
 search:
   formats:
@@ -10,8 +14,21 @@ server:
   limiter: false
   public_instance: false
 
+# Datacenter-IP reality check (verified 2026-10-27): brave, duckduckgo, google cse,
+# startpage and qwant all return CAPTCHA / 429 from this host. bing and yahoo work.
 engines:
-  - name: ahmia
+  - name: bing
+    disabled: false
+    weight: 1.2
+  - name: yahoo
+    disabled: false
+  - name: duckduckgo
     disabled: true
-  - name: torch
+  - name: brave
+    disabled: true
+  - name: google cse
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: qwant
     disabled: true
