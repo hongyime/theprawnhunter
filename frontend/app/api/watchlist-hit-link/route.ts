@@ -42,12 +42,12 @@ export async function GET(request: Request): Promise<Response> {
 
   if (!apiBase || !monitorKey) {
     console.warn("watchlist-hit-link proxy not configured");
-    return json({ url: null });
+    return json({ url: null, code: "not_configured" });
   }
 
   const hitId = new URL(request.url).searchParams.get("hit_id")?.trim() ?? "";
   if (!UUID_PATTERN.test(hitId)) {
-    return json({ url: null }, 400);
+    return json({ url: null, code: "invalid_hit_id" }, 400);
   }
 
   try {
@@ -59,13 +59,13 @@ export async function GET(request: Request): Promise<Response> {
     });
 
     if (upstream.status === 404) {
-      return json({ url: null }, 404);
+      return json({ url: null, code: "not_found" }, 404);
     }
     if (!upstream.ok) {
       // Never relay the upstream body: it is untrusted and may contain details
       // the dashboard should not see. The status alone is enough for the log.
       console.warn(`watchlist-hit-link upstream returned ${upstream.status}`);
-      return json({ url: null });
+      return json({ url: null, code: "upstream_error" }, 502);
     }
 
     let data: unknown;
@@ -73,7 +73,7 @@ export async function GET(request: Request): Promise<Response> {
       data = await upstream.json();
     } catch {
       console.warn("watchlist-hit-link upstream returned invalid JSON");
-      return json({ url: null });
+      return json({ url: null, code: "upstream_invalid_response" }, 502);
     }
 
     const url =
@@ -82,8 +82,15 @@ export async function GET(request: Request): Promise<Response> {
         : null;
 
     return json({ url: typeof url === "string" && url ? url : null });
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      console.warn("watchlist-hit-link upstream timed out");
+      return json({ url: null, code: "upstream_timeout" }, 504);
+    }
     console.warn("watchlist-hit-link upstream unreachable");
-    return json({ url: null });
+    return json({ url: null, code: "upstream_unreachable" }, 502);
   }
 }

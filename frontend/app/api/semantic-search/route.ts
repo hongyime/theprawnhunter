@@ -31,8 +31,8 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function fallback(reason: string): Response {
-  return json({ results: [], fallback: true, reason });
+function fallback(reason: string, code: string): Response {
+  return json({ results: [], fallback: true, reason, code });
 }
 
 function upstreamUrl(apiBase: string): string {
@@ -48,7 +48,7 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!apiBase || !monitorKey) {
     console.warn("semantic-search proxy not configured");
-    return fallback(SEMANTIC_NOT_CONFIGURED_REASON);
+    return fallback(SEMANTIC_NOT_CONFIGURED_REASON, "not_configured");
   }
 
   let rawBody: unknown;
@@ -56,13 +56,13 @@ export async function POST(request: Request): Promise<Response> {
     rawBody = await request.json();
   } catch {
     console.warn("semantic-search proxy rejected a malformed body");
-    return fallback("invalid request body");
+    return fallback("invalid request body", "invalid_request");
   }
 
   const body = (rawBody ?? {}) as SemanticRequestBody;
   const query = typeof body.q === "string" ? body.q.trim() : "";
   if (!query) {
-    return fallback("empty query");
+    return fallback("empty query", "empty_query");
   }
 
   const payload: Record<string, unknown> = { q: query };
@@ -91,7 +91,10 @@ export async function POST(request: Request): Promise<Response> {
       console.warn(
         `semantic-search upstream returned ${upstream.status}`,
       );
-      return fallback(`semantic proxy upstream ${upstream.status}`);
+      return fallback(
+        `semantic proxy upstream ${upstream.status}`,
+        "upstream_error",
+      );
     }
 
     let data: unknown;
@@ -99,13 +102,23 @@ export async function POST(request: Request): Promise<Response> {
       data = await upstream.json();
     } catch {
       console.warn("semantic-search upstream returned invalid JSON");
-      return fallback("semantic proxy invalid response");
+      return fallback(
+        "semantic proxy invalid response",
+        "upstream_invalid_response",
+      );
     }
 
     // Forward the upstream payload unchanged; this route adds nothing to it.
     return json(data);
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      console.warn("semantic-search upstream timed out");
+      return fallback("semantic proxy upstream timeout", "upstream_timeout");
+    }
     console.warn("semantic-search upstream unreachable");
-    return fallback("semantic proxy upstream unreachable");
+    return fallback("semantic proxy upstream unreachable", "upstream_unreachable");
   }
 }

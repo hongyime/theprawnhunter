@@ -111,7 +111,10 @@ describe("GET /api/watchlist-hit-link", () => {
     const response = await GET(linkRequest("not-a-uuid"));
 
     expect(response.status).toBe(400);
-    expect(await readJson(response)).toEqual({ url: null });
+    expect(await readJson(response)).toEqual({
+      url: null,
+      code: "invalid_hit_id",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -122,7 +125,65 @@ describe("GET /api/watchlist-hit-link", () => {
     const response = await GET(linkRequest(HIT_ID));
 
     expect(response.status).toBe(200);
-    expect(await readJson(response)).toEqual({ url: null });
+    expect(await readJson(response)).toEqual({
+      url: null,
+      code: "not_configured",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the upstream reports the hit is missing", async () => {
+    fetchMock.mockResolvedValue(new Response("missing", { status: 404 }));
+
+    const response = await GET(linkRequest(HIT_ID));
+
+    expect(response.status).toBe(404);
+    expect(await readJson(response)).toEqual({
+      url: null,
+      code: "not_found",
+    });
+  });
+
+  it("returns 502 without leaking the key on an upstream error", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("secret upstream diagnostics", { status: 500 }),
+    );
+
+    const response = await GET(linkRequest(HIT_ID));
+
+    expect(response.status).toBe(502);
+    const text = await response.text();
+    expect(JSON.parse(text)).toEqual({
+      url: null,
+      code: "upstream_error",
+    });
+    expect(text).not.toContain("server-only-secret");
+    expect(text).not.toContain("secret upstream diagnostics");
+  });
+
+  it("returns 502 when the upstream request throws", async () => {
+    fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const response = await GET(linkRequest(HIT_ID));
+
+    expect(response.status).toBe(502);
+    expect(await readJson(response)).toEqual({
+      url: null,
+      code: "upstream_unreachable",
+    });
+  });
+
+  it("returns 504 when the upstream times out", async () => {
+    fetchMock.mockRejectedValue(
+      Object.assign(new Error("timeout"), { name: "TimeoutError" }),
+    );
+
+    const response = await GET(linkRequest(HIT_ID));
+
+    expect(response.status).toBe(504);
+    expect(await readJson(response)).toEqual({
+      url: null,
+      code: "upstream_timeout",
+    });
   });
 });

@@ -165,6 +165,7 @@ describe("/api/ops/[action]", () => {
     expect(pauseResponse.status).toBe(503);
     expect(await readJson(statusResponse)).toEqual({
       error: OPS_NOT_CONFIGURED_REASON,
+      code: "not_configured",
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -181,6 +182,7 @@ describe("/api/ops/[action]", () => {
 
     expect(response.status).toBe(503);
     const text = await response.text();
+    expect(JSON.parse(text).code).toBe("upstream_error");
     expect(text).not.toContain("server-only-secret");
     expect(text).not.toContain("secret upstream diagnostics");
   });
@@ -197,6 +199,9 @@ describe("/api/ops/[action]", () => {
       context("status"),
     );
     expect(invalid.status).toBe(502);
+    expect(await readJson(invalid)).toMatchObject({
+      code: "upstream_invalid_response",
+    });
 
     fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
     const unreachable = await GET(
@@ -205,6 +210,26 @@ describe("/api/ops/[action]", () => {
     );
     expect(unreachable.status).toBe(502);
     const text = await unreachable.text();
+    expect(JSON.parse(text)).toMatchObject({ code: "upstream_unreachable" });
+    expect(text).not.toContain("server-only-secret");
+  });
+
+  it("returns 504 when the upstream times out", async () => {
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error("timeout"), { name: "TimeoutError" }),
+    );
+
+    const response = await GET(
+      authedRequest("http://dashboard.test/api/ops/status"),
+      context("status"),
+    );
+
+    expect(response.status).toBe(504);
+    const text = await response.text();
+    expect(JSON.parse(text)).toEqual({
+      error: "ops upstream timeout",
+      code: "upstream_timeout",
+    });
     expect(text).not.toContain("server-only-secret");
   });
 
@@ -214,18 +239,25 @@ describe("/api/ops/[action]", () => {
       context("delete"),
     );
     expect(unknown.status).toBe(404);
+    expect(await readJson(unknown)).toMatchObject({ code: "unknown_action" });
 
     const wrongMethod = await GET(
       authedRequest("http://dashboard.test/api/ops/pause"),
       context("pause"),
     );
     expect(wrongMethod.status).toBe(405);
+    expect(await readJson(wrongMethod)).toMatchObject({
+      code: "method_not_allowed",
+    });
 
     const statusPost = await POST(
       authedRequest("http://dashboard.test/api/ops/status", { method: "POST" }),
       context("status"),
     );
     expect(statusPost.status).toBe(405);
+    expect(await readJson(statusPost)).toMatchObject({
+      code: "method_not_allowed",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

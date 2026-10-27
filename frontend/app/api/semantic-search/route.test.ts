@@ -90,6 +90,7 @@ describe("POST /api/semantic-search", () => {
       results: [],
       fallback: true,
       reason: SEMANTIC_NOT_CONFIGURED_REASON,
+      code: "not_configured",
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -145,8 +146,25 @@ describe("POST /api/semantic-search", () => {
     expect(response.status).toBe(200);
     const text = await response.text();
     expect(JSON.parse(text).fallback).toBe(true);
+    expect(JSON.parse(text).code).toBe("upstream_error");
     expect(text).not.toContain("server-only-secret");
     expect(text).not.toContain("secret upstream diagnostics");
+  });
+
+  it("returns a code for an invalid upstream response", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("not json", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await POST(makeRequest({ q: "bitcoin" }));
+
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toMatchObject({
+      code: "upstream_invalid_response",
+    });
   });
 
   it("returns a 200 fallback when the upstream is unreachable", async () => {
@@ -157,6 +175,24 @@ describe("POST /api/semantic-search", () => {
     expect(response.status).toBe(200);
     const text = await response.text();
     expect(JSON.parse(text).fallback).toBe(true);
+    expect(JSON.parse(text).code).toBe("upstream_unreachable");
+    expect(text).not.toContain("server-only-secret");
+  });
+
+  it("returns a 200 fallback when the upstream times out", async () => {
+    fetchMock.mockRejectedValue(
+      Object.assign(new Error("timeout"), { name: "TimeoutError" }),
+    );
+
+    const response = await POST(makeRequest({ q: "bitcoin" }));
+
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(JSON.parse(text)).toMatchObject({
+      fallback: true,
+      code: "upstream_timeout",
+      reason: "semantic proxy upstream timeout",
+    });
     expect(text).not.toContain("server-only-secret");
   });
 
@@ -170,10 +206,17 @@ describe("POST /api/semantic-search", () => {
       body: "{not-json",
     });
 
-    expect((await POST(malformed)).status).toBe(200);
-    expect((await readJson(await POST(makeRequest({ q: "   " })))).fallback).toBe(
-      true,
-    );
+    const malformedResponse = await POST(malformed);
+    expect(malformedResponse.status).toBe(200);
+    expect(await readJson(malformedResponse)).toMatchObject({
+      code: "invalid_request",
+    });
+
+    const emptyResponse = await POST(makeRequest({ q: "   " }));
+    expect(await readJson(emptyResponse)).toMatchObject({
+      fallback: true,
+      code: "empty_query",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

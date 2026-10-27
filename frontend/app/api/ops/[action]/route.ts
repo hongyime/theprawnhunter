@@ -31,8 +31,12 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function errorResponse(reason: string, status: number): Response {
-  return json({ error: reason }, status);
+function errorResponse(
+  reason: string,
+  status: number,
+  code: string,
+): Response {
+  return json({ error: reason, code }, status);
 }
 
 function upstreamUrl(apiBase: string, action: OpsAction): string {
@@ -45,7 +49,7 @@ async function proxy(action: OpsAction): Promise<Response> {
 
   if (!apiBase || !monitorKey) {
     console.warn("ops proxy not configured");
-    return errorResponse(OPS_NOT_CONFIGURED_REASON, 503);
+    return errorResponse(OPS_NOT_CONFIGURED_REASON, 503, "not_configured");
   }
 
   try {
@@ -63,7 +67,11 @@ async function proxy(action: OpsAction): Promise<Response> {
       // Never relay the upstream body: it is untrusted and the status alone is
       // enough for the client to roll back its optimistic state.
       console.warn(`ops/${action} upstream returned ${upstream.status}`);
-      return errorResponse(`ops upstream ${upstream.status}`, upstream.status);
+      return errorResponse(
+        `ops upstream ${upstream.status}`,
+        upstream.status,
+        "upstream_error",
+      );
     }
 
     let data: unknown;
@@ -71,13 +79,26 @@ async function proxy(action: OpsAction): Promise<Response> {
       data = await upstream.json();
     } catch {
       console.warn(`ops/${action} upstream returned invalid JSON`);
-      return errorResponse("ops upstream invalid response", 502);
+      return errorResponse(
+        "ops upstream invalid response",
+        502,
+        "upstream_invalid_response",
+      );
     }
 
     return json(data);
-  } catch {
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      console.warn(`ops/${action} upstream timed out`);
+      return errorResponse("ops upstream timeout", 504, "upstream_timeout");
+    }
     console.warn(`ops/${action} upstream unreachable`);
-    return errorResponse("ops upstream unreachable", 502);
+    return errorResponse(
+      "ops upstream unreachable",
+      502,
+      "upstream_unreachable",
+    );
   }
 }
 
@@ -98,9 +119,9 @@ export async function GET(
     return proxy("status");
   }
   if (action === "pause" || action === "resume") {
-    return errorResponse("method not allowed", 405);
+    return errorResponse("method not allowed", 405, "method_not_allowed");
   }
-  return errorResponse("unknown ops action", 404);
+  return errorResponse("unknown ops action", 404, "unknown_action");
 }
 
 export async function POST(
@@ -115,7 +136,7 @@ export async function POST(
     return proxy(action);
   }
   if (action === "status") {
-    return errorResponse("method not allowed", 405);
+    return errorResponse("method not allowed", 405, "method_not_allowed");
   }
-  return errorResponse("unknown ops action", 404);
+  return errorResponse("unknown ops action", 404, "unknown_action");
 }
