@@ -70,6 +70,21 @@ def enqueue_watchlist_alert(message: str, attempts: int = 0) -> None:
         logger.warning(f"[Broadcaster] Could not queue watchlist alert: {exc}")
 
 
+def _configured_topic_id(topic_name: str) -> int | None:
+    """Return an operator-pinned topic id, bypassing session-based resolution."""
+    attr = {
+        WATCHLIST_TOPIC_NAME: "WATCHLIST_TOPIC_ID",
+        SYSTEM_LOGS_TOPIC_NAME: "SYSTEM_LOGS_TOPIC_ID",
+    }.get(topic_name)
+    if not attr:
+        return None
+    try:
+        raw = getattr(settings, attr, None)
+        return int(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _watchlist_topic_cache_key(group_id: int | str) -> str:
     return f"topic:watchlist_hits:{group_id}"
 
@@ -1051,6 +1066,15 @@ class BroadcasterService:
             logger.debug(
                 f"[Broadcaster] {topic_name} topic cache read failed: {exc}"
             )
+
+        configured = _configured_topic_id(topic_name)
+        if configured:
+            if client is not None:
+                try:
+                    client.setex(cache_key, cache_ttl, str(configured))
+                except Exception as exc:
+                    logger.debug(f"[Broadcaster] {topic_name} topic cache write failed: {exc}")
+            return configured
 
         topic_id = await self.ensure_topic(group_id, topic_name)
 

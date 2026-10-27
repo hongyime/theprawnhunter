@@ -249,3 +249,20 @@ async def test_send_watchlist_alert_returns_false_when_every_identity_fails(
 
     assert sent is False
     assert bot.calls[0]["message_thread_id"] == 909
+
+@pytest.mark.asyncio
+async def test_configured_topic_id_skips_session_lookup_on_cold_cache(monkeypatch):
+    fake_redis = _FakeRedis()
+    _patch_redis(monkeypatch, fake_redis)
+    bot = _FakeBot()
+    service = _service(monkeypatch, bot, topic_id=909)
+    monkeypatch.setattr(
+        "app.services.broadcaster_srv.settings.WATCHLIST_TOPIC_ID", 4242, raising=False
+    )
+
+    sent = await service.send_watchlist_alert("pinned")
+
+    assert sent is True
+    service.ensure_topic.assert_not_awaited()
+    assert bot.calls[0]["message_thread_id"] == 4242
+    assert fake_redis.setex_calls == [("topic:watchlist_hits:-100123", 604800, "4242")]

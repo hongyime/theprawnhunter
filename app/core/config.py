@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # Only these bots run the command handler (starthunter, help, etc.)
     MONITOR_BOT_TOKEN: str
     MONITOR_GROUP_ID: int | str
+    # Pinned forum topic ids. When set, alert delivery resolves the thread
+    # without a user session, so a cold cache can never fall back or queue.
+    WATCHLIST_TOPIC_ID: int | None = None
+    SYSTEM_LOGS_TOPIC_ID: int | None = None
     WHITELISTED_BOT_IDS: str = "" # Comma-separated IDs (or usernames)
     ANONYMOUS_ADMIN_ID: int = 1087968824  # Telegram anonymous group admin bot ID
     AUTO_ARCHIVE_MEDIA: bool = True
