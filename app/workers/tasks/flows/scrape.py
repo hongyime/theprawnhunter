@@ -1029,20 +1029,21 @@ def rescrape_active():
     from app.workers.celery_app import get_worker_loop
     return get_worker_loop().run_until_complete(_rescrape_active_logic())
 
-def _rescale_for_backlog(pending: int, batch: int, spread: int) -> tuple[int, int, bool]:
-    """Shrink (or skip) a rescrape cycle as the delivery backlog grows.
+def _rescale_for_backlog(pending: int, batch: int, spread: int) -> tuple[int, int]:
+    """Slow the rescrape crawl as the delivery backlog grows — never stop it.
 
-    Telegram caps how fast one group accepts messages; scraping faster than we
-    can deliver only grows the queue and ages out media. Returns
-    ``(batch, spread, skip)``.
+    Telegram caps how fast one group accepts messages, so scraping faster than
+    we can deliver only grows the queue and ages out media. Continuous slow
+    backfill is preferred over skipping: there is always some headroom, and a
+    skipped cycle simply defers work. Returns ``(batch, spread)``.
     """
-    pause_at = int(os.getenv("RESCRAPE_BACKLOG_PAUSE", "40000"))
     high_water = int(os.getenv("RESCRAPE_BACKLOG_HIGH", "25000"))
-    if pending >= pause_at:
-        return 0, spread, True
+    severe = int(os.getenv("RESCRAPE_BACKLOG_SEVERE", "40000"))
+    if pending >= severe:
+        return 5, spread * 4
     if pending >= high_water:
-        return max(5, batch // 5), spread * 2, False
-    return batch, spread, False
+        return max(5, batch // 5), spread * 2
+    return batch, spread
 
 
 async def _pending_backlog() -> int:
@@ -1091,19 +1092,13 @@ async def _rescrape_active_logic():
     CURSOR_KEY = "rescrape:cursor:last_id"  # noqa: N806 — function-scoped constant
 
     pending = await _pending_backlog()
-    BATCH_SIZE, SPREAD_SECONDS, skip_cycle = _rescale_for_backlog(  # noqa: N806
+    BATCH_SIZE, SPREAD_SECONDS = _rescale_for_backlog(  # noqa: N806
         pending, BATCH_SIZE, SPREAD_SECONDS
     )
-    if skip_cycle:
-        logger.warning(
-            f"[Rescrape] skipping cycle: {pending} messages queued for delivery "
-            f"(pause threshold {os.getenv('RESCRAPE_BACKLOG_PAUSE', '40000')})"
-        )
-        metrics.inc("rescrape.skipped_backlog")
-        return f"Rescrape skipped: backlog {pending}"
     if pending >= int(os.getenv("RESCRAPE_BACKLOG_HIGH", "25000")):
         logger.info(
-            f"[Rescrape] backlog {pending}: batch {BATCH_SIZE}, spread {SPREAD_SECONDS}s"
+            f"[Rescrape] backlog {pending}: slow backfill with batch {BATCH_SIZE}, "
+            f"spread {SPREAD_SECONDS}s"
         )
 
     broadcaster = get_broadcaster()
