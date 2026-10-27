@@ -1,5 +1,7 @@
 """Broadcast flow task definitions."""
 
+from datetime import datetime
+
 from app.services.honeypot_rendering import render_honeypot_broadcast
 
 from .common import *
@@ -268,6 +270,21 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
                 db.rpc("oldest_pending_per_credential", {"p_limit": max(1, batch_size)})
             )
             oldest_rows = response.data or []
+            # A row in retry backoff still owns its topic: hold the topic
+            # rather than letting a newer message overtake it.
+            if oldest_rows:
+                now_dt = datetime.now(UTC)
+                ready_rows = []
+                for row in oldest_rows:
+                    retry_at = row.get("next_retry_at")
+                    if retry_at:
+                        try:
+                            if datetime.fromisoformat(str(retry_at).replace("Z", "+00:00")) > now_dt:
+                                continue
+                        except ValueError:
+                            pass
+                    ready_rows.append(row)
+                oldest_rows = ready_rows
             if oldest_rows:
                 ids = [row["id"] for row in oldest_rows]
                 hydrated = await async_execute(
