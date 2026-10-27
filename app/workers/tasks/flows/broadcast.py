@@ -203,6 +203,26 @@ def _set_broadcast_reliability_columns_available(value: bool) -> None:
     _BROADCAST_RELIABILITY_COLUMNS_AVAILABLE = value
     _BROADCAST_RELIABILITY_LAST_CHECK = time.time()
 
+# Telegram rate-limits bots it considers spammy. When a large share of the
+# sender pool is restricted, pushing the same volume just converts messages
+# into failures, so capacity scales down with the restriction count.
+_SENDER_HEALTH_CACHE: dict[str, float] = {"checked_at": 0.0, "restricted": 0.0}
+
+
+def _restricted_sender_count(ttl_seconds: int = 60) -> int:
+    """Count bots currently cooling down as restricted (cached for a minute)."""
+    now = time.time()
+    if now - _SENDER_HEALTH_CACHE["checked_at"] < ttl_seconds:
+        return int(_SENDER_HEALTH_CACHE["restricted"])
+    try:
+        count = sum(1 for _ in redis_client.scan_iter(match="cooldown:bot_restricted:*", count=500))
+        _SENDER_HEALTH_CACHE["checked_at"] = now
+        _SENDER_HEALTH_CACHE["restricted"] = float(count)
+        return count
+    except Exception as exc:  # noqa: BLE001 - health check must never block delivery
+        logger.debug(f"[Broadcast] sender health check failed: {exc}")
+        return int(_SENDER_HEALTH_CACHE["restricted"])
+
 def _interleave_by_credential(rows: list[dict[str, Any]], batch_size: int) -> list[dict[str, Any]]:
     """Round-robin rows across credentials so every topic gets served.
 
@@ -654,6 +674,25 @@ async def _broadcast_logic():
     # Telegram allows ~20 sends/min per identity; claiming far more than that
     # per cycle only produces claim updates that are immediately released.
     BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 60))  # noqa: N806 — function-scoped constant
+
+    restricted = _restricted_sender_count()
+    skip_at = int(os.getenv("BROADCAST_RESTRICTED_SKIP_AT", 900))
+    if restricted >= skip_at:
+        logger.warning(
+            f"[Broadcast] {restricted} senders restricted; skipping this cycle to avoid "
+            f"burning retries"
+        )
+        return {"status": "throttled", "restricted": restricted}
+    threshold = int(os.getenv("BROADCAST_RESTRICTED_SLOWDOWN_THRESHOLD", 50))
+    if restricted > threshold:
+        max_throttle = float(os.getenv("BROADCAST_MAX_THROTTLE", 0.6))
+        penalty = min(max_throttle, restricted / 1000)
+        throttled_capacity = max(10, int(BROADCAST_BATCH_SIZE * (1 - penalty)))
+        logger.info(
+            f"[Broadcast] {restricted} senders restricted; capacity "
+            f"{BROADCAST_BATCH_SIZE} -> {throttled_capacity}"
+        )
+        BROADCAST_BATCH_SIZE = throttled_capacity
     messages = await _fetch_pending_broadcast_messages(BROADCAST_BATCH_SIZE, now_iso)
     if not messages:
         # Only log periodically or if verbose debug needed?

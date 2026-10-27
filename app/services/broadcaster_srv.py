@@ -754,7 +754,23 @@ class BroadcasterService:
                                 retryable=True,
                             )
 
-                        raise last_failure
+                        # The source message is gone (bot deleted it, or the
+                        # account lost access) but we still hold the text. The
+                        # text is the evidence that matters; do not lose the
+                        # whole message because its attachment expired.
+                        if (
+                            last_failure is not None
+                            and last_failure.reason
+                            in {"media_archive_not_found", "media_archive_missing_access_hash"}
+                            and to_send_text.strip()
+                        ):
+                            logger.warning(
+                                f"⚠️ Media for msg={msg_id} is gone "
+                                f"({last_failure.reason}); delivering text only."
+                            )
+                            last_failure = None
+                        else:
+                            raise last_failure
 
                     if not sent_via_media:
                         first_id = None
