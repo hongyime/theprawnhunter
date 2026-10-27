@@ -186,3 +186,41 @@ async def capture_from_telethon(client, message, key: str) -> Path | None:
         logger.debug(f"[MediaArchive] telethon capture failed: {exc}")
         target.unlink(missing_ok=True)
         return None
+
+
+async def capture_from_chat(client, chat_id, message_id: int, key: str) -> Path | None:
+    """Download a message's media over MTProto.
+
+    The Bot API refuses files over 20 MB. MTProto has no such wall, so this is
+    the path for large attachments and for messages that were captured without
+    a Bot API ``file_id``.
+    """
+    ok, reason = capacity_status()
+    if not ok:
+        logger.info(f"[MediaArchive] capture skipped ({reason})")
+        return None
+    target = path_for(key)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        entity = chat_id
+        if str(chat_id).lstrip("-").isdigit():
+            entity = int(chat_id)
+        message = await client.get_messages(entity, ids=int(message_id))
+        if not message or not getattr(message, "media", None):
+            return None
+        downloaded = await asyncio.wait_for(
+            client.download_media(message, file=str(target)), timeout=300
+        )
+        if not downloaded:
+            return None
+        size = target.stat().st_size if target.exists() else 0
+        if size > settings.MEDIA_ARCHIVE_MAX_FILE_BYTES:
+            target.unlink(missing_ok=True)
+            logger.info(f"[MediaArchive] skipping {size // 1024**2} MB file (over per-file cap)")
+            return None
+        _CAPACITY_CACHE["checked_at"] = 0.0
+        return target
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[MediaArchive] chat capture failed: {exc}")
+        target.unlink(missing_ok=True)
+        return None

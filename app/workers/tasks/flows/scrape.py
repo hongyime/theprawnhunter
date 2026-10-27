@@ -245,7 +245,85 @@ _STORE_MEDIA_TYPES = {"photo", "video", "document", "audio", "animation"}
 _MEDIA_CAPTURE_PER_RUN = 25
 
 
-async def _capture_media_for_rows(rows, bot_token: str, credential_id: str) -> int:
+async def _persist_thumb_path(message_id, file_meta: dict) -> None:
+    merged = dict(file_meta)
+    try:
+        res = await async_execute(
+            db.table("exfiltrated_messages").select("file_meta").eq("id", message_id).limit(1)
+        )
+        rows = res.data or []
+        stored = rows[0].get("file_meta") if rows else None
+        if isinstance(stored, dict):
+            merged = {**stored, **merged}
+        await async_execute(
+            db.table("exfiltrated_messages").update({"file_meta": merged}).eq("id", message_id)
+        )
+    except Exception as exc:  # noqa: BLE001 - thumbnail merge is best effort
+        logger.debug(f"[MediaArchive] thumb persist failed: {exc}")
+
+
+async def _thumb_from_cache(row: dict, media_type: str, key: str) -> None:
+    """Generate the evidence thumbnail while the bytes are still on disk."""
+    try:
+        from app.services import media_archive
+        from app.services.thumbnails import attach_thumbnail
+
+        path = media_archive.path_for(key)
+        if not path.exists() or path.stat().st_size > 25 * 1024**2:
+            return
+        msg_obj = {
+            "id": row.get("id"),
+            "credential_id": row.get("credential_id"),
+            "file_meta": row.get("file_meta") or {},
+        }
+        await attach_thumbnail(
+            msg_obj, media_type, path.read_bytes(), persist=_persist_thumb_path
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[MediaArchive] thumbnail skipped: {exc}")
+
+
+async def _capture_media_from_chat(rows, credential_id: str, chat_id) -> int:
+    """MTProto capture, for large files and rows captured without a file_id."""
+    from app.services import media_archive
+    from app.services.user_agent_srv import user_agent
+
+    candidates = [
+        row for row in rows
+        if row.get("media_type") in _STORE_MEDIA_TYPES and row.get("telegram_msg_id") is not None
+    ]
+    if not candidates or chat_id in (None, ""):
+        return 0
+
+    captured = 0
+    async with user_agent.lock:
+        if not await user_agent.start():
+            return 0
+        try:
+            for row in candidates[:_MEDIA_CAPTURE_PER_RUN]:
+                ok, reason = media_archive.capacity_status()
+                if not ok:
+                    logger.info(f"[MediaArchive] capture paused ({reason})")
+                    break
+                file_meta = row.get("file_meta") or {}
+                key = media_archive.key_for(
+                    credential_id, row["telegram_msg_id"], file_meta.get("file_id", "")
+                )
+                if media_archive.path_for(key).exists():
+                    continue
+                if await media_archive.capture_from_chat(
+                    user_agent.client, chat_id, row["telegram_msg_id"], key
+                ):
+                    captured += 1
+                    await _thumb_from_cache(row, row.get("media_type"), key)
+        finally:
+            await user_agent._disconnect()
+    if captured:
+        logger.info(f"[MediaArchive] captured {captured} file(s) over MTProto for {credential_id}")
+    return captured
+
+
+async def _capture_media_for_rows(rows, bot_token: str, credential_id: str, chat_id=None) -> int:
     """Download media bytes while the source is still alive.
 
     Delivery happens hours later, and by then credential bots have usually
@@ -273,6 +351,20 @@ async def _capture_media_for_rows(rows, bot_token: str, credential_id: str) -> i
             continue
         if await media_archive.capture_from_bot(bot_token, file_id, key):
             captured += 1
+            await _thumb_from_cache(row, media_type, key)
+    leftovers = [
+        row for row in rows
+        if row.get("media_type") in _STORE_MEDIA_TYPES
+        and not media_archive.path_for(
+            media_archive.key_for(
+                credential_id,
+                row.get("telegram_msg_id"),
+                (row.get("file_meta") or {}).get("file_id", ""),
+            )
+        ).exists()
+    ]
+    if leftovers and chat_id not in (None, ""):
+        captured += await _capture_media_from_chat(leftovers, credential_id, chat_id)
     if captured:
         logger.info(f"[MediaArchive] captured {captured} file(s) for {credential_id}")
     return captured
@@ -594,7 +686,7 @@ async def _exfiltrate_logic(cred_id: str):
                 await _index_telemetry_indicators(preflight_result.data or valid_updates)
                 await _publish_realtime_deltas(preflight_result.data or [])
                 await _capture_media_for_rows(
-                    preflight_result.data or valid_updates, bot_token, cred_id
+                    preflight_result.data or valid_updates, bot_token, cred_id, chat_id
                 )
     except Exception as e:
         logger.warning(f"⚠️ [Exfil] Preflight check failed for {cred_id}: {e}")
@@ -683,6 +775,10 @@ async def _exfiltrate_logic(cred_id: str):
             if result.data:
                 new_count += 1
                 index_candidates.extend(result.data)
+                try:
+                    await _capture_media_from_chat(result.data, cred_id, chat_id)
+                except Exception as exc:  # noqa: BLE001 - capture must never fail ingest
+                    logger.debug(f"[MediaArchive] post-scrape capture skipped: {exc}")
                 for stored_row in result.data:
                     if isinstance(stored_row, dict):
                         stored_row.setdefault("credential_id", cred_id)

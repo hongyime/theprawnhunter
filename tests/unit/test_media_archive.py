@@ -75,3 +75,54 @@ def test_sweep_only_removes_expired_files(cache_dir):
     assert removed == 1
     assert not old_path.exists()
     assert media_archive.path_for(new_key).exists()
+
+
+class _FakeMessage:
+    def __init__(self, media=True):
+        self.media = object() if media else None
+
+
+class _FakeClient:
+    def __init__(self, message, payload=b"video-bytes"):
+        self._message = message
+        self._payload = payload
+        self.downloaded = []
+
+    async def get_messages(self, entity, ids):
+        return self._message
+
+    async def download_media(self, message, file):
+        from pathlib import Path
+
+        path = Path(file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(self._payload)
+        self.downloaded.append(path)
+        return str(path)
+
+
+@pytest.mark.asyncio
+async def test_capture_from_chat_writes_file(cache_dir):
+    client = _FakeClient(_FakeMessage())
+    key = media_archive.key_for("c1", 99, "")
+    path = await media_archive.capture_from_chat(client, "@bot", 99, key)
+
+    assert path is not None
+    assert path.exists()
+    assert path.read_bytes() == b"video-bytes"
+
+
+@pytest.mark.asyncio
+async def test_capture_from_chat_skips_message_without_media(cache_dir):
+    client = _FakeClient(_FakeMessage(media=False))
+    key = media_archive.key_for("c1", 100, "")
+    assert await media_archive.capture_from_chat(client, "@bot", 100, key) is None
+
+
+@pytest.mark.asyncio
+async def test_capture_from_chat_respects_capacity(cache_dir, monkeypatch):
+    monkeypatch.setattr(settings, "MEDIA_ARCHIVE_ENABLED", False, raising=False)
+    client = _FakeClient(_FakeMessage())
+    key = media_archive.key_for("c1", 101, "")
+    assert await media_archive.capture_from_chat(client, "@bot", 101, key) is None
+    assert client.downloaded == []
