@@ -300,7 +300,11 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
     if not rows:
         return []
 
-    selected = _interleave_by_credential(rows, batch_size)
+    selected = await _filter_to_oldest_per_topic(
+        _interleave_by_credential(rows, batch_size)
+    )
+    if not selected:
+        return []
     ids = [row["id"] for row in selected]
     hydrated = await async_execute(
         db.table("exfiltrated_messages")
@@ -1212,3 +1216,45 @@ def close_revoked_topics(
             force=force,
         )
     )
+
+
+async def _filter_to_oldest_per_topic(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep only the oldest pending message per credential topic.
+
+    Each topic must read like a chat log, so a newer message cannot overtake an
+    older one in the same chat. One RPC resolves the oldest pending id per
+    credential for the whole batch; if it fails we fall back to the unfiltered
+    batch rather than stalling delivery.
+    """
+    if not rows or not os.getenv("BROADCAST_STRICT_PER_TOPIC_ORDER", "1") == "1":
+        return rows
+    credential_ids = sorted({row.get("credential_id") for row in rows if row.get("credential_id")})
+    if not credential_ids:
+        return rows
+    try:
+        response = await async_execute(
+            db.rpc(
+                "min_pending_message_ids",
+                {"p_credential_ids": [str(cid) for cid in credential_ids]},
+            )
+        )
+        oldest = {
+            str(item.get("credential_id")): item.get("min_msg_id")
+            for item in (response.data or [])
+        }
+    except Exception as exc:  # noqa: BLE001 - ordering is an improvement, not a gate
+        logger.warning(f"[Broadcast] per-topic ordering check failed, sending unfiltered: {exc}")
+        return rows
+
+    kept = [
+        row for row in rows
+        if oldest.get(str(row.get("credential_id"))) == row.get("telegram_msg_id")
+    ]
+    if len(kept) < len(rows):
+        logger.debug(
+            f"[Broadcast] ordering hold: {len(rows) - len(kept)} newer message(s) "
+            f"deferred behind older ones in their topic"
+        )
+    return kept
