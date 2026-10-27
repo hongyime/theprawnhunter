@@ -233,6 +233,8 @@ app.conf.update(
         "app.workers.tasks.flows.media",
         "app.workers.tasks.flows.findings",
         "app.workers.tasks.flows.broadcast",
+        "app.workers.tasks.flows.watchlist_alerts",
+        "app.workers.tasks.flows.stats_refresh",
         "app.workers.tasks.flows.health",
         "app.workers.tasks.flows.webhooks",
         "app.workers.tasks.flows.entities",
