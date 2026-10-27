@@ -14,21 +14,33 @@ server:
   limiter: false
   public_instance: false
 
-# Datacenter-IP reality check (verified 2026-10-27): brave, duckduckgo, google cse,
-# startpage and qwant all return CAPTCHA / 429 from this host. bing and yahoo work.
+# Engine selection is driven by what actually answers from this host
+# (verified 2026-10-27). Brave/DDG/Google/Qwant/Startpage/Bing/Yahoo are
+# captcha- or 429-blocked, so they are disabled instead of timing out.
 engines:
+  - name: yandex
+    disabled: false
+  - name: baidu
+    disabled: true
+  - name: seznam
+    disabled: true
+  - name: naver
+    disabled: false
+  - name: mwmbl
+    disabled: false
+  - name: yep
+    disabled: false
+  - name: wiby
+    disabled: false
   - name: bing
-    disabled: false
-    weight: 1.2
+    disabled: true
   - name: yahoo
-    disabled: false
+    disabled: true
   - name: duckduckgo
     disabled: true
   - name: brave
     disabled: true
   - name: google cse
-    disabled: true
-  - name: startpage
     disabled: true
   - name: qwant
     disabled: true
