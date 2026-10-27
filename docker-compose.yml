@@ -81,6 +81,7 @@ services:
     volumes:
       - sessions:/app/sessions
       - imports:/app/imports
+      - media_archive:/data/media-archive
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/', timeout=5)"]
       interval: 30s
