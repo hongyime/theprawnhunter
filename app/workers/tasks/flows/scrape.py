@@ -332,26 +332,9 @@ async def _capture_media_for_rows(rows, bot_token: str, credential_id: str, chat
     """
     from app.services import media_archive
 
-    captured = 0
-    for row in rows:
-        if captured >= _MEDIA_CAPTURE_PER_RUN:
-            break
-        file_meta = row.get("file_meta") or {}
-        file_id = file_meta.get("file_id")
-        media_type = row.get("media_type")
-        msg_id = row.get("telegram_msg_id")
-        if not file_id or media_type not in _STORE_MEDIA_TYPES or msg_id is None:
-            continue
-        ok, reason = media_archive.capacity_status()
-        if not ok:
-            logger.info(f"[MediaArchive] capture paused ({reason})")
-            break
-        key = media_archive.key_for(credential_id, msg_id, file_id)
-        if media_archive.path_for(key).exists():
-            continue
-        if await media_archive.capture_from_bot(bot_token, file_id, key):
-            captured += 1
-            await _thumb_from_cache(row, media_type, key)
+    captured = await media_archive.capture_bot_rows(
+        rows, bot_token, credential_id, _MEDIA_CAPTURE_PER_RUN
+    )
     leftovers = [
         row for row in rows
         if row.get("media_type") in _STORE_MEDIA_TYPES

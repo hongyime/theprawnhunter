@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     MEDIA_ARCHIVE_DIR: str = "/data/media-archive"
     MEDIA_ARCHIVE_MAX_BYTES: int = 8 * 1024**3
     MEDIA_ARCHIVE_MIN_FREE_BYTES: int = 10 * 1024**3
-    MEDIA_ARCHIVE_MAX_FILE_BYTES: int = 50 * 1024**2
+    MEDIA_ARCHIVE_MAX_FILE_BYTES: int = 150 * 1024**2
     MEDIA_ARCHIVE_RETENTION_HOURS: int = 120
 
     # Heavy media enrichment (ASR/OCR)

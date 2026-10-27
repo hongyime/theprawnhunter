@@ -30,6 +30,7 @@ logger = get_logger(__name__)
 
 _CAPACITY_CACHE: dict[str, float] = {"checked_at": 0.0, "used": 0.0}
 _CAPACITY_TTL = 30.0
+_STORE_MEDIA_TYPES = {"photo", "video", "document", "audio", "animation"}
 
 
 def root() -> Path:
@@ -224,3 +225,73 @@ async def capture_from_chat(client, chat_id, message_id: int, key: str) -> Path 
         logger.debug(f"[MediaArchive] chat capture failed: {exc}")
         target.unlink(missing_ok=True)
         return None
+
+
+async def _persist_thumb_path(message_id, file_meta: dict) -> None:
+    """Merge thumb_path into the stored file_meta without clobbering enrichment."""
+    try:
+        from app.core.database import db
+        from app.infrastructure.database import execute_async
+
+        merged = dict(file_meta)
+        res = await execute_async(
+            db.table("exfiltrated_messages").select("file_meta").eq("id", message_id).limit(1)
+        )
+        rows = res.data or []
+        stored = rows[0].get("file_meta") if rows else None
+        if isinstance(stored, dict):
+            merged = {**stored, **merged}
+        await execute_async(
+            db.table("exfiltrated_messages").update({"file_meta": merged}).eq("id", message_id)
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[MediaArchive] thumb persist failed: {exc}")
+
+
+async def _thumb_from_cache(row: dict, media_type: str, key: str) -> None:
+    """Generate the evidence thumbnail while the bytes are still on disk."""
+    try:
+        from app.services.thumbnails import attach_thumbnail
+
+        path = path_for(key)
+        if not path.exists() or path.stat().st_size > 25 * 1024**2:
+            return
+        msg_obj = {
+            "id": row.get("id"),
+            "credential_id": row.get("credential_id"),
+            "file_meta": row.get("file_meta") or {},
+        }
+        await attach_thumbnail(
+            msg_obj, media_type, path.read_bytes(), persist=_persist_thumb_path
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[MediaArchive] thumbnail skipped: {exc}")
+
+
+async def capture_bot_rows(
+    rows, bot_token: str, credential_id: str, limit: int = 25
+) -> int:
+    """Capture Bot API media for freshly ingested rows (and thumbnail it)."""
+    captured = 0
+    for row in rows:
+        if captured >= limit:
+            break
+        file_meta = row.get("file_meta") or {}
+        file_id = file_meta.get("file_id")
+        media_type = row.get("media_type")
+        msg_id = row.get("telegram_msg_id")
+        if not file_id or media_type not in _STORE_MEDIA_TYPES or msg_id is None:
+            continue
+        ok, reason = capacity_status()
+        if not ok:
+            logger.info(f"[MediaArchive] capture paused ({reason})")
+            break
+        key = key_for(credential_id, msg_id, file_id)
+        if path_for(key).exists():
+            continue
+        if await capture_from_bot(bot_token, file_id, key):
+            captured += 1
+            await _thumb_from_cache(row, media_type, key)
+    if captured:
+        logger.info(f"[MediaArchive] captured {captured} file(s) for {credential_id}")
+    return captured

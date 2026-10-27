@@ -215,6 +215,37 @@ def extract_honeypot_message(payload: dict[str, Any], credential_id: str) -> dic
     return None
 
 
+async def _capture_honeypot_media(rows, credential_id: str) -> None:
+    """Archive honeypot attachments at ingest, while their bytes still exist."""
+    media_rows = [
+        row for row in rows
+        if (row.get("file_meta") or {}).get("file_id")
+        and row.get("media_type") in {"photo", "video", "document", "audio", "animation"}
+    ]
+    if not media_rows:
+        return
+    try:
+        from app.core.redis_srv import redis_srv
+        from app.services import media_archive
+
+        cache_key = f"cred:bot_token:{credential_id}"
+        token = redis_srv.client.get(cache_key)
+        if not token:
+            from app.core.security import security
+
+            res = await execute_async(
+                db.table("discovered_credentials").select("bot_token").eq("id", credential_id).limit(1)
+            )
+            records = res.data or []
+            if not records or not records[0].get("bot_token"):
+                return
+            token = security.decrypt(records[0]["bot_token"]).strip()
+            redis_srv.client.setex(cache_key, 3600, token)
+        await media_archive.capture_bot_rows(media_rows, token, credential_id)
+    except Exception as exc:  # noqa: BLE001 - capture must never block ingest
+        logger.debug(f"[Honeypot] media capture skipped: {exc}")
+
+
 async def forward_honeypot_message(payload: dict[str, Any], credential_id: str) -> dict[str, Any] | None:
     """Forward a honeypot update to exfiltrated_messages and trigger broadcast.
 
