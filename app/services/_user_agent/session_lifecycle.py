@@ -1,6 +1,9 @@
 """User-agent session lifecycle operations."""
 
 from .common import *
+from app.core.redis_srv import redis_srv  # noqa: E402
+
+_SESSION_LEASE_SECONDS = 600  # 10 minutes, refreshed on every connect
 
 
 class UserAgentSessionUnavailableError(RuntimeError):
@@ -474,67 +477,52 @@ class UserAgentSessionLifecycle:
                 logger.warning(f"    ⚠️ [UserAgent] Error releasing locks: {e2}")
 
     async def _acquire_db_lease(self, session_path: str) -> bool:
+        """Take the cross-worker session lease in Redis.
+
+        This used to be an UPDATE on ``telegram_accounts`` on every connect,
+        which turned a five-row table into a million-update hotspot. Redis has
+        the same mutual-exclusion semantics with no WAL, no dead tuples and no
+        autovacuum pressure.
+        """
+        key = f"lease:user_agent_session:{os.path.abspath(session_path)}"
         try:
-            from app.core.database import db
-            abs_path = os.path.abspath(session_path)
-            res = await asyncio.to_thread(
-                lambda: db.table("telegram_accounts").select("phone,locked_by,locked_until").eq("session_path", abs_path).limit(1).execute()
-            )
-            if not res.data:
+            client = redis_srv.client
+            holder = client.get(key)
+            if holder == self._instance_id:
+                client.expire(key, _SESSION_LEASE_SECONDS)
+                self._lease_key = key
+                self._current_phone = key
                 return True
-            row = res.data[0]
-            phone = row.get("phone")
-            if not phone:
+            if client.set(key, self._instance_id, nx=True, ex=_SESSION_LEASE_SECONDS):
+                self._lease_key = key
+                self._current_phone = key
                 return True
-
-            # Check if we already hold this lease (same instance_id and not expired)
-            current_holder = row.get("locked_by")
-            current_until = row.get("locked_until")
-            if current_holder == self._instance_id and current_until:
-                # We already hold it -- just refresh the TTL
-                lease_until = (datetime.now(UTC) + timedelta(minutes=10)).isoformat()
-                await asyncio.to_thread(
-                    lambda: db.table("telegram_accounts")
-                        .update({"locked_until": lease_until})
-                        .eq("phone", phone)
-                        .eq("locked_by", self._instance_id)
-                        .execute()
-                )
-                self._current_phone = phone
-                return True
-
-            # Try to acquire fresh lease (only if unlocked or expired)
-            lease_until = (datetime.now(UTC) + timedelta(minutes=10)).isoformat()
-            updated = await asyncio.to_thread(
-                lambda: db.table("telegram_accounts")
-                    .update({"locked_by": self._instance_id, "locked_until": lease_until})
-                    .eq("phone", phone)
-                    .or_("locked_until.is.null,locked_until.lt.now()")
-                    .execute()
-            )
-            if updated.data:
-                self._current_phone = phone
-                return True
+            ttl = client.ttl(key)
+            if ttl is not None and ttl < 0:
+                # A holder died without expiring the key; reclaim it.
+                client.delete(key)
+                if client.set(key, self._instance_id, nx=True, ex=_SESSION_LEASE_SECONDS):
+                    self._lease_key = key
+                    self._current_phone = key
+                    return True
             return False
         except Exception as e:
-            logger.warning(f"    ⚠️ [UserAgent] DB lease failed: {e}")
+            logger.warning(f"    ⚠️ [UserAgent] Session lease failed (failing open): {e}")
             return True
 
     async def _release_db_lease(self):
-        if not self._current_phone:
+        key = getattr(self, "_lease_key", None)
+        if not key:
+            self._current_phone = None
             return
         try:
-            from app.core.database import db
-            await asyncio.to_thread(
-                lambda: db.table("telegram_accounts")
-                    .update({"locked_by": None, "locked_until": None})
-                    .eq("phone", self._current_phone)
-                    .eq("locked_by", self._instance_id)
-                    .execute()
-            )
+            client = redis_srv.client
+            if client.get(key) == self._instance_id:
+                client.delete(key)
         except Exception as e:
-            logger.warning(f"    ⚠️ [UserAgent] DB lease release failed: {e}")
+            logger.warning(f"    ⚠️ [UserAgent] Session lease release failed: {e}")
         finally:
+            self._lease_key = None
             self._current_phone = None
 
     async def stop(self):

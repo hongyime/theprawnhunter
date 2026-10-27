@@ -46,12 +46,28 @@ for _android_package_ext in (".apk", ".apks", ".xapk"):
 SYSTEM_LOGS_TOPIC_NAME = "System Logs"
 SYSTEM_LOGS_TOPIC_CACHE_TTL = 86400
 WATCHLIST_TOPIC_NAME = "Watchlist Hits"
-WATCHLIST_TOPIC_CACHE_TTL = 86400
+WATCHLIST_TOPIC_CACHE_TTL = 7 * 86400
+WATCHLIST_ALERT_RETRY_KEY = "watchlist:alert:retry"
 GENERAL_THREAD_ID = 1
 
 
 def _system_logs_topic_cache_key(group_id: int | str) -> str:
     return f"topic:system_logs:{group_id}"
+
+
+def enqueue_watchlist_alert(message: str, attempts: int = 0) -> None:
+    """Persist a watchlist hit that could not reach its topic yet."""
+    try:
+        import json
+
+        from app.core.redis_srv import redis_srv
+
+        redis_srv.client.lpush(
+            WATCHLIST_ALERT_RETRY_KEY,
+            json.dumps({"message": message, "attempts": attempts}),
+        )
+    except Exception as exc:  # noqa: BLE001 - never break the caller
+        logger.warning(f"[Broadcaster] Could not queue watchlist alert: {exc}")
 
 
 def _watchlist_topic_cache_key(group_id: int | str) -> str:
@@ -1081,15 +1097,16 @@ class BroadcasterService:
             message_thread_id=GENERAL_THREAD_ID,
         )
 
-    async def send_watchlist_alert(self, message: str) -> bool:
-        """Sends a watchlist hit to the Watchlist Hits topic, falling back to General.
+    async def send_watchlist_alert(self, message: str, *, queue_on_failure: bool = True) -> bool:
+        """Sends a watchlist hit to the Watchlist Hits topic.
 
-        Uses the shared control-channel delivery path, so identity rotation and
-        the control-channel rate limiter behave exactly as they do for
-        ``send_log``. Never raises into callers.
+        Never falls back to General: a hit posted in the wrong topic is worse
+        than a hit delivered a few minutes late. Topic resolution needs a user
+        session, which is briefly unavailable while sessions are flood-waited,
+        so failures are queued in Redis and retried by
+        ``flow.drain_watchlist_alerts``.
         """
         group_id = settings.MONITOR_GROUP_ID
-        topic_id: int | None = None
         try:
             topic_id = await self._resolve_named_topic_id(
                 group_id,
@@ -1100,8 +1117,11 @@ class BroadcasterService:
         except Exception as exc:
             logger.warning(
                 f"[Broadcaster] Watchlist Hits topic unavailable for {group_id}; "
-                f"falling back to General: {exc}"
+                f"queued for retry, NOT posted to General: {exc}"
             )
+            if queue_on_failure:
+                enqueue_watchlist_alert(message)
+            return False
 
         return await self._send_control_message(
             f"👁️ [Watchlist]\n{message}",

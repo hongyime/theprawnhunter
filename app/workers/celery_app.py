@@ -298,6 +298,10 @@ app.conf.update(
         # ============================================
         # BROADCAST & RESCRAPE
         # ============================================
+        "drain-watchlist-alerts-2min": {
+            "task": "flow.drain_watchlist_alerts",
+            "schedule": crontab(minute="*/2"),
+        },
         "stats-refresh-every-minute": {
             "task": "stats.refresh_monitor_stats",
             "schedule": crontab(minute="*"),
@@ -715,6 +719,7 @@ app.conf.update(
 # can amplify a backlog (e.g. a stale force-webhook takeover enqueuing 200
 # exfiltrations long after its scheduled run).
 _BEAT_EXPIRY_SECONDS: dict[str, int] = {
+    "drain-watchlist-alerts-2min": 90,
     "stats-refresh-every-minute": 45,
     "broadcast-every-minute": 180,
     "firehose-github-events-30s": 25,

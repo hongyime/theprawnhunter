@@ -153,7 +153,7 @@ async def test_send_watchlist_alert_uses_resolved_topic_and_caches_id(monkeypatc
         }
     ]
     assert fake_redis.setex_calls == [
-        ("topic:watchlist_hits:-100123", 86400, "909")
+        ("topic:watchlist_hits:-100123", 604800, "909")
     ]
 
 
@@ -173,26 +173,25 @@ async def test_send_watchlist_alert_uses_cached_topic_without_ensuring(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_send_watchlist_alert_falls_back_to_general_when_topic_creation_fails(
+async def test_send_watchlist_alert_queues_instead_of_posting_to_general(
     monkeypatch, caplog
 ):
     fake_redis = _FakeRedis()
     _patch_redis(monkeypatch, fake_redis)
     bot = _FakeBot()
     service = _service(monkeypatch, bot, error=RuntimeError("topic create exploded"))
+    queued: list[str] = []
+    monkeypatch.setattr(
+        "app.services.broadcaster_srv.enqueue_watchlist_alert",
+        lambda message, attempts=0: queued.append(message),
+    )
 
-    sent = await service.send_watchlist_alert("must still arrive")
+    sent = await service.send_watchlist_alert("must stay in its topic")
 
-    assert sent is True
-    assert bot.calls == [
-        {
-            "chat_id": -100123,
-            "text": "👁️ [Watchlist]\nmust still arrive",
-        }
-    ]
-    assert "message_thread_id" not in bot.calls[0]
-    assert fake_redis.setex_calls == []
-    assert "falling back to General" in caplog.text
+    assert sent is False
+    assert bot.calls == []  # never posted to General
+    assert queued == ["must stay in its topic"]
+    assert "queued for retry" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -232,7 +231,7 @@ async def test_shared_resolver_caches_each_topic_under_its_own_key(monkeypatch):
 
     assert fake_redis.setex_calls == [
         ("topic:system_logs:-100123", 86400, "777"),
-        ("topic:watchlist_hits:-100123", 86400, "909"),
+        ("topic:watchlist_hits:-100123", 604800, "909"),
     ]
     assert [call.get("message_thread_id") for call in bot.calls] == [777, 909]
 
