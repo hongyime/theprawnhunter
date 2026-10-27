@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { authHeaders } from "@/lib/api-auth";
+import { ProxyFailure, semanticFallbackNotice } from "@/lib/proxy-errors";
 import { supabase } from "@/lib/supabase";
 
 export type EvidenceSearchRow = {
@@ -26,7 +27,6 @@ export const SEARCH_DEBOUNCE_MS = 300;
 export const SEARCH_RESULT_LIMIT = 50;
 export const SEARCH_MIN_QUERY = 3;
 export const SEARCH_MIN_QUERY_HINT = "Type at least 3 characters";
-export const SEMANTIC_NOTICE = "Semantic unavailable — showing keyword results";
 
 type SearchMode = "fts" | "semantic";
 
@@ -345,14 +345,17 @@ export default function SearchView({
           limit: SEARCH_RESULT_LIMIT,
         }),
       });
-      if (!response.ok) {
-        throw new Error(`semantic proxy returned ${response.status}`);
-      }
-      const payload = (await response.json()) as {
+      const payload = (await response.json().catch(() => null)) as {
         results?: SemanticHit[];
         fallback?: boolean;
-      };
-      if (payload?.fallback) throw new Error("semantic fallback");
+        code?: string;
+      } | null;
+      if (!response.ok) {
+        throw new ProxyFailure(payload?.code ?? null, response.status);
+      }
+      if (payload?.fallback) {
+        throw new ProxyFailure(payload?.code ?? null, response.status);
+      }
       return hydrateSemanticRows(payload?.results ?? [], trimmedQuery);
     }
 
@@ -365,8 +368,11 @@ export default function SearchView({
         try {
           rows = await runSemantic();
           mode = "semantic";
-        } catch {
-          fallbackNotice = SEMANTIC_NOTICE;
+        } catch (error) {
+          fallbackNotice =
+            error instanceof ProxyFailure
+              ? semanticFallbackNotice(error.code, error.status)
+              : semanticFallbackNotice(null, 0);
         }
       }
 

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { authHeaders } from "@/lib/api-auth";
+import { proxyFailureMessage } from "@/lib/proxy-errors";
 import { supabase } from "@/lib/supabase";
 
 export type WatchlistHit = {
@@ -140,17 +141,39 @@ export default function WatchlistHitsView() {
           headers: await authHeaders(),
         },
       );
+      const payload = (await response.json().catch(() => null)) as {
+        url?: unknown;
+        code?: unknown;
+      } | null;
       if (!response.ok) {
-        throw new Error(`link lookup returned ${response.status}`);
-      }
-      const payload = (await response.json()) as { url?: string | null };
-      if (!payload.url) {
-        setLinkError("No Telegram link is available for this hit.");
+        if (response.status === 404) {
+          setLinkError("No Telegram link is available for this hit.");
+        } else {
+          setLinkError(
+            proxyFailureMessage(
+              typeof payload?.code === "string" ? payload.code : null,
+              response.status,
+              "Telegram link lookup",
+            ),
+          );
+        }
         return;
       }
-      window.open(payload.url, "_blank", "noopener,noreferrer");
+      if (typeof payload?.url === "string" && payload.url.length > 0) {
+        window.open(payload.url, "_blank", "noopener,noreferrer");
+      } else if (typeof payload?.code === "string") {
+        setLinkError(
+          proxyFailureMessage(
+            payload.code,
+            response.status,
+            "Telegram link lookup",
+          ),
+        );
+      } else {
+        setLinkError("No Telegram link is available for this hit.");
+      }
     } catch {
-      setLinkError("The Telegram link could not be resolved. Try again.");
+      setLinkError(proxyFailureMessage(null, 0, "Telegram link lookup"));
     } finally {
       setOpeningId(null);
     }

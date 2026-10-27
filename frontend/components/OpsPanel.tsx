@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Play, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { authHeaders } from "@/lib/api-auth";
+import { proxyFailureMessage } from "@/lib/proxy-errors";
 
 export const OPS_POLL_INTERVAL_MS = 30_000;
 
@@ -51,9 +52,20 @@ export default function OpsPanel() {
         cache: "no-store",
         headers,
       });
-      const body = (await response.json().catch(() => null)) as OpsStatus | null;
+      const body = (await response.json().catch(() => null)) as
+        | (OpsStatus & { code?: unknown })
+        | null;
       if (!response.ok || !body) {
-        throw new Error("status unavailable");
+        if (mountedRef.current) {
+          setLoadError(
+            proxyFailureMessage(
+              typeof body?.code === "string" ? body.code : null,
+              response.status,
+              "Operations status",
+            ),
+          );
+        }
+        return false;
       }
       if (!mountedRef.current) return true;
       setStatus(body);
@@ -61,7 +73,7 @@ export default function OpsPanel() {
       return true;
     } catch {
       if (mountedRef.current) {
-        setLoadError("System status is unavailable.");
+        setLoadError(proxyFailureMessage(null, 0, "Operations status"));
       }
       return false;
     }
@@ -132,12 +144,15 @@ export default function OpsPanel() {
       const body = (await response.json().catch(() => null)) as {
         paused?: unknown;
         error?: unknown;
+        code?: unknown;
       } | null;
       if (!response.ok) {
         throw new Error(
-          typeof body?.error === "string"
-            ? body.error
-            : `Could not ${action} operations.`,
+          proxyFailureMessage(
+            typeof body?.code === "string" ? body.code : null,
+            response.status,
+            "Operations control",
+          ),
         );
       }
 

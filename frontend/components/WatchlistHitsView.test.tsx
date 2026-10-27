@@ -155,4 +155,48 @@ describe("WatchlistHitsView", () => {
       );
     });
   });
+
+  it("reports a missing link on 404 without opening a window", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ url: null, code: "not_found" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(<WatchlistHitsView />);
+    expect(await screen.findByRole("cell", { name: "AWS keys" })).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /open in telegram/i })[0],
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No Telegram link is available for this hit.",
+    );
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the tunnel-down message on a 502 link lookup", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => ({ url: null, code: "upstream_unreachable" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(<WatchlistHitsView />);
+    expect(await screen.findByRole("cell", { name: "AWS keys" })).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /open in telegram/i })[0],
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "network tunnel may be offline",
+    );
+    expect(openSpy).not.toHaveBeenCalled();
+  });
 });

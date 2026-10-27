@@ -17,10 +17,9 @@ vi.mock("@/lib/supabase", () => ({
 
 vi.mock("@/lib/api-auth", () => ({ authHeaders: mockAuthHeaders }));
 
-import SearchView, {
-  HighlightedSnippet,
-  SEMANTIC_NOTICE,
-} from "./SearchView";
+import { semanticFallbackNotice } from "@/lib/proxy-errors";
+
+import SearchView, { HighlightedSnippet } from "./SearchView";
 
 const row = {
   id: "60000000-0000-0000-0000-000000000001",
@@ -252,7 +251,9 @@ describe("SearchView", () => {
     await userEvent.type(searchInput(), "bitcoin");
 
     expect(
-      await screen.findByText(SEMANTIC_NOTICE, undefined, { timeout: 2000 }),
+      await screen.findByText(semanticFallbackNotice(null, 0), undefined, {
+        timeout: 2000,
+      }),
     ).toBeInTheDocument();
     expect(mockRpc).toHaveBeenCalledWith("search_evidence", {
       q: "bitcoin",
@@ -273,6 +274,7 @@ describe("SearchView", () => {
         results: [],
         fallback: true,
         reason: "semantic proxy not configured",
+        code: "not_configured",
       }),
     });
     mockRpc.mockResolvedValue({ data: [row], error: null });
@@ -284,9 +286,42 @@ describe("SearchView", () => {
     await userEvent.type(searchInput(), "bitcoin");
 
     expect(
-      await screen.findByText(SEMANTIC_NOTICE, undefined, { timeout: 2000 }),
+      await screen.findByText(
+        semanticFallbackNotice("not_configured", 200),
+        undefined,
+        { timeout: 2000 },
+      ),
     ).toBeInTheDocument();
     expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("result-mode")).toHaveTextContent("FTS");
+  });
+
+  it("surfaces the tunnel-down notice and still runs FTS on upstream_unreachable", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [],
+        fallback: true,
+        code: "upstream_unreachable",
+      }),
+    });
+    mockRpc.mockResolvedValue({ data: [row], error: null });
+    render(<SearchView onOpenChat={vi.fn()} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /semantic search/i }),
+    );
+    await userEvent.type(searchInput(), "bitcoin");
+
+    const notice = await screen.findByText(
+      semanticFallbackNotice("upstream_unreachable", 200),
+      undefined,
+      { timeout: 2000 },
+    );
+    expect(notice).toHaveTextContent("network tunnel may be offline");
+    await waitFor(() => {
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+    });
     expect(screen.getByTestId("result-mode")).toHaveTextContent("FTS");
   });
 
@@ -314,7 +349,9 @@ describe("SearchView", () => {
     await userEvent.type(searchInput(), "bitcoin");
 
     expect(
-      await screen.findByText(SEMANTIC_NOTICE, undefined, { timeout: 2000 }),
+      await screen.findByText(semanticFallbackNotice(null, 0), undefined, {
+        timeout: 2000,
+      }),
     ).toBeInTheDocument();
     expect(mockRpc).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("result-mode")).toHaveTextContent("FTS");

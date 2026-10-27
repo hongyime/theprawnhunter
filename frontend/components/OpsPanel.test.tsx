@@ -117,14 +117,33 @@ describe("OpsPanel", () => {
     expect(screen.getByRole("button", { name: "Resume" })).toBeDisabled();
 
     await act(async () => {
-      post.resolve(jsonResponse({ error: "ops upstream 503" }, 503));
+      post.resolve(
+        jsonResponse({ error: "ops upstream 503", code: "upstream_error" }, 503),
+      );
     });
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent("ops upstream 503");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Operations control returned an error. Try again shortly.",
+      );
     });
     expect(screen.getByLabelText("System state")).toHaveTextContent("Running");
     expect(screen.getByRole("button", { name: "Resume" })).toBeDisabled();
+  });
+
+  it("shows the tunnel-down message and Retry when status fetch fails", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: "ops upstream unreachable", code: "upstream_unreachable" },
+        502,
+      ),
+    );
+
+    render(<OpsPanel />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("network tunnel may be offline");
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 
   it("resumes without a confirmation and reports the result", async () => {
