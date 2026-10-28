@@ -54,7 +54,11 @@ async def _automated_retention_cleanup_async() -> dict[str, Any]:
     configured_batch = int(getattr(settings, "RETENTION_BATCH_SIZE", 1000))
     batch_size = max(MIN_RETENTION_FETCH_LIMIT, min(MAX_RETENTION_FETCH_LIMIT, configured_batch))
 
-    async def _delete_in_batches(table_name: str, build_query_fn) -> int:
+    async def _delete_in_batches(
+        table_name: str,
+        build_query_fn,
+        protect_finding_sources: bool = False,
+    ) -> int:
         deleted_total = 0
         CHUNK_SIZE = 100  # Avoid HTTP 414 Request-URI Too Large (100 UUIDs ~ 3.7 KB)
         for _ in range(10):  # Bounded to max 10 chunks per invocation to prevent long-running worker stalls
@@ -66,6 +70,28 @@ async def _automated_retention_cleanup_async() -> dict[str, Any]:
             ids = [r["id"] for r in rows if "id" in r]
             if not ids:
                 break
+            if protect_finding_sources and table_name == "exfiltrated_messages":
+                # Findings keep only a pseudonymized excerpt; keep the source
+                # message so an operator can still read the actual evidence.
+                backed: set[str] = set()
+                for i in range(0, len(ids), CHUNK_SIZE):
+                    chunk = ids[i : i + CHUNK_SIZE]
+                    referenced = await async_execute(
+                        db.table("finding_evidence")
+                        .select("source_id")
+                        .eq("source_table", "exfiltrated_messages")
+                        .in_("source_id", chunk)
+                    )
+                    backed.update(
+                        str(row["source_id"])
+                        for row in (referenced.data or [])
+                        if row.get("source_id")
+                    )
+                ids = [row_id for row_id in ids if row_id not in backed]
+                if not ids:
+                    break
+                # shortcut: held rows at the head can starve later prunes; move
+                # this to an SQL NOT EXISTS RPC if pruning volume matters.
             for i in range(0, len(ids), CHUNK_SIZE):
                 chunk = ids[i : i + CHUNK_SIZE]
                 await async_execute(db.table(table_name).delete().in_("id", chunk))
@@ -132,10 +158,12 @@ async def _automated_retention_cleanup_async() -> dict[str, Any]:
         del_broadcasted = await _delete_in_batches(
             "exfiltrated_messages",
             lambda q: q.eq("is_broadcasted", True).lt("created_at", msg_cutoff),
+            protect_finding_sources=True,
         )
         del_unbroadcasted = await _delete_in_batches(
             "exfiltrated_messages",
             lambda q: q.eq("is_broadcasted", False).lt("created_at", msg_stale_cutoff),
+            protect_finding_sources=True,
         )
         results["exfiltrated_messages"] = del_broadcasted + del_unbroadcasted
         results["exfiltrated_messages_stale_unbroadcasted"] = del_unbroadcasted

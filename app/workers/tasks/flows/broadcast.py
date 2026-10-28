@@ -1324,8 +1324,36 @@ async def _prune_failed_broadcasts_async(hours: int = 6) -> dict[str, int]:
         ids = [row["id"] for row in (res.data or []) if row.get("id")]
         if not ids:
             break
-        await async_execute(db.table("exfiltrated_messages").delete().in_("id", ids))
-        deleted += len(ids)
+        # Findings keep only a pseudonymized excerpt; the source message is the
+        # only place an operator can read the actual evidence. Never prune a
+        # message a finding still points at.
+        backed: set[str] = set()
+        for start in range(0, len(ids), 100):
+            batch = ids[start : start + 100]
+            referenced = await async_execute(
+                db.table("finding_evidence")
+                .select("source_id")
+                .eq("source_table", "exfiltrated_messages")
+                .in_("source_id", batch)
+            )
+            backed.update(
+                str(row["source_id"])
+                for row in (referenced.data or [])
+                if row.get("source_id")
+            )
+        deletable = [row_id for row_id in ids if row_id not in backed]
+        if not deletable:
+            logger.info(
+                "[Broadcast] held %d terminal-failure row(s) referenced by findings",
+                len(ids),
+            )
+            break
+        # shortcut: held rows at the head can starve later prunes; move this to
+        # an SQL NOT EXISTS RPC if terminal-failure volume becomes material.
+        await async_execute(
+            db.table("exfiltrated_messages").delete().in_("id", deletable)
+        )
+        deleted += len(deletable)
         if len(ids) < 500:
             break
     if deleted:

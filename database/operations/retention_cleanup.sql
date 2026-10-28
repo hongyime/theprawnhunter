@@ -21,8 +21,15 @@ DECLARE
 BEGIN
     SELECT COUNT(*) INTO v_count
     FROM public.exfiltrated_messages AS message
-    WHERE (message.is_broadcasted IS TRUE AND message.created_at < v_now - INTERVAL '30 days')
-       OR (message.is_broadcasted IS NOT TRUE AND message.created_at < v_now - INTERVAL '90 days');
+    WHERE (
+            (message.is_broadcasted IS TRUE AND message.created_at < v_now - INTERVAL '30 days')
+         OR (message.is_broadcasted IS NOT TRUE AND message.created_at < v_now - INTERVAL '90 days')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM public.finding_evidence AS evidence
+          WHERE evidence.source_table = 'exfiltrated_messages'
+            AND evidence.source_id = message.id::text
+      );
     v_results := v_results || jsonb_build_object('exfiltrated_messages', v_count);
 
     SELECT COUNT(*) INTO v_count
@@ -142,8 +149,15 @@ BEGIN
     SELECT 'exfiltrated_messages', message.id::text, message.created_at,
            to_jsonb(message), v_now, v_batch_id
     FROM public.exfiltrated_messages AS message
-    WHERE (message.is_broadcasted IS TRUE AND message.created_at < v_now - INTERVAL '30 days')
-       OR (message.is_broadcasted IS NOT TRUE AND message.created_at < v_now - INTERVAL '90 days')
+    WHERE (
+            (message.is_broadcasted IS TRUE AND message.created_at < v_now - INTERVAL '30 days')
+         OR (message.is_broadcasted IS NOT TRUE AND message.created_at < v_now - INTERVAL '90 days')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM public.finding_evidence AS evidence
+          WHERE evidence.source_table = 'exfiltrated_messages'
+            AND evidence.source_id = message.id::text
+      )
     ON CONFLICT (source_table, source_id) DO UPDATE SET
         source_recorded_at = EXCLUDED.source_recorded_at,
         payload = EXCLUDED.payload,
@@ -256,6 +270,11 @@ BEGIN
       AND (
             (message.is_broadcasted IS TRUE AND message.created_at < v_now - INTERVAL '30 days')
          OR (message.is_broadcasted IS NOT TRUE AND message.created_at < v_now - INTERVAL '90 days')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM public.finding_evidence AS evidence
+          WHERE evidence.source_table = 'exfiltrated_messages'
+            AND evidence.source_id = message.id::text
       );
 
     DELETE FROM public.audit_logs AS audit
