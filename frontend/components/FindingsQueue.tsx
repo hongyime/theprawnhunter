@@ -373,7 +373,8 @@ export default function FindingsQueue({
           "id,type,canonical_key,title,summary,why_it_matters,recommended_action," +
             "confidence,severity,priority,score_explanation,status,assignee," +
             "first_seen_at,last_seen_at,evidence_count,material_version,last_material_change_at",
-        );
+        )
+        .gt("evidence_count", 0);
       if (typeFilter !== "all") query = query.eq("type", typeFilter);
       if (statusFilter === "open") query = query.in("status", OPEN_STATUSES);
       else if (statusFilter !== "all") query = query.eq("status", statusFilter);

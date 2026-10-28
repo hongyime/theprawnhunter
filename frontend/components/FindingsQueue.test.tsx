@@ -67,11 +67,13 @@ function builderFor(
     order: vi.fn(),
     limit: vi.fn(),
     range: vi.fn(),
+    gt: vi.fn(),
   };
   builder.select.mockReturnValue(builder);
   builder.eq.mockReturnValue(builder);
   builder.in.mockReturnValue(builder);
   builder.order.mockReturnValue(builder);
+  builder.gt.mockReturnValue(builder);
   builder.limit.mockResolvedValue({ data, error });
   builder.range.mockResolvedValue({ data, error });
   return builder;
