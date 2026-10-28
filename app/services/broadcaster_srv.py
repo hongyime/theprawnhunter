@@ -282,9 +282,9 @@ class BroadcasterService:
         if token not in self._bots:
             request = HTTPXRequest(
                 connection_pool_size=100,
-                pool_timeout=60.0,
-                read_timeout=25.0,
-                write_timeout=25.0,
+                pool_timeout=30.0,
+                read_timeout=10.0,
+                write_timeout=10.0,
             )
             self._bots[token] = Bot(token=token, request=request)
         return self._bots[token]

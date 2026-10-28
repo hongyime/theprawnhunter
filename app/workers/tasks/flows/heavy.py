@@ -185,7 +185,7 @@ async def _download(file_meta: dict, credential_id: str | None) -> bytes | None:
 # ==============================================
 # ASR
 # ==============================================
-@app.task(name="heavy.transcribe_media", soft_time_limit=5400, time_limit=5700)
+@app.task(name="heavy.transcribe_media", soft_time_limit=10800, time_limit=11100)
 def transcribe_media(message_id: str):
     """Transcribe a voice/audio/video-note message into ``file_meta``."""
     from app.workers.celery_app import get_worker_loop
@@ -310,7 +310,7 @@ def _is_image_media(media_type: str, file_meta: dict) -> bool:
     return file_name.endswith(OCR_IMAGE_EXTENSIONS)
 
 
-@app.task(name="heavy.ocr_media", soft_time_limit=5400, time_limit=5700)
+@app.task(name="heavy.ocr_media", soft_time_limit=10800, time_limit=11100)
 def ocr_media(message_id: str):
     """OCR a photo/document image into ``file_meta``."""
     from app.workers.celery_app import get_worker_loop

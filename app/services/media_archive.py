@@ -156,7 +156,7 @@ async def capture_from_bot(token: str, file_id: str, key: str) -> Path | None:
         logger.info(f"[MediaArchive] capture skipped ({reason})")
         return None
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             meta = (
                 await client.get(
                     f"https://api.telegram.org/bot{token}/getFile",
@@ -213,7 +213,7 @@ async def capture_from_telethon(client, message, key: str) -> Path | None:
     temp.unlink(missing_ok=True)
     try:
         downloaded = await asyncio.wait_for(
-            client.download_media(message, file=str(temp)), timeout=300
+            client.download_media(message, file=str(temp)), timeout=120
         )
         if not downloaded:
             return None
@@ -256,7 +256,7 @@ async def capture_from_chat(client, chat_id, message_id: int, key: str) -> Path 
         if not message or not getattr(message, "media", None):
             return None
         downloaded = await asyncio.wait_for(
-            client.download_media(message, file=str(temp)), timeout=300
+            client.download_media(message, file=str(temp)), timeout=120
         )
         if not downloaded:
             return None
