@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { BarChart3, Check, Copy, Link2, Network, Radar, Search, WalletCards } from "lucide-react";
+import { Check, Copy, Link2, Network, Radar, Search, WalletCards } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { Credential } from "@/app/page";
 
@@ -32,8 +32,8 @@ const TYPE_LABELS: Record<IndicatorType, string> = {
 };
 
 const TYPE_STYLES: Record<IndicatorType, string> = {
-    network_domain: "bg-cyan-50 text-cyan-700 border-cyan-200",
-    canonical_url: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    network_domain: "bg-[#197e74]/10 text-[#12645c] border-[#197e74]/30",
+    canonical_url: "bg-[#f4f7fa] text-slate-700 border-slate-200",
     wallet_address: "bg-emerald-50 text-emerald-700 border-emerald-200",
 };
 
@@ -143,23 +143,18 @@ export default function TelemetryAnalyticsView({
         window.setTimeout(() => setCopiedId(null), 1200);
     }
 
-    const displayName = credential?.meta?.bot_username
-        ? `@${credential.meta.bot_username}`
-        : credential?.meta?.chat_title || "Unknown Bot";
     const displayBotId = credential?.meta?.bot_id || credential?.id.slice(0, 8);
     const tableColumnCount = scope === "global" ? 5 : 4;
 
     if (isCredentialScope && !credential) {
         return (
-            <section className="flex-1 overflow-y-auto bg-slate-100">
+            <section className="flex-1 overflow-y-auto bg-[#f4f7fa] text-[#172033]">
                 <HeaderShell
-                    icon={<Radar className="h-5 w-5 text-cyan-600" />}
                     title="Bot Intel"
-                    subtitle="Select a bot to inspect telemetry indicators for that credential."
                     badge="no bot selected"
                 />
                 <div className="flex min-h-[calc(100vh-5rem)] items-center justify-center px-4">
-                    <div className="max-w-sm rounded border border-slate-200 bg-white p-5 text-center shadow-sm">
+                    <div className="max-w-sm rounded-lg border border-slate-200 bg-white p-5 text-center shadow-[0_1px_0_rgba(23,32,51,0.04)]">
                         <Radar className="mx-auto h-8 w-8 text-slate-400" />
                         <h2 className="mt-3 text-sm font-semibold text-slate-800">No bot selected</h2>
                         <p className="mt-1 text-sm text-slate-500">
@@ -172,26 +167,14 @@ export default function TelemetryAnalyticsView({
     }
 
     return (
-        <section className="flex-1 overflow-y-auto bg-slate-100 text-slate-900">
+        <section className="flex-1 overflow-y-auto bg-[#f4f7fa] text-[#172033]">
             <HeaderShell
-                icon={
-                    scope === "global" ? (
-                        <BarChart3 className="h-5 w-5 text-cyan-600" />
-                    ) : (
-                        <Radar className="h-5 w-5 text-cyan-600" />
-                    )
-                }
                 title={scope === "global" ? "All Telemetry" : "Bot Intel"}
-                subtitle={
-                    scope === "global"
-                        ? "All bots, latest extracted telemetry indicators."
-                        : displayName
-                }
                 badge={scope === "global" ? `latest ${limit} rows` : credential?.source || "selected bot"}
                 meta={
                     scope === "credential" ? (
                         <div className="flex items-center gap-2">
-                            <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-mono uppercase text-slate-600">
+                            <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-mono uppercase text-slate-600">
                                 {credential?.source}
                             </span>
                             <span className="text-xs font-mono text-slate-400">ID: {displayBotId}</span>
@@ -200,7 +183,7 @@ export default function TelemetryAnalyticsView({
                 }
             />
 
-            <div className="space-y-3 p-3 md:p-4">
+            <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 md:p-7">
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <MetricCard
                         icon={<Network className="h-4 w-4" />}
@@ -219,7 +202,7 @@ export default function TelemetryAnalyticsView({
                     />
                 </div>
 
-                <div className="rounded border border-slate-200 bg-white shadow-sm">
+                <div className="rounded-lg border border-slate-200 bg-white shadow-[0_1px_0_rgba(23,32,51,0.04)]">
                     <div className="flex flex-col gap-2 border-b border-slate-200 p-3 lg:flex-row lg:items-center">
                         <div className="relative min-w-0 flex-1">
                             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -227,19 +210,19 @@ export default function TelemetryAnalyticsView({
                                 value={query}
                                 onChange={(event) => setQuery(event.currentTarget.value)}
                                 placeholder="Search indicator values"
-                                className="h-9 w-full rounded border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-cyan-500"
+                                className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-[#197e74]"
                             />
                         </div>
-                        <div className="flex overflow-x-auto rounded bg-slate-100 p-1">
+                        <div className="flex overflow-x-auto rounded-md bg-[#f4f7fa] p-1">
                             {(["all", ...INDICATOR_TYPES] as IndicatorFilter[]).map((type) => (
                                 <button
                                     key={type}
                                     type="button"
                                     onClick={() => setFilter(type)}
-                                    className={`whitespace-nowrap rounded px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                                    className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors ${
                                         filter === type
-                                            ? "bg-white text-slate-900 shadow-sm"
-                                            : "text-slate-500 hover:text-slate-800"
+                                            ? "bg-white text-[#172033] shadow-[0_1px_0_rgba(23,32,51,0.04)]"
+                                            : "text-slate-500 hover:text-[#172033]"
                                     }`}
                                 >
                                     {type === "all" ? "All" : TYPE_LABELS[type]}
@@ -269,7 +252,7 @@ export default function TelemetryAnalyticsView({
                                 )}
                                 {!isLoading && error && (
                                     <tr>
-                                        <td className="px-4 py-8 text-center text-rose-600" colSpan={tableColumnCount}>
+                                        <td className="px-4 py-8 text-center text-red-700" colSpan={tableColumnCount}>
                                             {error}
                                         </td>
                                     </tr>
@@ -291,7 +274,7 @@ export default function TelemetryAnalyticsView({
                                             </td>
                                         )}
                                         <td className="px-4 py-3">
-                                            <span className={`inline-flex rounded border px-2 py-1 text-xs font-semibold ${TYPE_STYLES[indicator.indicator_type]}`}>
+                                            <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${TYPE_STYLES[indicator.indicator_type]}`}>
                                                 {TYPE_LABELS[indicator.indicator_type]}
                                             </span>
                                         </td>
@@ -309,7 +292,7 @@ export default function TelemetryAnalyticsView({
                                             <button
                                                 type="button"
                                                 onClick={() => copyIndicator(indicator)}
-                                                className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-500 transition-colors hover:border-cyan-400 hover:text-cyan-700"
+                                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:border-[#197e74] hover:text-[#12645c]"
                                                 title="Copy indicator value"
                                                 aria-label="Copy indicator value"
                                             >
@@ -332,30 +315,22 @@ export default function TelemetryAnalyticsView({
 }
 
 function HeaderShell({
-    icon,
     title,
-    subtitle,
     badge,
     meta,
 }: {
-    icon: ReactNode;
     title: string;
-    subtitle: string;
     badge: string;
     meta?: ReactNode;
 }) {
     return (
-        <div className="sticky top-0 z-10 border-b bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-3 backdrop-blur">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <h1 className="flex items-center gap-2 text-base font-semibold text-slate-800">
-                        {icon}
-                        <span className="truncate">{title}</span>
-                    </h1>
-                    <p className="mt-0.5 truncate text-sm text-slate-500">{subtitle}</p>
-                    {meta && <div className="mt-1">{meta}</div>}
+                    <h1 className="sr-only">{title}</h1>
+                    {meta && <div>{meta}</div>}
                 </div>
-                <span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-500">
+                <span className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-500">
                     {badge}
                 </span>
             </div>
@@ -373,12 +348,12 @@ function MetricCard({
     value: number;
 }) {
     return (
-        <div className="rounded border border-slate-200 bg-white px-3 py-2 shadow-sm">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
             <div className="flex items-center justify-between gap-2 text-slate-500">
                 <span className="text-xs font-semibold uppercase">{label}</span>
                 {icon}
             </div>
-            <div className="mt-1 font-mono text-xl font-semibold text-slate-900">
+            <div className="mt-1 font-mono text-xl font-semibold text-[#172033]">
                 {value.toLocaleString()}
             </div>
         </div>
