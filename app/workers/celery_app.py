@@ -483,6 +483,10 @@ app.conf.update(
             "task": "flow.reconcile_topics_from_db",
             "schedule": crontab(minute=25, hour="*"),
         },
+        "reconcile-finding-evidence-hourly": {
+            "task": "flow.reconcile_orphaned_finding_evidence",
+            "schedule": crontab(minute=45, hour="*"),
+        },
         # User-agent group membership audit — verifies every active session's
         # account is still in the monitor group + has minimal admin perms.
         # Every 30 min.
@@ -761,6 +765,7 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "cluster-c2-operators-daily": 1800,
     "hash-exfil-media-30min": 300,
     "reconcile-topics-hourly": 600,
+    "reconcile-finding-evidence-hourly": 600,
     "audit-user-agent-membership-30min": 300,
     "media-duplicate-report-daily": 1800,
     "takeover-spike-check-15min": 300,

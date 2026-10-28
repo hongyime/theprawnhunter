@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import shutil
 import time
 from pathlib import Path
@@ -44,6 +45,27 @@ def key_for(credential_id: str, telegram_msg_id: int | str, file_id: str = "") -
 
 def path_for(key: str) -> Path:
     return root() / key
+
+
+def _part_path(target: Path) -> Path:
+    return target.with_name(f".{target.name}.part")
+
+
+def _finalize_capture(temp: Path, target: Path, expected_size: int = 0) -> bool:
+    """Promote a completed download; never expose a partial file at `target`."""
+    try:
+        size = temp.stat().st_size
+        if size <= 0 or (expected_size and size != expected_size):
+            temp.unlink(missing_ok=True)
+            return False
+        with temp.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(temp, target)
+        return True
+    except OSError as exc:
+        temp.unlink(missing_ok=True)
+        logger.debug(f"[MediaArchive] finalize failed for {target.name}: {exc}")
+        return False
 
 
 def _dir_bytes() -> int:
@@ -89,6 +111,7 @@ def capacity_status() -> tuple[bool, str]:
 def delete(key: str) -> bool:
     path = path_for(key)
     try:
+        _part_path(path).unlink(missing_ok=True)
         if path.exists():
             path.unlink()
             _CAPACITY_CACHE["checked_at"] = 0.0
@@ -106,9 +129,17 @@ def sweep(max_age_hours: int | None = None) -> int:
     base = root()
     if not base.exists():
         return 0
+    part_cutoff = time.time() - 3600
     for path in base.rglob("*"):
         try:
-            if path.is_file() and path.stat().st_mtime < cutoff:
+            if not path.is_file():
+                continue
+            mtime = path.stat().st_mtime
+            if path.name.endswith(".part"):
+                if mtime < part_cutoff:
+                    path.unlink()
+                    removed += 1
+            elif mtime < cutoff:
                 path.unlink()
                 removed += 1
         except OSError:
@@ -142,24 +173,30 @@ async def capture_from_bot(token: str, file_id: str, key: str) -> Path | None:
             remote = meta["result"]["file_path"]
             target = path_for(key)
             target.parent.mkdir(parents=True, exist_ok=True)
+            temp = _part_path(target)
+            temp.unlink(missing_ok=True)
             written = 0
             async with client.stream(
                 "GET", f"https://api.telegram.org/file/bot{token}/{remote}"
             ) as response:
                 if response.status_code != 200:
                     return None
-                with target.open("wb") as handle:
+                with temp.open("wb") as handle:
                     async for chunk in response.aiter_bytes(64 * 1024):
                         written += len(chunk)
                         if written > settings.MEDIA_ARCHIVE_MAX_FILE_BYTES:
-                            handle.close()
-                            target.unlink(missing_ok=True)
+                            temp.unlink(missing_ok=True)
                             logger.info("[MediaArchive] aborting capture: file exceeds cap")
                             return None
                         handle.write(chunk)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            if not _finalize_capture(temp, target, size):
+                return None
             _CAPACITY_CACHE["checked_at"] = 0.0
             return target
     except Exception as exc:  # noqa: BLE001 - capture must never break ingest
+        _part_path(path_for(key)).unlink(missing_ok=True)
         logger.debug(f"[MediaArchive] capture failed: {exc}")
         return None
 
@@ -172,20 +209,27 @@ async def capture_from_telethon(client, message, key: str) -> Path | None:
         return None
     target = path_for(key)
     target.parent.mkdir(parents=True, exist_ok=True)
+    temp = _part_path(target)
+    temp.unlink(missing_ok=True)
     try:
         downloaded = await asyncio.wait_for(
-            client.download_media(message, file=str(target)), timeout=300
+            client.download_media(message, file=str(temp)), timeout=300
         )
         if not downloaded:
             return None
-        if target.exists() and target.stat().st_size > settings.MEDIA_ARCHIVE_MAX_FILE_BYTES:
+        source = Path(str(downloaded))
+        if source != temp and source.exists():
+            temp = source
+        if not _finalize_capture(temp, target):
+            return None
+        if target.stat().st_size > settings.MEDIA_ARCHIVE_MAX_FILE_BYTES:
             target.unlink(missing_ok=True)
             return None
         _CAPACITY_CACHE["checked_at"] = 0.0
         return target
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"[MediaArchive] telethon capture failed: {exc}")
-        target.unlink(missing_ok=True)
+        temp.unlink(missing_ok=True)
         return None
 
 
@@ -202,6 +246,8 @@ async def capture_from_chat(client, chat_id, message_id: int, key: str) -> Path 
         return None
     target = path_for(key)
     target.parent.mkdir(parents=True, exist_ok=True)
+    temp = _part_path(target)
+    temp.unlink(missing_ok=True)
     try:
         entity = chat_id
         if str(chat_id).lstrip("-").isdigit():
@@ -210,11 +256,16 @@ async def capture_from_chat(client, chat_id, message_id: int, key: str) -> Path 
         if not message or not getattr(message, "media", None):
             return None
         downloaded = await asyncio.wait_for(
-            client.download_media(message, file=str(target)), timeout=300
+            client.download_media(message, file=str(temp)), timeout=300
         )
         if not downloaded:
             return None
-        size = target.stat().st_size if target.exists() else 0
+        source = Path(str(downloaded))
+        if source != temp and source.exists():
+            temp = source
+        if not _finalize_capture(temp, target):
+            return None
+        size = target.stat().st_size
         if size > settings.MEDIA_ARCHIVE_MAX_FILE_BYTES:
             target.unlink(missing_ok=True)
             logger.info(f"[MediaArchive] skipping {size // 1024**2} MB file (over per-file cap)")
@@ -223,7 +274,7 @@ async def capture_from_chat(client, chat_id, message_id: int, key: str) -> Path 
         return target
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"[MediaArchive] chat capture failed: {exc}")
-        target.unlink(missing_ok=True)
+        temp.unlink(missing_ok=True)
         return None
 
 

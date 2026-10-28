@@ -714,3 +714,89 @@ async def _mute_monitor_topics_logic() -> dict:
 
     logger.info(f"[TopicMute] muted {muted} external topic(s)")
     return {"status": "ok", "muted": muted}
+
+
+@app.task(name="flow.reconcile_orphaned_finding_evidence")
+def reconcile_orphaned_finding_evidence(batch_size: int = 500):
+    """Delete evidence links whose source record was pruned."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(
+        _reconcile_orphaned_finding_evidence_logic(batch_size)
+    )
+
+
+async def _reconcile_orphaned_finding_evidence_logic(
+    batch_size: int = 500,
+) -> dict:
+    removed = 0
+    tested = 0
+    cursor = None
+    while True:
+        query = (
+            db.table("finding_evidence")
+            .select("id,source_table,source_id")
+            .order("id")
+            .limit(batch_size)
+        )
+        if cursor is not None:
+            query = query.gt("id", cursor)
+        try:
+            result = await async_execute(query)
+        except Exception as exc:
+            return {
+                "status": "db_lookup_failed",
+                "error": str(exc)[:200],
+                "removed": removed,
+            }
+        rows = result.data or []
+        if not rows:
+            break
+        cursor = rows[-1]["id"]
+        tested += len(rows)
+        for table in ("exfiltrated_messages", "discovered_credentials"):
+            source_ids = sorted(
+                {
+                    str(row["source_id"])
+                    for row in rows
+                    if row.get("source_table") == table and row.get("source_id")
+                }
+            )
+            if not source_ids:
+                continue
+            existing: set[str] = set()
+            lookup_failed = False
+            for start in range(0, len(source_ids), 100):
+                chunk = source_ids[start : start + 100]
+                try:
+                    found = await async_execute(
+                        db.table(table).select("id").in_("id", chunk)
+                    )
+                except Exception:
+                    lookup_failed = True
+                    break
+                existing.update(
+                    str(row["id"]) for row in (found.data or []) if row.get("id")
+                )
+            if lookup_failed:
+                continue
+            missing = [
+                row["id"]
+                for row in rows
+                if row.get("source_table") == table
+                and str(row.get("source_id")) not in existing
+            ]
+            for start in range(0, len(missing), 100):
+                chunk = missing[start : start + 100]
+                try:
+                    await async_execute(
+                        db.table("finding_evidence").delete().in_("id", chunk)
+                    )
+                    removed += len(chunk)
+                except Exception as exc:
+                    logger.warning(f"[EvidenceReconcile] delete failed: {exc}")
+        if len(rows) < batch_size:
+            break
+    if removed:
+        logger.info(f"[EvidenceReconcile] removed {removed} orphaned evidence row(s)")
+    return {"status": "ok", "tested": tested, "removed": removed}
