@@ -54,6 +54,7 @@ vi.mock('@/components/Sidebar', () => ({
     activeView?: DashboardView;
     onViewChange?: (view: DashboardView) => void;
     onSelect?: (cred: Credential) => void;
+    onSignOut?: () => void;
   }) => (
     <div data-testid="sidebar">
       <span data-testid="sidebar-selected">{selected?.id ?? 'none'}</span>

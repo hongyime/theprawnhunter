@@ -131,7 +131,7 @@ export default function Home() {
           </p>
           <a
             href="/signin"
-            className="inline-block px-6 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700 font-medium"
+            className="inline-block px-6 py-2 bg-[#197e74] text-white rounded-md hover:bg-[#12645c] font-medium"
           >
             Sign In
           </a>
@@ -141,126 +141,97 @@ export default function Home() {
   }
 
   return (
-    <main className="flex h-screen w-full overflow-hidden bg-white">
-      {isMobile && (
-        <>
-          {/* Mobile top bar */}
-          <div className="fixed top-0 left-0 right-0 z-30 flex items-center gap-2 border-b bg-white px-3 py-2 shadow-sm">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen((v) => !v)}
-              className="rounded p-1.5 text-slate-700 hover:bg-slate-100"
-              aria-label={sidebarOpen ? "Close menu" : "Open menu"}
-            >
-              {sidebarOpen ? <LucideX className="h-5 w-5" /> : <LucideMenu className="h-5 w-5" />}
-            </button>
-            <span className="truncate text-sm font-semibold text-slate-800">
-              {activeView === "findings"
-                ? "Findings queue"
-                : activeView === "search"
-                ? "Search evidence"
-                : activeView === "watchlists"
-                ? "Watchlists"
-                : activeView === "dashboard"
-                ? "Dashboard"
-                : selected?.meta?.bot_username
-                ? `@${selected.meta.bot_username}`
-                : "The Prawn Hunter"}
-            </span>
-            <button
-              onClick={handleSignOut}
-              className="ml-auto rounded p-1.5 text-slate-700 hover:bg-slate-100"
-              aria-label="Sign out"
-            >
-              <LogOut className="h-5 w-5" />
-            </button>
-          </div>
-          {/* Backdrop */}
-          {sidebarOpen && (
-            <div
-              className="fixed inset-0 z-20 bg-black/40"
-              onClick={() => setSidebarOpen(false)}
-            />
-          )}
-        </>
-      )}
-
-      {/* Sidebar: fixed drawer on mobile, static column on desktop */}
-      <div
-        className={
-          isMobile
-            ? `fixed inset-y-0 left-0 z-30 flex transform bg-white shadow-xl transition-transform duration-200 ${
-                showTargetsPanel ? "w-[88vw] max-w-sm" : "w-auto"
-              } ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`
-            : showTargetsPanel
-            ? "w-1/3 min-w-75 shrink-0"
-            : "shrink-0"
-        }
-      >
-        <Sidebar
-          selected={selected}
-          activeView={activeView}
-          onViewChange={(v) => {
-            setActiveView(v);
-            if (isMobile) setSidebarOpen(false);
-          }}
-          onSelect={handleSelect}
-        />
-      </div>
-
-      {/* Main content */}
-      <div
-        className={`flex flex-1 flex-col overflow-hidden ${
-          isMobile ? "pt-12" : ""
-        }`}
-      >
-        {/* Desktop header with sign-out */}
-        {!isMobile && (
-          <div className="flex items-center justify-between border-b px-4 py-2 bg-slate-50">
-            <div
-              className="flex items-center gap-2"
-              title="Authenticated operator session"
-            >
-              <span className="text-sm font-medium text-slate-700">
-                Operator session
-              </span>
-              <span className="rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">
-                OPERATOR
-              </span>
-            </div>
-            <button
-              onClick={handleSignOut}
-              className="flex items-center gap-2 rounded px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-200"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign Out
-            </button>
-          </div>
+    <main className="flex h-screen w-full flex-col overflow-hidden bg-[#f4f7fa]">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 md:px-4">
+        {isMobile && (
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="rounded-md p-1.5 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+            aria-label={sidebarOpen ? "Close menu" : "Open menu"}
+          >
+            {sidebarOpen ? <LucideX className="h-5 w-5" /> : <LucideMenu className="h-5 w-5" />}
+          </button>
         )}
-        
-        {activeView === "findings" ? (
-          <FindingsQueue onDrilldown={handleFindingDrilldown} />
-        ) : activeView === "search" ? (
-          <SearchView
-            onOpenChat={(credentialId) =>
-              handleFindingDrilldown(credentialId, "chat")
-            }
+        <div
+          className="flex items-center gap-2"
+          title="Authenticated operator session"
+        >
+          <span className="text-sm font-medium text-slate-700">
+            Operator session
+          </span>
+          <span className="rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">
+            OPERATOR
+          </span>
+        </div>
+        <button
+          onClick={handleSignOut}
+          className="ml-auto flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+          aria-label="Sign Out"
+        >
+          <LogOut className="h-4 w-4" />
+          <span className="hidden sm:inline">Sign Out</span>
+        </button>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        {isMobile && sidebarOpen && (
+          <div
+            className="fixed inset-x-0 bottom-0 top-12 z-20 bg-black/40"
+            onClick={() => setSidebarOpen(false)}
           />
-        ) : activeView === "watchlists" ? (
-          <WatchlistView />
-        ) : activeView === "watchlistHits" ? (
-          <WatchlistHitsView />
-        ) : activeView === "ops" ? (
-          <OpsPanel />
-        ) : activeView === "dashboard" ? (
-          <DashboardView />
-        ) : activeView === "globalTelemetry" ? (
-          <TelemetryAnalyticsView scope="global" />
-        ) : activeView === "botTelemetry" ? (
-          <TelemetryAnalyticsView scope="credential" credential={selected} />
-        ) : (
-          <ChatWindow credential={selected} />
         )}
+
+        {/* Sidebar: fixed drawer on mobile below the app header, static column on desktop */}
+        <div
+          className={
+            isMobile
+              ? `fixed bottom-0 left-0 top-12 z-30 flex transform bg-white shadow-xl transition-transform duration-200 ${
+                  showTargetsPanel ? "w-[88vw] max-w-sm" : "w-auto"
+                } ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`
+              : showTargetsPanel
+              ? "w-1/3 min-w-75 shrink-0"
+              : "shrink-0"
+          }
+        >
+          <Sidebar
+            selected={selected}
+            activeView={activeView}
+            onViewChange={(v) => {
+              setActiveView(v);
+              if (isMobile) setSidebarOpen(false);
+            }}
+            onSelect={handleSelect}
+            onSignOut={handleSignOut}
+          />
+        </div>
+
+        {/* Tab content sits below the global operator header */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {activeView === "findings" ? (
+            <FindingsQueue onDrilldown={handleFindingDrilldown} />
+          ) : activeView === "search" ? (
+            <SearchView
+              onOpenChat={(credentialId) =>
+                handleFindingDrilldown(credentialId, "chat")
+              }
+            />
+          ) : activeView === "watchlists" ? (
+            <WatchlistView />
+          ) : activeView === "watchlistHits" ? (
+            <WatchlistHitsView />
+          ) : activeView === "ops" ? (
+            <OpsPanel />
+          ) : activeView === "dashboard" ? (
+            <DashboardView />
+          ) : activeView === "globalTelemetry" ? (
+            <TelemetryAnalyticsView scope="global" />
+          ) : activeView === "botTelemetry" ? (
+            <TelemetryAnalyticsView scope="credential" credential={selected} />
+          ) : (
+            <ChatWindow credential={selected} />
+          )}
+        </div>
       </div>
     </main>
   );

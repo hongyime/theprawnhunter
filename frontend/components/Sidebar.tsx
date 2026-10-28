@@ -11,6 +11,7 @@ import {
     History,
     LayoutDashboard,
     ListChecks,
+    LogOut,
     MessageSquareText,
     LucideTarget,
     Radar,
@@ -116,10 +117,10 @@ function ConfidenceBadge({ score }: { score: number | null }) {
   }
   const { label, cls } =
     score >= 0.8
-      ? { label: 'High', cls: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' }
+      ? { label: 'High', cls: 'bg-green-100 text-green-800' }
       : score >= 0.4
-      ? { label: 'Med', cls: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' }
-      : { label: 'Low', cls: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' }
+      ? { label: 'Med', cls: 'bg-yellow-100 text-yellow-800' }
+      : { label: 'Low', cls: 'bg-red-100 text-red-800' }
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${cls}`}>
       {label}
@@ -235,7 +236,7 @@ function TargetsPanel({
                 onClick={() => onToggleChatType(chatType)}
                 className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
                   pressed
-                    ? "bg-cyan-700 text-white"
+                    ? "bg-[#197e74] text-white"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
@@ -342,7 +343,7 @@ function TargetsPanel({
               </div>
               {(cred.chat_name || cred.meta?.chat_title) && (
                 <div className="text-xs text-slate-500 truncate mt-1">
-                  <span className="bg-cyan-50 text-cyan-700 px-1 py-0.5 rounded font-mono" title={cred.chat_name || cred.meta?.chat_title}>
+                  <span className="bg-[#197e74]/10 text-[#12645c] px-1 py-0.5 rounded-md font-mono" title={cred.chat_name || cred.meta?.chat_title}>
                     {chatTypeLabel(cred.chat_type)}: {cred.chat_name || cred.meta?.chat_title}
                   </span>
                 </div>
@@ -360,11 +361,13 @@ export default function Sidebar({
     activeView,
     onViewChange,
     onSelect,
+    onSignOut,
 }: {
     selected: Credential | null;
     activeView: DashboardView;
     onViewChange: (view: DashboardView) => void;
     onSelect: (cred: Credential) => void;
+    onSignOut: () => void;
 }) {
     const [credentials, setCredentials] = useState<SidebarCredential[]>([]);
     const [loading, setLoading] = useState(true);
@@ -631,7 +634,7 @@ export default function Sidebar({
                                     railExpanded ? "gap-2 px-2.5" : "justify-center px-0"
                                 } ${
                                     active
-                                        ? "border-l-emerald-600 bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
+                                        ? "border-l-[#197e74] bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
                                         : "border-l-transparent text-slate-500 hover:bg-slate-200 hover:text-slate-800"
                                 }`}
                             >
@@ -640,6 +643,20 @@ export default function Sidebar({
                             </button>
                         );
                     })}
+                </div>
+                <div className="mt-auto border-t border-slate-200 p-2">
+                    <button
+                        type="button"
+                        onClick={onSignOut}
+                        aria-label="Sign Out"
+                        title="Sign Out"
+                        className={`flex w-full items-center rounded-md py-2 text-sm font-semibold text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
+                            railExpanded ? "gap-2 px-2.5" : "justify-center px-0"
+                        }`}
+                    >
+                        <LogOut className="h-5 w-5 shrink-0" aria-hidden="true" />
+                        {railExpanded && <span className="truncate">Sign Out</span>}
+                    </button>
                 </div>
             </nav>
             {showsTargetsPanel(activeView) && (

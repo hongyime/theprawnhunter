@@ -118,6 +118,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
     activeView: "chat" as DashboardView,
     onViewChange: vi.fn(),
     onSelect: vi.fn(),
+    onSignOut: vi.fn(),
     ...overrides,
   };
   return render(<Sidebar {...props} />);
@@ -473,7 +474,12 @@ describe("Sidebar", () => {
 
   it("keeps the target filter text when switching views and back", async () => {
     const user = userEvent.setup();
-    const props = { selected: null, onViewChange: vi.fn(), onSelect: vi.fn() };
+    const props = {
+      selected: null,
+      onViewChange: vi.fn(),
+      onSelect: vi.fn(),
+      onSignOut: vi.fn(),
+    };
     const { rerender } = render(<Sidebar {...props} activeView="chat" />);
     await screen.findByText("3 of 3 targets");
 
