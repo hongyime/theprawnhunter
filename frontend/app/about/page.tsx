@@ -76,12 +76,12 @@ const PRIVACY = [
 ] as const;
 
 const SECTION_LABEL =
-  "font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500";
+  "font-mono text-xs font-bold uppercase tracking-[0.16em] text-slate-500";
 const CARD = "rounded-lg border border-slate-200 bg-white";
 const PRIMARY_BUTTON =
-  "inline-flex items-center justify-center rounded-md bg-[#197e74] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#12645c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]";
+  "inline-flex items-center justify-center rounded-md bg-accent px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const SECONDARY_BUTTON =
-  "inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]";
+  "inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 function Mark({ className }: { className?: string }) {
   return (
@@ -128,24 +128,24 @@ export default function AboutPage() {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
-            <Mark className="h-5 w-5 shrink-0 text-[#197e74]" />
+            <Mark className="h-5 w-5 shrink-0 text-accent" />
             <span className="truncate text-sm font-bold text-slate-800">
               The Prawn Hunter
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <span className="hidden rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600 md:inline">
+            <span className="hidden rounded bg-slate-200 px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.16em] text-slate-600 md:inline">
               Operator console
             </span>
             <a
               href="/"
-              className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Back to the app
             </a>
             <a
               href="/signin"
-              className="inline-flex items-center justify-center rounded-md bg-[#197e74] px-2.5 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#12645c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              className="inline-flex items-center justify-center rounded-md bg-accent px-2.5 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Sign in
             </a>
@@ -159,11 +159,11 @@ export default function AboutPage() {
             <p className={SECTION_LABEL}>Self-hosted OSINT pipeline</p>
             <h1
               id="hero-heading"
-              className="mt-3 max-w-3xl text-3xl font-bold tracking-tight text-slate-900"
+              className="mt-3 max-w-3xl text-2xl font-bold tracking-tight text-slate-900"
             >
               Exposed Telegram bots, found, proven, kept private.
             </h1>
-            <p className="mt-4 max-w-4xl text-base leading-7 text-slate-600">
+            <p className="mt-4 max-w-4xl text-sm leading-7 text-slate-600">
               The Prawn Hunter discovers leaked Telegram Bot API tokens across
               public sources, validates each one against the live Telegram API,
               and delivers the evidence to a private operator supergroup and
@@ -194,7 +194,7 @@ export default function AboutPage() {
             <ol className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {PIPELINE.map((step) => (
                 <li key={step.index} className={`${CARD} p-5`}>
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-[#197e74]">
+                  <span className="font-mono text-xs font-bold uppercase tracking-[0.16em] text-accent">
                     {step.index}
                   </span>
                   <h3 className="mt-2 text-sm font-semibold text-slate-900">
@@ -203,7 +203,7 @@ export default function AboutPage() {
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {step.body}
                   </p>
-                  <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                  <p className="mt-4 font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
                     {step.detail}
                   </p>
                 </li>
@@ -228,7 +228,7 @@ export default function AboutPage() {
                   key={feature.title}
                   className={`${CARD} p-5 shadow-[0_1px_0_rgba(23,32,51,0.04)]`}
                 >
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  <span className="font-mono text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
                     {String(index + 1).padStart(2, "0")}
                   </span>
                   <h3 className="mt-2 text-sm font-semibold text-slate-900">
@@ -274,7 +274,7 @@ export default function AboutPage() {
 
         <section aria-labelledby="access-heading">
           <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
-            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-6">
+            <div className="rounded-lg border border-accent/30 bg-accent/5 p-6">
               <h2 id="access-heading" className={SECTION_LABEL}>
                 Access
               </h2>

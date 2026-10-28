@@ -180,9 +180,9 @@ export default function OpsPanel() {
   return (
     <section
       aria-label="Operations controls"
-      className="h-full overflow-y-auto bg-[#f4f7fa]"
+      className="h-full overflow-y-auto bg-paper"
     >
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-paper/95 px-4 py-4 backdrop-blur md:px-7">
         <div className="flex flex-wrap items-center justify-end gap-3">
           <h1 className="sr-only">Operations</h1>
           <button
@@ -191,7 +191,7 @@ export default function OpsPanel() {
               void refresh();
             }}
             disabled={busy}
-            className="flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </button>
@@ -211,7 +211,7 @@ export default function OpsPanel() {
               onClick={() => {
                 void refresh();
               }}
-              className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Retry
             </button>
@@ -232,14 +232,14 @@ export default function OpsPanel() {
           <>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                <p className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
                   System state
                 </p>
-                <p className="mt-2 flex items-center gap-2 text-2xl font-black text-[#172033]">
+                <p className="mt-2 flex items-center gap-2 text-2xl font-bold text-ink">
                   <span
                     aria-hidden="true"
                     className={`inline-block h-2.5 w-2.5 rounded-full ${
-                      status.paused ? "bg-amber-500" : "bg-[#197e74]"
+                      status.paused ? "bg-red-600" : "bg-accent"
                     }`}
                   />
                   <span aria-label="System state">
@@ -249,13 +249,13 @@ export default function OpsPanel() {
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                <p className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
                   Redis
                 </p>
                 <p
                   aria-label="Redis health"
-                  className={`mt-2 text-2xl font-black ${
-                    status.redis === "ok" ? "text-[#197e74]" : "text-red-700"
+                  className={`mt-2 text-2xl font-bold ${
+                    status.redis === "ok" ? "text-accent" : "text-red-700"
                   }`}
                 >
                   {status.redis === "ok" ? "Online" : "Unreachable"}
@@ -263,12 +263,12 @@ export default function OpsPanel() {
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                <p className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
                   Pending broadcasts
                 </p>
                 <p
                   aria-label="Pending broadcasts"
-                  className="mt-2 text-2xl font-black text-[#172033]"
+                  className="mt-2 text-2xl font-bold text-ink"
                 >
                   {status.pending_broadcasts ?? "—"}
                 </p>
@@ -276,7 +276,7 @@ export default function OpsPanel() {
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
-              <h2 className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+              <h2 className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
                 Queue lengths
               </h2>
               <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -290,7 +290,7 @@ export default function OpsPanel() {
                     </dt>
                     <dd
                       aria-label={`Queue ${key}`}
-                      className="font-mono text-lg font-bold text-[#172033]"
+                      className="font-mono text-lg font-bold text-ink"
                     >
                       {status.queue_lengths[key] ?? 0}
                     </dd>
@@ -305,7 +305,7 @@ export default function OpsPanel() {
                   type="button"
                   onClick={() => setConfirmingPause(true)}
                   disabled={busy || status.paused || confirmingPause}
-                  className="flex items-center gap-2 rounded-md bg-[#172033] px-3 py-2 text-sm font-bold text-white hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-md bg-ink px-3 py-2 text-sm font-bold text-white hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Pause aria-hidden="true" className="h-4 w-4" />
                   Pause
@@ -316,7 +316,7 @@ export default function OpsPanel() {
                     void applyAction("resume");
                   }}
                   disabled={busy || !status.paused}
-                  className="flex items-center gap-2 rounded-md border border-[#197e74] bg-white px-3 py-2 text-sm font-bold text-[#197e74] hover:bg-[#197e74]/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-md border border-accent bg-white px-3 py-2 text-sm font-bold text-accent hover:bg-accent/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Play aria-hidden="true" className="h-4 w-4" />
                   Resume
@@ -332,12 +332,12 @@ export default function OpsPanel() {
                 <div
                   role="group"
                   aria-label="Confirm pause"
-                  className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3"
+                  className="mt-4 rounded-md border border-red-200 bg-red-50 p-3"
                 >
-                  <p className="text-sm font-semibold text-amber-900">
+                  <p className="text-sm font-semibold text-red-800">
                     Pause all scanners and broadcasting?
                   </p>
-                  <p className="mt-1 text-xs text-amber-800">
+                  <p className="mt-1 text-xs text-red-700">
                     In-flight tasks finish; new work waits until you resume.
                   </p>
                   <div className="mt-3 flex gap-2">
@@ -347,7 +347,7 @@ export default function OpsPanel() {
                         void applyAction("pause");
                       }}
                       disabled={busy}
-                      className="rounded-md border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-md border border-red-300 bg-red-100 px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Confirm pause
                     </button>
@@ -355,7 +355,7 @@ export default function OpsPanel() {
                       type="button"
                       onClick={() => setConfirmingPause(false)}
                       disabled={busy}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Cancel
                     </button>
@@ -366,7 +366,7 @@ export default function OpsPanel() {
               <p
                 role="status"
                 aria-live="polite"
-                className="mt-3 min-h-4 text-sm font-semibold text-[#197e74]"
+                className="mt-3 min-h-4 text-sm font-semibold text-accent"
               >
                 {actionMessage}
               </p>

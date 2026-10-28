@@ -43,12 +43,12 @@ export const CHART_COLORS = {
   grid: "#cbd5e1",
   axis: "#64748b",
   tooltipBackground: "#172033",
-  tooltipText: "#f8fafc",
+  tooltipText: "#ffffff",
 } as const;
 
 const HEALTH_COLORS: Record<string, string> = {
   active: "#197e74",
-  pending: "#d97706",
+  pending: "#64748b",
   revoked: "#dc2626",
   unknown: "#64748b",
 };
@@ -251,7 +251,7 @@ function ChartCard({
       aria-label={label}
       className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]"
     >
-      <figcaption className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#197e74]">
+      <figcaption className="font-mono text-xs uppercase tracking-[0.16em] text-accent">
         {title}
       </figcaption>
       <p className="mt-1 mb-3 text-sm text-slate-600">{caption}</p>
@@ -269,10 +269,10 @@ function ChartCard({
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
-      <dt className="font-mono text-[10px] uppercase tracking-wide text-slate-500">
+      <dt className="font-mono text-xs uppercase tracking-wide text-slate-500">
         {label}
       </dt>
-      <dd className="text-lg font-bold text-[#172033]">{value}</dd>
+      <dd className="text-lg font-bold text-ink">{value}</dd>
     </div>
   );
 }
@@ -376,9 +376,9 @@ export default function DashboardView() {
     <section
       aria-label="Dashboard charts"
       aria-busy={loading}
-      className="h-full overflow-y-auto bg-[#f4f7fa]"
+      className="h-full overflow-y-auto bg-paper"
     >
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-paper/95 px-4 py-4 backdrop-blur md:px-7">
         <h1 className="sr-only">Dashboard</h1>
         <div className="flex flex-wrap items-end justify-end gap-3">
           <div
@@ -394,10 +394,10 @@ export default function DashboardView() {
                   type="button"
                   onClick={() => setRange(option.days)}
                   aria-pressed={selected}
-                  className={`rounded px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
+                  className={`rounded px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                     selected
-                      ? "bg-white text-[#172033] shadow-sm"
-                      : "text-slate-500 hover:text-[#172033]"
+                      ? "bg-white text-ink shadow-sm"
+                      : "text-slate-500 hover:text-ink"
                   }`}
                 >
                   {option.label}
@@ -440,7 +440,7 @@ export default function DashboardView() {
             <button
               type="button"
               onClick={() => setRetryToken((value) => value + 1)}
-              className="flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              className="flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Retry
             </button>

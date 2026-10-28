@@ -113,13 +113,13 @@ export function filterTargets(
 
 function ConfidenceBadge({ score }: { score: number | null }) {
   if (score === null || score === undefined) {
-    return <span className="text-xs text-gray-400 font-mono">–</span>
+    return <span className="text-xs text-slate-400 font-mono">–</span>
   }
   const { label, cls } =
     score >= 0.8
-      ? { label: 'High', cls: 'bg-green-100 text-green-800' }
+      ? { label: 'High', cls: 'bg-accent/10 text-accent-strong' }
       : score >= 0.4
-      ? { label: 'Med', cls: 'bg-yellow-100 text-yellow-800' }
+      ? { label: 'Med', cls: 'bg-slate-200 text-slate-700' }
       : { label: 'Low', cls: 'bg-red-100 text-red-800' }
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${cls}`}>
@@ -189,7 +189,7 @@ function TargetsPanel({
       aria-label="Drill-down targets panel"
       className="flex min-w-0 flex-1 flex-col overflow-y-auto border-r bg-slate-50"
     >
-      <div className="border-b bg-slate-100 px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+      <div className="border-b bg-slate-100 px-4 py-2 font-mono text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
         Drill-down targets
       </div>
       <div className="border-b bg-white p-3 space-y-2">
@@ -214,7 +214,7 @@ function TargetsPanel({
                 type="button"
                 aria-pressed={pressed}
                 onClick={() => onToggleStatus(status)}
-                className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
+                className={`rounded px-1.5 py-0.5 font-mono text-xs uppercase transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                   pressed
                     ? "bg-slate-800 text-white"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
@@ -234,9 +234,9 @@ function TargetsPanel({
                 type="button"
                 aria-pressed={pressed}
                 onClick={() => onToggleChatType(chatType)}
-                className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
+                className={`rounded px-1.5 py-0.5 font-mono text-xs uppercase transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                   pressed
-                    ? "bg-[#197e74] text-white"
+                    ? "bg-accent text-white"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
@@ -248,7 +248,7 @@ function TargetsPanel({
         <div
           role="status"
           aria-live="polite"
-          className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500"
+          className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500"
         >
           {loading
             ? "Loading targets…"
@@ -258,7 +258,7 @@ function TargetsPanel({
           <p
             role="note"
             data-testid="server-search-note"
-            className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+            className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700"
           >
             Server search unavailable — showing matches from loaded targets.
           </p>
@@ -306,7 +306,7 @@ function TargetsPanel({
               <button
                 type="button"
                 onClick={onClearFilters}
-                className="mt-2 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                className="mt-2 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
                 Clear filters
               </button>
@@ -318,7 +318,7 @@ function TargetsPanel({
             <button
               onClick={() => onSelect(cred)}
               className={`p-4 border-b text-left hover:bg-slate-100 transition-colors ${
-                selected?.id === cred.id ? "bg-blue-50 border-l-4 border-l-blue-500" : ""
+                selected?.id === cred.id ? "bg-accent/10 border-l-4 border-l-accent" : ""
               }`}
             >
               <div className="flex justify-between w-full mb-1">
@@ -332,10 +332,10 @@ function TargetsPanel({
                 </span>
               </div>
               <div className="text-sm text-slate-500 truncate flex items-center gap-1">
-                <span className="bg-slate-200 px-1 py-0.5 rounded text-[10px] uppercase font-mono">{cred.source}</span>
+                <span className="bg-slate-200 px-1 py-0.5 rounded text-xs uppercase font-mono">{cred.source}</span>
                 <ConfidenceBadge score={cred.collection_yield_score ?? cred.confidence_score ?? null} />
                 {typeof cred.chat_member_count === "number" && cred.chat_member_count > 1 && (
-                  <span className="bg-blue-50 text-blue-700 px-1 py-0.5 rounded text-[10px] font-mono" title={`${cred.chat_member_count} members`}>
+                  <span className="bg-slate-100 text-slate-600 px-1 py-0.5 rounded text-xs font-mono" title={`${cred.chat_member_count} members`}>
                     👥{cred.chat_member_count >= 1000 ? `${Math.round(cred.chat_member_count / 1000)}k` : cred.chat_member_count}
                   </span>
                 )}
@@ -343,7 +343,7 @@ function TargetsPanel({
               </div>
               {(cred.chat_name || cred.meta?.chat_title) && (
                 <div className="text-xs text-slate-500 truncate mt-1">
-                  <span className="bg-[#197e74]/10 text-[#12645c] px-1 py-0.5 rounded-md font-mono" title={cred.chat_name || cred.meta?.chat_title}>
+                  <span className="bg-accent/10 text-accent-strong px-1 py-0.5 rounded-md font-mono" title={cred.chat_name || cred.meta?.chat_title}>
                     {chatTypeLabel(cred.chat_type)}: {cred.chat_name || cred.meta?.chat_title}
                   </span>
                 </div>
@@ -594,7 +594,7 @@ export default function Sidebar({
                             railExpanded ? "gap-2" : "justify-center"
                         }`}
                     >
-                        <LucideTarget className="h-5 w-5 shrink-0 text-red-600" aria-hidden="true" />
+                        <LucideTarget className="h-5 w-5 shrink-0 text-accent" aria-hidden="true" />
                         {railExpanded && (
                             <span className="truncate text-sm font-bold text-slate-800">
                                 The Prawn Hunter
@@ -607,7 +607,7 @@ export default function Sidebar({
                         aria-label={railExpanded ? "Collapse navigation" : "Expand navigation"}
                         aria-expanded={railExpanded}
                         title={railExpanded ? "Collapse navigation" : "Expand navigation"}
-                        className="flex w-full items-center justify-center gap-1 border-t py-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#197e74]"
+                        className="flex w-full items-center justify-center gap-1 border-t py-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
                     >
                         {railExpanded ? (
                             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -615,7 +615,7 @@ export default function Sidebar({
                             <ChevronRight className="h-4 w-4" aria-hidden="true" />
                         )}
                         {railExpanded && (
-                            <span className="text-[11px] font-semibold">Collapse</span>
+                            <span className="text-xs font-semibold">Collapse</span>
                         )}
                     </button>
                 </div>
@@ -630,7 +630,7 @@ export default function Sidebar({
                                 aria-pressed={active}
                                 title={label}
                                 onClick={() => onViewChange(view)}
-                                className={`flex w-full items-center rounded-md border-l-[3px] py-2 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
+                                className={`flex w-full items-center rounded-md border-l-[3px] py-2 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                                     railExpanded ? "gap-2 px-2.5" : "justify-center px-0"
                                 } ${
                                     active
@@ -650,7 +650,7 @@ export default function Sidebar({
                         onClick={onSignOut}
                         aria-label="Sign Out"
                         title="Sign Out"
-                        className={`flex w-full items-center rounded-md py-2 text-sm font-semibold text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] ${
+                        className={`flex w-full items-center rounded-md py-2 text-sm font-semibold text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                             railExpanded ? "gap-2 px-2.5" : "justify-center px-0"
                         }`}
                     >

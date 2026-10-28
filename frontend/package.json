@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && vitest run",
+    "test": "npm run typecheck && node scripts/check-design-tokens.mjs && vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

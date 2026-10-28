@@ -97,7 +97,7 @@ export default function SignInPage() {
         <div className="min-h-screen flex items-center justify-center bg-slate-100">
             <NeoCard className="max-w-md w-full space-y-8 p-8">
                 <div>
-                    <h2 className="text-center text-3xl font-bold text-slate-900">
+                    <h2 className="text-center text-2xl font-bold text-slate-900">
                         The Prawn Hunter
                     </h2>
                     <p className="mt-2 text-center text-sm text-slate-600">
@@ -137,15 +137,15 @@ export default function SignInPage() {
                     <div
                         role="status"
                         aria-live="polite"
-                        className="space-y-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center"
+                        className="space-y-3 rounded-md border border-accent/30 bg-accent/10 p-4 text-center"
                     >
-                        <p className="text-sm font-medium text-emerald-900">
+                        <p className="text-sm font-medium text-accent-strong">
                             Check your inbox — link sent to {magicLinkSentTo}
                         </p>
                         <button
                             type="button"
                             onClick={() => setMagicLinkSentTo(null)}
-                            className="text-sm font-medium text-emerald-800 underline hover:text-emerald-900"
+                            className="text-sm font-medium text-accent-strong underline hover:text-accent-strong"
                         >
                             Use a different email
                         </button>
@@ -165,7 +165,7 @@ export default function SignInPage() {
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-[#197e74] focus:border-[#197e74] sm:text-sm"
+                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-accent focus:border-accent sm:text-sm"
                                     placeholder="you@example.com"
                                 />
                             </div>
@@ -182,7 +182,7 @@ export default function SignInPage() {
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-[#197e74] focus:border-[#197e74] sm:text-sm"
+                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-accent focus:border-accent sm:text-sm"
                                     placeholder="••••••••"
                                 />
                             </div>
@@ -217,7 +217,7 @@ export default function SignInPage() {
                 <div className="border-t border-slate-200 pt-6 text-center">
                     <a
                         href="/about"
-                        className="text-sm font-medium text-[#12645c] hover:text-[#0f5a53] hover:underline"
+                        className="text-sm font-medium text-accent-strong hover:text-accent-strong hover:underline"
                     >
                         Learn more about The Prawn Hunter
                     </a>

@@ -51,16 +51,11 @@ const THUMB_FAILURE_RETRY_MS = 60_000;
 // Long transcripts are collapsed by default; the label + affordance stay visible.
 const MEDIA_TEXT_COLLAPSE_CHARS = 280;
 
-// Dark-mode-accessible avatar colours: every entry carries white text at >= 4.5:1.
+// Palette avatar colours: every entry carries white text at >= 4.5:1.
 const SENDER_PALETTE = [
-    "#be123c",
-    "#c2410c",
-    "#b45309",
-    "#047857",
-    "#0f766e",
-    "#0369a1",
-    "#4338ca",
-    "#7e22ce",
+    "#197e74",
+    "#172033",
+    "#64748b",
 ] as const;
 
 interface ThumbCacheEntry {
@@ -588,7 +583,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             <div className="flex-1 flex items-center justify-center bg-slate-200 text-slate-600">
                 <div className="text-center">
                     <p className="text-red-600 mb-2">{authError}</p>
-                    <a href="/signin" className="text-[#197e74] hover:underline">
+                    <a href="/signin" className="text-accent hover:underline">
                         Sign in
                     </a>
                 </div>
@@ -602,7 +597,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                 data-testid="chat-skeleton"
                 aria-busy="true"
                 aria-label="Loading messages"
-                className="flex-1 overflow-hidden bg-[#E5DDD5] p-4"
+                className="flex-1 overflow-hidden bg-paper p-4"
             >
                 <span className="sr-only">Loading messages…</span>
                 <div className="space-y-3">
@@ -669,13 +664,13 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
     };
 
     return (
-        <div className="flex-1 flex flex-col h-full bg-[#E5DDD5]">
+        <div className="flex-1 flex flex-col h-full bg-paper">
             <div className="border-b border-slate-200 bg-white">
                 <div className="p-3 flex items-center gap-3">
                     <div className="flex flex-col min-w-0">
                         <span className="font-semibold text-slate-800 truncate">{displayName}</span>
                         <div className="flex items-center gap-2 mt-0.5">
-                            <span className="bg-slate-200 px-1.5 py-0.5 rounded text-[10px] uppercase font-mono text-slate-600">
+                            <span className="bg-slate-200 px-1.5 py-0.5 rounded text-xs uppercase font-mono text-slate-600">
                                 {credential.source}
                             </span>
                             <span className="text-xs font-mono text-slate-400">
@@ -694,14 +689,14 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                         title="Exports the currently loaded messages only"
                         className="ml-auto flex shrink-0 items-center gap-1.5"
                     >
-                        <span className="hidden font-mono text-[10px] font-semibold uppercase tracking-wide text-slate-500 sm:inline">
+                        <span className="hidden font-mono text-xs font-semibold uppercase tracking-wide text-slate-500 sm:inline">
                             Export
                         </span>
                         <button
                             type="button"
                             onClick={() => exportChat("json")}
                             aria-label="Export chat as JSON"
-                            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                         >
                             <FileDown className="h-3 w-3" aria-hidden="true" /> JSON
                         </button>
@@ -709,7 +704,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                             type="button"
                             onClick={() => exportChat("csv")}
                             aria-label="Export chat as CSV"
-                            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                         >
                             <FileDown className="h-3 w-3" aria-hidden="true" /> CSV
                         </button>
@@ -720,7 +715,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                     className="mx-3 mb-3"
                     onSubmit={(event) => event.preventDefault()}
                 >
-                    <div className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 shadow-sm focus-within:border-[#197e74] focus-within:ring-2 focus-within:ring-[#197e74]/25">
+                    <div className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25">
                         <SearchIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-400" />
                         <input
                             ref={searchInputRef}
@@ -732,7 +727,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                             placeholder="Search this chat…  (press / to focus)"
                             className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
                         />
-                        <kbd className="hidden shrink-0 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 md:inline">
+                        <kbd className="hidden shrink-0 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-mono text-xs text-slate-500 md:inline">
                             /
                         </kbd>
                         {searchQuery && (
@@ -740,7 +735,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 type="button"
                                 onClick={clearSearch}
                                 aria-label="Clear search"
-                                className="flex shrink-0 items-center gap-1 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                className="flex shrink-0 items-center gap-1 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                             >
                                 <X className="h-3 w-3" aria-hidden="true" /> Clear
                             </button>
@@ -764,7 +759,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                             className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
                         >
                             <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                                <Server className="h-4 w-4 text-[#197e74]" />
+                                <Server className="h-4 w-4 text-accent" />
                                 Endpoint Profile
                             </span>
                             {isProfileExpanded ? (
@@ -779,7 +774,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     <div className="flex items-center gap-2">
                                         <Globe2 className="h-3 w-3 text-slate-400" />
                                         <span className="text-slate-600">Webhook:</span>
-                                        <code className="font-mono text-[#197e74] truncate">
+                                        <code className="font-mono text-accent truncate">
                                             {gatewayTelemetry.configured_webhook_url}
                                         </code>
                                     </div>
@@ -788,7 +783,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     <div className="flex items-center gap-2">
                                         <Server className="h-3 w-3 text-slate-400" />
                                         <span className="text-slate-600">IP:</span>
-                                        <code className="font-mono text-[#197e74]">
+                                        <code className="font-mono text-accent">
                                             {gatewayTelemetry.resolved_ip_address}
                                         </code>
                                     </div>
@@ -820,7 +815,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                     href={endpoint}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="px-1 rounded bg-slate-100 text-[#197e74] hover:underline font-mono text-[10px]"
+                                                    className="px-1 rounded bg-slate-100 text-accent hover:underline font-mono text-xs"
                                                 >
                                                     {endpoint}
                                                 </a>
@@ -863,7 +858,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 <button
                                     type="button"
                                     onClick={() => void loadOlderPage()}
-                                    className="flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                    className="flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                 >
                                     <RefreshCw className="h-3 w-3" aria-hidden="true" /> Retry
                                 </button>
@@ -880,7 +875,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 Loading earlier messages…
                             </div>
                         ) : !hasMore && messages.length > 0 ? (
-                            <p className="py-1 text-center font-mono text-[11px] uppercase tracking-wide text-slate-500">
+                            <p className="py-1 text-center font-mono text-xs uppercase tracking-wide text-slate-500">
                                 Beginning of history
                             </p>
                         ) : null}
@@ -902,7 +897,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                 <button
                                     type="button"
                                     onClick={() => setFeedRefreshToken((value) => value + 1)}
-                                    className="mt-3 flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] mx-auto"
+                                    className="mt-3 flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent mx-auto"
                                 >
                                     <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Refresh feed
                                 </button>
@@ -916,7 +911,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     aria-label={group.label}
                                     className="sticky top-0 z-10 flex justify-center py-1"
                                 >
-                                    <span className="rounded-full bg-white/90 px-3 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-slate-500 shadow-sm backdrop-blur">
+                                    <span className="rounded-full bg-white/90 px-3 py-0.5 font-mono text-xs font-semibold uppercase tracking-wide text-slate-500 shadow-sm backdrop-blur">
                                         {group.label}
                                     </span>
                                 </div>
@@ -946,7 +941,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                             tabIndex={-1}
                                             className={`group flex items-start gap-2 rounded-lg transition-shadow ${
                                                 isSelected
-                                                    ? "ring-2 ring-[#197e74] ring-offset-2 ring-offset-[#E5DDD5]"
+                                                    ? "ring-2 ring-accent ring-offset-2 ring-offset-paper"
                                                     : ""
                                             }`}
                                         >
@@ -957,7 +952,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                 data-testid="sender-avatar"
                                                 data-color={String(colorIndex)}
                                                 style={{ backgroundColor: SENDER_PALETTE[colorIndex] }}
-                                                className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                                                className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
                                             >
                                                 {senderInitials(name)}
                                             </span>
@@ -972,7 +967,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                             void copyMessage(message.id, message.content)
                                                         }
                                                         aria-label="Copy message"
-                                                        className="flex shrink-0 items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                                        className="flex shrink-0 items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                                     >
                                                         {copiedMessageId === message.id ? (
                                                             <Check className="h-3 w-3" aria-hidden="true" />
@@ -991,7 +986,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                         dateTime={message.created_at}
                                                         title={timestamp}
                                                         tabIndex={0}
-                                                        className="ml-auto whitespace-nowrap text-[11px] text-slate-400 opacity-100 transition-opacity focus:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                                                        className="ml-auto whitespace-nowrap text-xs text-slate-400 opacity-100 transition-opacity focus:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
                                                     >
                                                         {timestamp}
                                                     </time>
@@ -1013,7 +1008,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                         type="button"
                                                         onClick={() => openGallery(message.id)}
                                                         aria-label={`Open media preview for ${name}`}
-                                                        className="mt-1 overflow-hidden rounded border border-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                                        className="mt-1 overflow-hidden rounded border border-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                                     >
                                                         {thumbUrl ? (
                                                             <img
@@ -1024,7 +1019,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                         ) : (
                                                             <span
                                                                 data-testid="thumb-placeholder"
-                                                                className="flex h-14 w-14 flex-col items-center justify-center gap-0.5 bg-slate-100 text-[9px] uppercase tracking-wide text-slate-500"
+                                                                className="flex h-14 w-14 flex-col items-center justify-center gap-0.5 bg-slate-100 text-xs uppercase tracking-wide text-slate-500"
                                                             >
                                                                 <ImageOff
                                                                     aria-hidden="true"
@@ -1036,7 +1031,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                     </button>
                                                 )}
                                                 {message.media_type && message.media_type !== "text" && (
-                                                    <div className="mt-1 text-xs text-[#197e74] flex items-center gap-1">
+                                                    <div className="mt-1 text-xs text-accent flex items-center gap-1">
                                                         <FileDown className="h-3 w-3" />
                                                         {message.media_type}
                                                     </div>
@@ -1160,7 +1155,7 @@ function MediaGallery({
                 <div className="mb-3 flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold">{item.label}</p>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">
                             {item.mediaType} · {index + 1} of {items.length}
                         </p>
                     </div>
@@ -1174,7 +1169,7 @@ function MediaGallery({
                         <X className="h-4 w-4" aria-hidden="true" />
                     </button>
                 </div>
-                <div className="flex min-h-[50vh] items-center justify-center rounded-lg bg-black/40">
+                <div className="flex min-h-[50vh] items-center justify-center rounded-lg bg-ink/40">
                     {item.url ? (
                         <img
                             src={item.url}
@@ -1260,7 +1255,7 @@ function ChatSearchResults({
                     <button
                         type="button"
                         onClick={onRetry}
-                        className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                        className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     >
                         <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Retry
                     </button>
@@ -1286,7 +1281,7 @@ function ChatSearchResults({
                 <button
                     type="button"
                     onClick={onClear}
-                    className="mt-3 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                    className="mt-3 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                     Back to the conversation
                 </button>
@@ -1314,21 +1309,21 @@ function ChatSearchResults({
                             />
                             <span
                                 title={senderKey}
-                                className="rounded border border-[#197e74]/30 bg-[#197e74]/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#12645c]"
+                                className="rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-accent-strong"
                             >
                                 {senderKey}
                             </span>
                             {row.sender_pseudonym && row.sender_pseudonym !== senderKey && (
-                                <span className="font-mono text-[10px] text-slate-400">
+                                <span className="font-mono text-xs text-slate-400">
                                     {row.sender_pseudonym}
                                 </span>
                             )}
-                            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-slate-600">
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-slate-600">
                                 {row.media_type || "text"}
                             </span>
                             <time
                                 dateTime={row.created_at || undefined}
-                                className="ml-auto whitespace-nowrap font-mono text-[11px] text-slate-500"
+                                className="ml-auto whitespace-nowrap font-mono text-xs text-slate-500"
                             >
                                 {row.created_at ? new Date(row.created_at).toLocaleString() : "Unknown time"}
                             </time>
@@ -1447,7 +1442,7 @@ function DerivedMediaText({ label, text }: { label: string; text: string }) {
             className="mt-1 rounded border border-slate-200 bg-slate-50 px-2 py-1.5"
         >
             <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className="font-mono text-xs font-semibold uppercase tracking-wide text-slate-500">
                     {label}
                 </span>
                 {isLong && (
@@ -1455,7 +1450,7 @@ function DerivedMediaText({ label, text }: { label: string; text: string }) {
                         type="button"
                         onClick={() => setExpanded((value) => !value)}
                         aria-expanded={expanded}
-                        className="text-[11px] font-semibold text-[#12645c] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                        className="text-xs font-semibold text-accent-strong hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     >
                         {expanded ? "Show less" : "Show more"}
                     </button>

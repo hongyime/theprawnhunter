@@ -181,10 +181,10 @@ export default function WatchlistHitsView() {
 
   return (
     <section
-      className="h-full overflow-y-auto bg-[#f4f7fa]"
+      className="h-full overflow-y-auto bg-paper"
       aria-label="Watchlist hits"
     >
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-paper/95 px-4 py-4 backdrop-blur md:px-7">
         <div className="flex flex-wrap items-end justify-end gap-3">
           <h1 className="sr-only">Watchlist hits</h1>
 
@@ -192,7 +192,7 @@ export default function WatchlistHitsView() {
             <div>
               <label
                 htmlFor="watchlist-hit-rule-filter"
-                className="block font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500"
+                className="block font-mono text-xs uppercase tracking-[0.16em] text-slate-500"
               >
                 Rule
               </label>
@@ -200,7 +200,7 @@ export default function WatchlistHitsView() {
                 id="watchlist-hit-rule-filter"
                 value={ruleFilter}
                 onChange={(event) => setRuleFilter(event.target.value)}
-                className="mt-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus-visible:border-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#197e74]/30"
+                className="mt-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/30"
               >
                 <option value={ALL_RULES}>All rules</option>
                 {ruleNames.map((name) => (
@@ -214,7 +214,7 @@ export default function WatchlistHitsView() {
             <div>
               <label
                 htmlFor="watchlist-hit-limit"
-                className="block font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500"
+                className="block font-mono text-xs uppercase tracking-[0.16em] text-slate-500"
               >
                 Limit
               </label>
@@ -222,7 +222,7 @@ export default function WatchlistHitsView() {
                 id="watchlist-hit-limit"
                 value={limit}
                 onChange={(event) => setLimit(Number(event.target.value))}
-                className="mt-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus-visible:border-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#197e74]/30"
+                className="mt-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/30"
               >
                 {HIT_LIMITS.map((value) => (
                   <option key={value} value={value}>
@@ -239,7 +239,7 @@ export default function WatchlistHitsView() {
         {linkError && (
           <div
             role="alert"
-            className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-300 bg-slate-100 p-4 text-sm text-slate-700"
           >
             <TriangleAlert aria-hidden="true" className="h-4 w-4 shrink-0" />
             <span className="min-w-0 flex-1">{linkError}</span>
@@ -277,7 +277,7 @@ export default function WatchlistHitsView() {
             <button
               type="button"
               onClick={() => setRetryToken((value) => value + 1)}
-              className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               <RefreshCw className="h-3.5 w-3.5" /> Retry
             </button>
@@ -288,7 +288,7 @@ export default function WatchlistHitsView() {
           <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
             <ShieldAlert
               aria-hidden="true"
-              className="mx-auto h-7 w-7 text-[#197e74]"
+              className="mx-auto h-7 w-7 text-accent"
             />
             <h2 className="mt-3 font-bold text-slate-900">
               No watchlist hits yet
@@ -310,7 +310,7 @@ export default function WatchlistHitsView() {
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_1px_0_rgba(23,32,51,0.04)]">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-sm">
-                <thead className="bg-slate-50 font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                <thead className="bg-slate-50 font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
                   <tr>
                     <th scope="col" className="px-4 py-3">
                       Time
@@ -352,7 +352,7 @@ export default function WatchlistHitsView() {
                           ) : (
                             <span className="text-slate-500">
                               {DELETED_RULE_LABEL}{" "}
-                              <span className="font-mono text-[11px] text-slate-400">
+                              <span className="font-mono text-xs text-slate-400">
                                 {hit.rule_id.slice(0, 8)}
                               </span>
                             </span>
@@ -360,7 +360,7 @@ export default function WatchlistHitsView() {
                         </td>
                         <td className="px-4 py-3">
                           <span
-                            className="font-mono text-[11px] text-slate-600"
+                            className="font-mono text-xs text-slate-600"
                             title={hit.credential_id ?? "Global rule"}
                           >
                             {shortCredential(hit.credential_id)}
@@ -384,7 +384,7 @@ export default function WatchlistHitsView() {
                               type="button"
                               disabled={opening}
                               onClick={() => openInTelegram(hit)}
-                              className="flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:border-[#197e74] hover:text-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                              className="flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {opening ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />

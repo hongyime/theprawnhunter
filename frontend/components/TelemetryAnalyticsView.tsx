@@ -32,9 +32,9 @@ const TYPE_LABELS: Record<IndicatorType, string> = {
 };
 
 const TYPE_STYLES: Record<IndicatorType, string> = {
-    network_domain: "bg-[#197e74]/10 text-[#12645c] border-[#197e74]/30",
-    canonical_url: "bg-[#f4f7fa] text-slate-700 border-slate-200",
-    wallet_address: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    network_domain: "bg-accent/10 text-accent-strong border-accent/30",
+    canonical_url: "bg-paper text-slate-700 border-slate-200",
+    wallet_address: "bg-accent/10 text-accent-strong border-accent/30",
 };
 
 export default function TelemetryAnalyticsView({
@@ -148,7 +148,7 @@ export default function TelemetryAnalyticsView({
 
     if (isCredentialScope && !credential) {
         return (
-            <section className="flex-1 overflow-y-auto bg-[#f4f7fa] text-[#172033]">
+            <section className="flex-1 overflow-y-auto bg-paper text-ink">
                 <HeaderShell
                     title="Bot Intel"
                     badge="no bot selected"
@@ -167,14 +167,14 @@ export default function TelemetryAnalyticsView({
     }
 
     return (
-        <section className="flex-1 overflow-y-auto bg-[#f4f7fa] text-[#172033]">
+        <section className="flex-1 overflow-y-auto bg-paper text-ink">
             <HeaderShell
                 title={scope === "global" ? "All Telemetry" : "Bot Intel"}
                 badge={scope === "global" ? `latest ${limit} rows` : credential?.source || "selected bot"}
                 meta={
                     scope === "credential" ? (
                         <div className="flex items-center gap-2">
-                            <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-mono uppercase text-slate-600">
+                            <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-xs font-mono uppercase text-slate-600">
                                 {credential?.source}
                             </span>
                             <span className="text-xs font-mono text-slate-400">ID: {displayBotId}</span>
@@ -210,10 +210,10 @@ export default function TelemetryAnalyticsView({
                                 value={query}
                                 onChange={(event) => setQuery(event.currentTarget.value)}
                                 placeholder="Search indicator values"
-                                className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-[#197e74]"
+                                className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-accent"
                             />
                         </div>
-                        <div className="flex overflow-x-auto rounded-md bg-[#f4f7fa] p-1">
+                        <div className="flex overflow-x-auto rounded-md bg-paper p-1">
                             {(["all", ...INDICATOR_TYPES] as IndicatorFilter[]).map((type) => (
                                 <button
                                     key={type}
@@ -221,8 +221,8 @@ export default function TelemetryAnalyticsView({
                                     onClick={() => setFilter(type)}
                                     className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors ${
                                         filter === type
-                                            ? "bg-white text-[#172033] shadow-[0_1px_0_rgba(23,32,51,0.04)]"
-                                            : "text-slate-500 hover:text-[#172033]"
+                                            ? "bg-white text-ink shadow-[0_1px_0_rgba(23,32,51,0.04)]"
+                                            : "text-slate-500 hover:text-ink"
                                     }`}
                                 >
                                     {type === "all" ? "All" : TYPE_LABELS[type]}
@@ -292,7 +292,7 @@ export default function TelemetryAnalyticsView({
                                             <button
                                                 type="button"
                                                 onClick={() => copyIndicator(indicator)}
-                                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:border-[#197e74] hover:text-[#12645c]"
+                                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:border-accent hover:text-accent-strong"
                                                 title="Copy indicator value"
                                                 aria-label="Copy indicator value"
                                             >
@@ -324,7 +324,7 @@ function HeaderShell({
     meta?: ReactNode;
 }) {
     return (
-        <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-3 backdrop-blur">
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-paper/95 px-4 py-3 backdrop-blur">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h1 className="sr-only">{title}</h1>
@@ -353,7 +353,7 @@ function MetricCard({
                 <span className="text-xs font-semibold uppercase">{label}</span>
                 {icon}
             </div>
-            <div className="mt-1 font-mono text-xl font-semibold text-[#172033]">
+            <div className="mt-1 font-mono text-lg font-semibold text-ink">
                 {value.toLocaleString()}
             </div>
         </div>

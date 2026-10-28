@@ -335,17 +335,17 @@ export default function WatchlistView() {
 
   return (
     <section
-      className="h-full overflow-y-auto bg-[#f4f7fa]"
+      className="h-full overflow-y-auto bg-paper"
       aria-label="Watchlist management"
     >
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-paper/95 px-4 py-4 backdrop-blur md:px-7">
         <div className="flex flex-wrap items-center justify-end gap-3">
           <h1 className="sr-only">Watchlists</h1>
           <button
             type="button"
             onClick={openCreate}
             aria-haspopup="dialog"
-            className="flex items-center gap-2 rounded-md bg-[#172033] px-3 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+            className="flex items-center gap-2 rounded-md bg-ink px-3 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             <Plus className="h-4 w-4" /> New rule
           </button>
@@ -364,7 +364,7 @@ export default function WatchlistView() {
               type="button"
               onClick={() => setActionError(null)}
               aria-label="Dismiss error"
-              className="rounded p-1 text-red-700 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              className="rounded p-1 text-red-700 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               <X className="h-4 w-4" />
             </button>
@@ -398,7 +398,7 @@ export default function WatchlistView() {
             <button
               type="button"
               onClick={() => setRetryToken((value) => value + 1)}
-              className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+              className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               <RefreshCw className="h-3.5 w-3.5" /> Retry
             </button>
@@ -409,7 +409,7 @@ export default function WatchlistView() {
           <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
             <TriangleAlert
               aria-hidden="true"
-              className="mx-auto h-7 w-7 text-[#197e74]"
+              className="mx-auto h-7 w-7 text-accent"
             />
             <h2 className="mt-3 font-bold text-slate-900">
               No watchlist rules yet
@@ -424,7 +424,7 @@ export default function WatchlistView() {
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_1px_0_rgba(23,32,51,0.04)]">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-sm">
-                <thead className="bg-slate-50 font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                <thead className="bg-slate-50 font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
                   <tr>
                     <th scope="col" className="px-4 py-3">
                       Rule
@@ -465,9 +465,9 @@ export default function WatchlistView() {
                               {rule.pattern}
                             </code>
                             <span
-                              className={`w-fit rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide ${
+                              className={`w-fit rounded px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide ${
                                 rule.is_regex
-                                  ? "bg-amber-100 text-amber-800"
+                                  ? "bg-slate-200 text-slate-700"
                                   : "bg-slate-100 text-slate-600"
                               }`}
                             >
@@ -479,12 +479,12 @@ export default function WatchlistView() {
                           {rule.credential_id ? (
                             <span
                               title={rule.credential_id}
-                              className="font-mono text-[11px] text-slate-600"
+                              className="font-mono text-xs text-slate-600"
                             >
                               {rule.credential_id.slice(0, 8)}…
                             </span>
                           ) : (
-                            <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+                            <span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-accent-strong">
                               Global
                             </span>
                           )}
@@ -503,8 +503,8 @@ export default function WatchlistView() {
                               aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                               disabled={pending}
                               onClick={() => toggleEnabled(rule)}
-                              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50 ${
-                                rule.enabled ? "bg-[#197e74]" : "bg-slate-300"
+                              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 ${
+                                rule.enabled ? "bg-accent" : "bg-slate-300"
                               }`}
                             >
                               <span
@@ -516,7 +516,7 @@ export default function WatchlistView() {
                                 }`}
                               />
                             </button>
-                            <span className="font-mono text-[11px] text-slate-500">
+                            <span className="font-mono text-xs text-slate-500">
                               {rule.enabled ? "On" : "Off"}
                             </span>
                           </div>
@@ -528,7 +528,7 @@ export default function WatchlistView() {
                                 type="button"
                                 onClick={() => deleteRule(rule)}
                                 aria-label={`Confirm delete ${rule.name}`}
-                                className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                               >
                                 Confirm
                               </button>
@@ -536,7 +536,7 @@ export default function WatchlistView() {
                                 type="button"
                                 onClick={() => setConfirmingId(null)}
                                 aria-label={`Cancel delete ${rule.name}`}
-                                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                               >
                                 Cancel
                               </button>
@@ -549,7 +549,7 @@ export default function WatchlistView() {
                                 disabled={pending}
                                 aria-label={`Edit ${rule.name}`}
                                 aria-haspopup="dialog"
-                                className="rounded-md border border-slate-300 bg-white p-1.5 text-slate-600 hover:border-[#197e74] hover:text-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                                className="rounded-md border border-slate-300 bg-white p-1.5 text-slate-600 hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -558,7 +558,7 @@ export default function WatchlistView() {
                                 onClick={() => setConfirmingId(rule.id)}
                                 disabled={pending}
                                 aria-label={`Delete rule ${rule.name}`}
-                                className="rounded-md border border-slate-300 bg-white p-1.5 text-slate-600 hover:border-red-300 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                                className="rounded-md border border-slate-300 bg-white p-1.5 text-slate-600 hover:border-red-300 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
@@ -577,7 +577,7 @@ export default function WatchlistView() {
 
       {formOpen && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-ink/40 p-4"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) closeForm();
           }}
@@ -590,12 +590,12 @@ export default function WatchlistView() {
           >
             <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#197e74]">
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-accent">
                   {editing ? "Edit rule" : "New rule"}
                 </p>
                 <h2
                   id="watchlist-dialog-title"
-                  className="text-lg font-bold text-[#172033]"
+                  className="text-lg font-bold text-ink"
                 >
                   {editing ? "Edit watchlist rule" : "Create watchlist rule"}
                 </h2>
@@ -605,7 +605,7 @@ export default function WatchlistView() {
                 onClick={closeForm}
                 aria-label="Close dialog"
                 disabled={submitting}
-                className="rounded p-1 text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded p-1 text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -627,7 +627,7 @@ export default function WatchlistView() {
                     value={form.name}
                     onChange={(event) => updateForm("name", event.target.value)}
                     placeholder="Wallet address mentions"
-                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:border-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#197e74]/30"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/30"
                   />
                 </div>
 
@@ -640,7 +640,7 @@ export default function WatchlistView() {
                       Pattern
                     </label>
                     <span
-                      className={`font-mono text-[11px] ${
+                      className={`font-mono text-xs ${
                         patternTooLong ? "text-red-700" : "text-slate-500"
                       }`}
                     >
@@ -659,7 +659,7 @@ export default function WatchlistView() {
                       patternTooLong ? "watchlist-pattern-error" : undefined
                     }
                     placeholder="bc1q… or \\brug ?pull\\b"
-                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus-visible:border-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#197e74]/30"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/30"
                   />
                   {patternTooLong && (
                     <p
@@ -678,7 +678,7 @@ export default function WatchlistView() {
                     onChange={(event) =>
                       updateForm("isRegex", event.target.checked)
                     }
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   />
                   <span>
                     Treat pattern as a regular expression
@@ -705,7 +705,7 @@ export default function WatchlistView() {
                     aria-invalid={scopeInvalid}
                     aria-describedby="watchlist-scope-hint"
                     placeholder="Blank for global"
-                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus-visible:border-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#197e74]/30"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/30"
                   />
                   <p
                     id="watchlist-scope-hint"
@@ -740,7 +740,7 @@ export default function WatchlistView() {
                       aria-describedby={
                         cooldownInvalid ? "watchlist-cooldown-error" : undefined
                       }
-                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus-visible:border-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#197e74]/30"
+                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/30"
                     />
                     {cooldownInvalid && (
                       <p
@@ -758,7 +758,7 @@ export default function WatchlistView() {
                       onChange={(event) =>
                         updateForm("enabled", event.target.checked)
                       }
-                      className="h-4 w-4 rounded border-slate-300 text-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                      className="h-4 w-4 rounded border-slate-300 text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     />
                     Rule enabled
                   </label>
@@ -768,7 +768,7 @@ export default function WatchlistView() {
                   <div
                     role="status"
                     aria-live="polite"
-                    className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                    className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
                   >
                     Fix the highlighted fields before saving.
                   </div>
@@ -790,14 +790,14 @@ export default function WatchlistView() {
                   type="button"
                   onClick={closeForm}
                   disabled={submitting}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={!canSubmit}
-                  className="flex items-center gap-1.5 rounded-md bg-[#172033] px-3 py-1.5 text-sm font-bold text-white hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-bold text-white hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting && (
                     <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />

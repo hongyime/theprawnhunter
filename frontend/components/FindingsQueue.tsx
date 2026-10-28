@@ -97,16 +97,16 @@ function formatTime(value: string) {
 
 function priorityTone(priority: number) {
   if (priority >= 9) return "bg-red-600 text-white";
-  if (priority >= 7) return "bg-orange-500 text-white";
-  if (priority >= 4) return "bg-amber-400 text-slate-950";
-  return "bg-slate-300 text-slate-800";
+  if (priority >= 7) return "bg-ink text-white";
+  if (priority >= 4) return "bg-ink text-white";
+  return "bg-slate-200 text-slate-700";
 }
 
 function severityTone(severity: Finding["severity"]) {
   return {
     critical: "border-red-200 bg-red-50 text-red-800",
-    high: "border-orange-200 bg-orange-50 text-orange-800",
-    medium: "border-amber-200 bg-amber-50 text-amber-800",
+    high: "border-red-200 bg-red-50 text-red-800",
+    medium: "border-slate-300 bg-slate-100 text-slate-700",
     low: "border-slate-200 bg-slate-50 text-slate-700",
   }[severity];
 }
@@ -320,15 +320,15 @@ export default function FindingsQueue({
   }
 
   return (
-    <section className="h-full overflow-y-auto bg-[#f4f7fa]" aria-label="Findings queue">
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
+    <section className="h-full overflow-y-auto bg-paper" aria-label="Findings queue">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-paper/95 px-4 py-4 backdrop-blur md:px-7">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="sr-only">Findings queue</h1>
           <p className="text-sm text-slate-600">{queueSummary}</p>
           <button
             type="button"
             onClick={() => setRefreshKey((value) => value + 1)}
-            className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:border-[#197e74] hover:text-[#197e74] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+            className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             <RefreshCw className="h-4 w-4" /> Refresh
           </button>
@@ -339,7 +339,7 @@ export default function FindingsQueue({
             aria-label="Finding type"
             value={typeFilter}
             onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             <option value="all">All finding types</option>
             {Object.entries(FINDING_LABELS).map(([value, label]) => (
@@ -350,7 +350,7 @@ export default function FindingsQueue({
             aria-label="Finding status"
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             <option value="open">Open work</option>
             <option value="all">All statuses</option>
@@ -397,7 +397,7 @@ export default function FindingsQueue({
         )}
         {!loading && !error && findings.length === 0 && (
           <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
-            <CheckCircle2 className="mx-auto h-7 w-7 text-[#197e74]" />
+            <CheckCircle2 className="mx-auto h-7 w-7 text-accent" />
             <h2 className="mt-3 font-bold text-slate-900">No findings match this view</h2>
             <p className="mt-1 text-sm text-slate-600">Change the filters or wait for the next producer run.</p>
             {(typeFilter !== "all" || statusFilter !== "all") && (
@@ -407,7 +407,7 @@ export default function FindingsQueue({
                   setTypeFilter("all");
                   setStatusFilter("all");
                 }}
-                className="mt-3 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                className="mt-3 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
                 Show all findings
               </button>
@@ -430,33 +430,33 @@ export default function FindingsQueue({
                 type="button"
                 aria-expanded={isOpen}
                 onClick={() => toggleFinding(finding)}
-                className="grid w-full grid-cols-[3rem_1fr_auto] gap-3 p-4 text-left hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#197e74] md:grid-cols-[4rem_1fr_auto] md:p-5"
+                className="grid w-full grid-cols-[3.5rem_1fr_auto] gap-3 p-4 text-left hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent md:grid-cols-[4.5rem_1fr_auto] md:p-5"
               >
                 <div className={`flex h-12 flex-col items-center justify-center rounded-md font-mono ${priorityTone(finding.priority)}`}>
-                  <span className="text-[9px] font-bold uppercase tracking-widest">Priority</span>
-                  <span className="text-xl font-black leading-none">{finding.priority}</span>
+                  <span className="text-xs font-bold uppercase">Priority</span>
+                  <span className="text-lg font-bold leading-none">{finding.priority}</span>
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${severityTone(finding.severity)}`}>
+                    <span className={`rounded-full border px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${severityTone(finding.severity)}`}>
                       {finding.severity}
                     </span>
-                    <span className="font-mono text-[11px] text-slate-500">{FINDING_LABELS[finding.type]}</span>
-                    <span className="font-mono text-[11px] text-slate-400">v{finding.material_version}</span>
+                    <span className="font-mono text-xs text-slate-500">{FINDING_LABELS[finding.type]}</span>
+                    <span className="font-mono text-xs text-slate-400">v{finding.material_version}</span>
                   </div>
-                  <h2 className="mt-1 truncate text-base font-bold text-[#172033] md:text-lg">{finding.title}</h2>
+                  <h2 className="mt-1 truncate text-sm font-bold text-ink md:text-lg">{finding.title}</h2>
                   <p className="mt-1 line-clamp-2 text-sm leading-5 text-slate-600">{finding.summary}</p>
                   <div className="mt-3 flex items-center gap-1" aria-label={`Priority ${finding.priority} of 10`}>
                     {Array.from({ length: 10 }, (_, index) => (
                       <span
                         key={index}
-                        className={`h-1.5 flex-1 rounded-sm ${index < finding.priority ? "bg-[#e5573f]" : "bg-slate-200"}`}
+                        className={`h-1.5 flex-1 rounded-sm ${index < finding.priority ? "bg-accent" : "bg-slate-200"}`}
                       />
                     ))}
                   </div>
                 </div>
                 <div className="flex items-start gap-2 text-slate-500">
-                  <span className="hidden whitespace-nowrap font-mono text-[11px] md:inline">{finding.evidence_count} evidence</span>
+                  <span className="hidden whitespace-nowrap font-mono text-xs md:inline">{finding.evidence_count} evidence</span>
                   {isOpen ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
                 </div>
               </button>
@@ -466,27 +466,27 @@ export default function FindingsQueue({
                   <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
                     <div className="space-y-4">
                       <div>
-                        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Why it matters</p>
+                        <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Why it matters</p>
                         <p className="mt-1 text-sm leading-6 text-slate-800">{finding.why_it_matters}</p>
                       </div>
-                      <div className="rounded-md border-l-4 border-[#197e74] bg-white p-3">
-                        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-[#197e74]">Recommended next action</p>
+                      <div className="rounded-md border-l-4 border-accent bg-white p-3">
+                        <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-accent">Recommended next action</p>
                         <p className="mt-1 text-sm leading-6 text-slate-800">{finding.recommended_action}</p>
                       </div>
                       <div>
-                        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Evidence trail</p>
+                        <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Evidence trail</p>
                         <div className="mt-2 space-y-2">
                           {rows.length === 0 ? (
                             <p className="text-sm text-slate-500">No redacted evidence rows are available.</p>
                           ) : rows.map((item) => (
-                            <div key={item.id} className="relative border-l-2 border-slate-300 pl-4 text-sm before:absolute before:-left-[5px] before:top-1.5 before:h-2 before:w-2 before:rounded-full before:bg-[#e5573f]">
+                            <div key={item.id} className="relative border-l-2 border-slate-300 pl-4 text-sm before:absolute before:-left-[5px] before:top-1.5 before:h-2 before:w-2 before:rounded-full before:bg-accent">
                               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                                 <span className="font-mono font-semibold text-slate-700">{item.evidence_type}</span>
                                 <span>{formatTime(item.observed_at)}</span>
                                 <span>{Math.round(item.weight * 100)}% weight</span>
                               </div>
                               {item.excerpt_redacted && <p className="mt-1 text-slate-700">{item.excerpt_redacted}</p>}
-                              <p className="mt-1 font-mono text-[10px] text-slate-400">{item.source_table} · {item.source_id.slice(0, 12)}</p>
+                              <p className="mt-1 font-mono text-xs text-slate-400">{item.source_table} · {item.source_id.slice(0, 12)}</p>
                             </div>
                           ))}
                         </div>
@@ -495,7 +495,7 @@ export default function FindingsQueue({
 
                     <aside className="space-y-4">
                       <div className="rounded-md border border-slate-200 bg-white p-3">
-                        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Scoring explanation</p>
+                        <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Scoring explanation</p>
                         <dl className="mt-2 space-y-2">
                           {explanationRows(finding.score_explanation).map((row) => (
                             <div key={row.kind} className="grid grid-cols-[5rem_1fr] gap-2 text-xs">
@@ -509,29 +509,29 @@ export default function FindingsQueue({
                       </div>
 
                       <div>
-                        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Record disposition</p>
+                        <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Record disposition</p>
                         <div className="mt-2 grid grid-cols-2 gap-2">
-                          <button disabled={pending} onClick={() => recordFeedback(finding, { label: "useful", reason: "actionable", status: "triaged", successText: "Marked useful and triaged." })} className="flex items-center justify-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"><ThumbsUp className="h-3.5 w-3.5" /> Useful</button>
+                          <button disabled={pending} onClick={() => recordFeedback(finding, { label: "useful", reason: "actionable", status: "triaged", successText: "Marked useful and triaged." })} className="flex items-center justify-center gap-1 rounded-md border border-accent/30 bg-accent/10 px-2 py-2 text-xs font-bold text-accent-strong hover:bg-accent/15 disabled:opacity-50"><ThumbsUp className="h-3.5 w-3.5" /> Useful</button>
                           <button disabled={pending} onClick={() => recordFeedback(finding, { label: "noise", reason: "false_positive", status: "dismissed", successText: "Marked noise and dismissed." })} className="flex items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"><ThumbsDown className="h-3.5 w-3.5" /> Noise</button>
-                          <button disabled={pending} onClick={() => recordFeedback(finding, { label: "actioned", reason: "confirmed", status: "in_progress", successText: "Moved to in progress." })} className="rounded-md border border-blue-200 bg-blue-50 px-2 py-2 text-xs font-bold text-blue-800 hover:bg-blue-100 disabled:opacity-50">Start work</button>
-                          <button disabled={pending} onClick={() => recordFeedback(finding, { label: "actioned", reason: "confirmed", status: "resolved", successText: "Marked resolved." })} className="rounded-md border border-[#197e74]/30 bg-[#197e74]/10 px-2 py-2 text-xs font-bold text-[#12645c] hover:bg-[#197e74]/15 disabled:opacity-50">Resolve</button>
+                          <button disabled={pending} onClick={() => recordFeedback(finding, { label: "actioned", reason: "confirmed", status: "in_progress", successText: "Moved to in progress." })} className="rounded-md border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">Start work</button>
+                          <button disabled={pending} onClick={() => recordFeedback(finding, { label: "actioned", reason: "confirmed", status: "resolved", successText: "Marked resolved." })} className="rounded-md border border-accent/30 bg-accent/10 px-2 py-2 text-xs font-bold text-accent-strong hover:bg-accent/15 disabled:opacity-50">Resolve</button>
                         </div>
                         {pending && <p className="mt-2 flex items-center gap-1 text-xs text-slate-500"><Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" /> Saving feedback…</p>}
                         {noticeByFinding[finding.id] && <p className="mt-2 text-xs text-slate-600" role="status">{noticeByFinding[finding.id]}</p>}
                       </div>
 
                       <div>
-                        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Drill down</p>
+                        <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Drill down</p>
                         {credentialId ? (
                           <div className="mt-2 flex gap-2">
-                            <button onClick={() => onDrilldown(credentialId, "chat")} className="flex flex-1 items-center justify-center gap-1 rounded-md bg-[#172033] px-2 py-2 text-xs font-bold text-white hover:bg-slate-700"><MessageSquareText className="h-3.5 w-3.5" /> Chat</button>
-                            <button onClick={() => onDrilldown(credentialId, "botTelemetry")} className="flex flex-1 items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 hover:border-[#197e74] hover:text-[#197e74]"><Radar className="h-3.5 w-3.5" /> Telemetry</button>
+                            <button onClick={() => onDrilldown(credentialId, "chat")} className="flex flex-1 items-center justify-center gap-1 rounded-md bg-ink px-2 py-2 text-xs font-bold text-white hover:bg-slate-700"><MessageSquareText className="h-3.5 w-3.5" /> Chat</button>
+                            <button onClick={() => onDrilldown(credentialId, "botTelemetry")} className="flex flex-1 items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 hover:border-accent hover:text-accent"><Radar className="h-3.5 w-3.5" /> Telemetry</button>
                           </div>
                         ) : (
                           <p className="mt-2 flex gap-2 text-xs text-slate-500"><CircleAlert className="h-4 w-4 shrink-0" /> No credential drill-down is linked to this evidence set.</p>
                         )}
                       </div>
-                      <p className="font-mono text-[10px] text-slate-400">Changed {formatTime(finding.last_material_change_at)} · ID {finding.id.slice(0, 8)}</p>
+                      <p className="font-mono text-xs text-slate-400">Changed {formatTime(finding.last_material_change_at)} · ID {finding.id.slice(0, 8)}</p>
                     </aside>
                   </div>
                 </div>
