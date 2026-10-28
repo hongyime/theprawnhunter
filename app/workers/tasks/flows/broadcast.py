@@ -1312,6 +1312,27 @@ def prune_failed_broadcasts():
 
 async def _prune_failed_broadcasts_async(hours: int = 6) -> dict[str, int]:
     cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+    marked_terminal = 0
+    for _ in range(20):
+        res = await async_execute(
+            db.table("exfiltrated_messages")
+            .select("id")
+            .eq("is_broadcasted", False)
+            .is_("broadcast_status", "null")
+            .eq("broadcast_error->>retryable", "false")
+            .limit(500)
+        )
+        ids = [row["id"] for row in (res.data or []) if row.get("id")]
+        if not ids:
+            break
+        await async_execute(
+            db.table("exfiltrated_messages")
+            .update({"broadcast_status": "permanent_failed"})
+            .in_("id", ids)
+        )
+        marked_terminal += len(ids)
+        if len(ids) < 500:
+            break
     deleted = 0
     for _ in range(20):
         res = await async_execute(
@@ -1356,6 +1377,8 @@ async def _prune_failed_broadcasts_async(hours: int = 6) -> dict[str, int]:
         deleted += len(deletable)
         if len(ids) < 500:
             break
+    if marked_terminal:
+        logger.info(f"[Broadcast] marked {marked_terminal} legacy terminal failure(s)")
     if deleted:
         logger.info(f"[Broadcast] pruned {deleted} terminal-failure row(s)")
-    return {"deleted": deleted}
+    return {"deleted": deleted, "marked_terminal": marked_terminal}

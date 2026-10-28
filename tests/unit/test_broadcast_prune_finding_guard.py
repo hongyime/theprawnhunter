@@ -8,6 +8,7 @@ class _Query:
         self.table = table
         self.action = None
         self.ids: list[str] | None = None
+        self.terminal = False
 
     def select(self, *_args, **_kwargs):
         self.action = "select"
@@ -17,7 +18,16 @@ class _Query:
         self.action = "delete"
         return self
 
-    def eq(self, *_args, **_kwargs):
+    def update(self, _payload):
+        self.action = "update"
+        return self
+
+    def eq(self, key, _value):
+        if key == "broadcast_error->>retryable":
+            self.terminal = True
+        return self
+
+    def is_(self, *_args, **_kwargs):
         return self
 
     def lt(self, *_args, **_kwargs):
@@ -43,6 +53,12 @@ async def test_prune_keeps_messages_referenced_by_findings(monkeypatch):
     deleted: list[str] = []
 
     async def fake_execute(query: _Query):
+        if (
+            query.table == "exfiltrated_messages"
+            and query.action == "select"
+            and query.terminal
+        ):
+            return SimpleNamespace(data=[])
         if query.table == "exfiltrated_messages" and query.action == "select":
             return SimpleNamespace(data=[{"id": "m1"}, {"id": "m2"}])
         if query.table == "finding_evidence":
@@ -57,5 +73,5 @@ async def test_prune_keeps_messages_referenced_by_findings(monkeypatch):
 
     result = await broadcast._prune_failed_broadcasts_async()
 
-    assert result == {"deleted": 1}
+    assert result == {"deleted": 1, "marked_terminal": 0}
     assert deleted == ["m2"]
