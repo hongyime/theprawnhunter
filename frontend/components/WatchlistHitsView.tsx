@@ -185,18 +185,8 @@ export default function WatchlistHitsView() {
       aria-label="Watchlist hits"
     >
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#197e74]">
-              Match history
-            </p>
-            <h1 className="font-[Arial_Narrow,Arial,sans-serif] text-3xl font-black tracking-tight text-[#172033]">
-              Watchlist hits
-            </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Every recorded rule match, newest first.
-            </p>
-          </div>
+        <div className="flex flex-wrap items-end justify-end gap-3">
+          <h1 className="sr-only">Watchlist hits</h1>
 
           <div className="flex flex-wrap items-end gap-3">
             <div>

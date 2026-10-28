@@ -421,14 +421,9 @@ export default function SearchView({
   return (
     <section className="h-full overflow-y-auto bg-[#f4f7fa]" aria-label="Evidence search">
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
-        <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#197e74]">
-          Full-text evidence
-        </p>
-        <h1 className="font-[Arial_Narrow,Arial,sans-serif] text-3xl font-black tracking-tight text-[#172033]">
-          Global search
-        </h1>
+        <h1 className="sr-only">Global search</h1>
 
-        <div className="mt-4 flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 shadow-sm focus-within:border-[#197e74] focus-within:ring-2 focus-within:ring-[#197e74]/25">
+        <div className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 shadow-sm focus-within:border-[#197e74] focus-within:ring-2 focus-within:ring-[#197e74]/25">
           <SearchIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-400" />
           <input
             ref={inputRef}

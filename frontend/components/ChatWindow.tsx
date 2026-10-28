@@ -588,7 +588,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
             <div className="flex-1 flex items-center justify-center bg-slate-200 text-slate-600">
                 <div className="text-center">
                     <p className="text-red-600 mb-2">{authError}</p>
-                    <a href="/signin" className="text-cyan-600 hover:underline">
+                    <a href="/signin" className="text-[#197e74] hover:underline">
                         Sign in
                     </a>
                 </div>
@@ -670,7 +670,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
 
     return (
         <div className="flex-1 flex flex-col h-full bg-[#E5DDD5]">
-            <div className="border-b bg-white/90 shadow-sm backdrop-blur">
+            <div className="border-b border-slate-200 bg-white">
                 <div className="p-3 flex items-center gap-3">
                     <div className="flex flex-col min-w-0">
                         <span className="font-semibold text-slate-800 truncate">{displayName}</span>
@@ -764,7 +764,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                             className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
                         >
                             <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                                <Server className="h-4 w-4 text-cyan-600" />
+                                <Server className="h-4 w-4 text-[#197e74]" />
                                 Endpoint Profile
                             </span>
                             {isProfileExpanded ? (
@@ -779,7 +779,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     <div className="flex items-center gap-2">
                                         <Globe2 className="h-3 w-3 text-slate-400" />
                                         <span className="text-slate-600">Webhook:</span>
-                                        <code className="font-mono text-cyan-600 truncate">
+                                        <code className="font-mono text-[#197e74] truncate">
                                             {gatewayTelemetry.configured_webhook_url}
                                         </code>
                                     </div>
@@ -788,7 +788,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                     <div className="flex items-center gap-2">
                                         <Server className="h-3 w-3 text-slate-400" />
                                         <span className="text-slate-600">IP:</span>
-                                        <code className="font-mono text-cyan-600">
+                                        <code className="font-mono text-[#197e74]">
                                             {gatewayTelemetry.resolved_ip_address}
                                         </code>
                                     </div>
@@ -820,7 +820,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                     href={endpoint}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="px-1 rounded bg-slate-100 text-cyan-600 hover:underline font-mono text-[10px]"
+                                                    className="px-1 rounded bg-slate-100 text-[#197e74] hover:underline font-mono text-[10px]"
                                                 >
                                                     {endpoint}
                                                 </a>
@@ -1036,7 +1036,7 @@ export default function ChatWindow({ credential }: { credential: Credential | nu
                                                     </button>
                                                 )}
                                                 {message.media_type && message.media_type !== "text" && (
-                                                    <div className="mt-1 text-xs text-cyan-600 flex items-center gap-1">
+                                                    <div className="mt-1 text-xs text-[#197e74] flex items-center gap-1">
                                                         <FileDown className="h-3 w-3" />
                                                         {message.media_type}
                                                     </div>
@@ -1455,7 +1455,7 @@ function DerivedMediaText({ label, text }: { label: string; text: string }) {
                         type="button"
                         onClick={() => setExpanded((value) => !value)}
                         aria-expanded={expanded}
-                        className="text-[11px] font-semibold text-cyan-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
+                        className="text-[11px] font-semibold text-[#12645c] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#197e74]"
                     >
                         {expanded ? "Show less" : "Show more"}
                     </button>

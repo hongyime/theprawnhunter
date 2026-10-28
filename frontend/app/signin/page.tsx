@@ -165,7 +165,7 @@ export default function SignInPage() {
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm"
+                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-[#197e74] focus:border-[#197e74] sm:text-sm"
                                     placeholder="you@example.com"
                                 />
                             </div>
@@ -182,7 +182,7 @@ export default function SignInPage() {
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm"
+                                    className="mt-1 appearance-none relative block w-full px-3 py-2 border border-slate-300 rounded-md placeholder-slate-400 focus:outline-none focus:ring-[#197e74] focus:border-[#197e74] sm:text-sm"
                                     placeholder="••••••••"
                                 />
                             </div>
@@ -217,7 +217,7 @@ export default function SignInPage() {
                 <div className="border-t border-slate-200 pt-6 text-center">
                     <a
                         href="/about"
-                        className="text-sm font-medium text-cyan-700 hover:text-cyan-800 hover:underline"
+                        className="text-sm font-medium text-[#12645c] hover:text-[#0f5a53] hover:underline"
                     >
                         Learn more about The Prawn Hunter
                     </a>

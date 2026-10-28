@@ -339,19 +339,8 @@ export default function WatchlistView() {
       aria-label="Watchlist management"
     >
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#197e74]">
-              Message matching
-            </p>
-            <h1 className="font-[Arial_Narrow,Arial,sans-serif] text-3xl font-black tracking-tight text-[#172033]">
-              Watchlists
-            </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Literal or regex patterns evaluated against captured message
-              content.
-            </p>
-          </div>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <h1 className="sr-only">Watchlists</h1>
           <button
             type="button"
             onClick={openCreate}

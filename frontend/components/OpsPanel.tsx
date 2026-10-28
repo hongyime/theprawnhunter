@@ -183,19 +183,8 @@ export default function OpsPanel() {
       className="h-full overflow-y-auto bg-[#f4f7fa]"
     >
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-[#f4f7fa]/95 px-4 py-4 backdrop-blur md:px-7">
-        <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#197e74]">
-          Runtime control
-        </p>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="font-[Arial_Narrow,Arial,sans-serif] text-3xl font-black tracking-tight text-[#172033]">
-              Operations
-            </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Pause or resume scanners, broadcasters and validators — the same
-              runtime switch the bot commands use.
-            </p>
-          </div>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <h1 className="sr-only">Operations</h1>
           <button
             type="button"
             onClick={() => {
