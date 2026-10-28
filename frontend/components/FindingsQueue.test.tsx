@@ -215,14 +215,29 @@ describe("FindingsQueue", () => {
     mockFrom.mockImplementation((table: string) => {
       if (table === "findings") return builderFor([crossBotFinding]);
       if (table === "finding_evidence") return builderFor([messageEvidence]);
+      if (table === "evidence_operator_raw") {
+        return builderFor([
+          {
+            id: messageEvidence.source_id,
+            credential_id: "30000000-0000-0000-0000-000000000001",
+            sender_name: "Real Sender",
+            sender_user_id: 12345,
+            content: "actual message body",
+            media_type: "text",
+            created_at: "2026-09-04T01:00:00Z",
+            chat_id: -1001234567890,
+            chat_name: "Alpha HQ",
+            source: "github",
+            status: "active",
+            bot_username: "alpha_bot",
+          },
+        ]);
+      }
       if (table === "evidence_redacted") {
         return builderFor([
           {
             id: messageEvidence.source_id,
             credential_id: "30000000-0000-0000-0000-000000000001",
-            content: "actual message body",
-            media_type: "text",
-            created_at: "2026-09-04T01:00:00Z",
           },
         ]);
       }
@@ -234,6 +249,7 @@ describe("FindingsQueue", () => {
     const title = await screen.findByText("Shared indicator across bots");
     await userEvent.click(title.closest("button")!);
     expect(await screen.findByText("actual message body")).toBeInTheDocument();
+    expect(screen.getByText(/Sender: Real Sender/)).toHaveTextContent("12345");
     await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
 
     expect(onDrilldown).toHaveBeenCalledWith(
@@ -241,6 +257,28 @@ describe("FindingsQueue", () => {
       "chat",
     );
     expect(mockFrom).not.toHaveBeenCalledWith("exfiltrated_messages");
+  });
+
+  it("hides findings whose evidence rows are gone", async () => {
+    const gone = {
+      ...finding,
+      id: "20000000-0000-0000-0000-000000000002",
+      title: "Gone evidence finding",
+      evidence_count: 0,
+    };
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "findings") return builderFor([finding, gone]);
+      if (table === "finding_evidence") return builderFor([evidence]);
+      if (table === "discovered_credentials_public") return builderFor([]);
+      throw new Error(`Unexpected table ${table}`);
+    });
+    render(<FindingsQueue onDrilldown={vi.fn()} />);
+
+    expect(
+      await screen.findByText("Active Telegram credential exposure"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Gone evidence finding")).toBeNull();
+    expect(screen.getByText("1 shown · 0 critical · 1 unassigned")).toBeInTheDocument();
   });
 
   it("labels a message source that was pruned after broadcast", async () => {

@@ -53,6 +53,8 @@ type Finding = {
 type EvidenceSourceDetail = {
   content?: string | null;
   credential_id?: string | null;
+  sender_name?: string | null;
+  sender_user_id?: number | null;
   media_type?: string | null;
   created_at?: string | null;
   chat_id?: number | null;
@@ -202,21 +204,68 @@ async function resolveSourceDetails(rows: FindingEvidence[]) {
     ),
   ];
 
+  let rawLookupFailed = false;
   for (const ids of chunk(messageIds, SOURCE_LOOKUP_CHUNK)) {
-    const { data, error } = await supabase
-      .from("evidence_redacted")
-      .select("id,credential_id,content,media_type,created_at")
-      .in("id", ids)
-      .limit(SOURCE_LOOKUP_CHUNK);
-    if (error) continue;
-    for (const row of (data || []) as Array<Record<string, unknown>>) {
-      details.set(`exfiltrated_messages:${String(row.id)}`, {
-        content: typeof row.content === "string" ? row.content : null,
-        credential_id:
-          typeof row.credential_id === "string" ? row.credential_id : null,
-        media_type: typeof row.media_type === "string" ? row.media_type : null,
-        created_at: typeof row.created_at === "string" ? row.created_at : null,
-      });
+    try {
+      const { data, error } = await supabase
+        .from("evidence_operator_raw")
+        .select(
+          "id,credential_id,sender_name,sender_user_id,content,media_type," +
+            "created_at,chat_id,chat_name,source,status,bot_username",
+        )
+        .in("id", ids)
+        .limit(SOURCE_LOOKUP_CHUNK);
+      if (error) {
+        rawLookupFailed = true;
+        break;
+      }
+      for (const row of (data || []) as unknown as Array<
+        Record<string, unknown>
+      >) {
+        details.set(`exfiltrated_messages:${String(row.id)}`, {
+          content: typeof row.content === "string" ? row.content : null,
+          credential_id:
+            typeof row.credential_id === "string" ? row.credential_id : null,
+          sender_name:
+            typeof row.sender_name === "string" ? row.sender_name : null,
+          sender_user_id:
+            typeof row.sender_user_id === "number" ? row.sender_user_id : null,
+          media_type: typeof row.media_type === "string" ? row.media_type : null,
+          created_at:
+            typeof row.created_at === "string" ? row.created_at : null,
+          chat_id: typeof row.chat_id === "number" ? row.chat_id : null,
+          chat_name: typeof row.chat_name === "string" ? row.chat_name : null,
+          source: typeof row.source === "string" ? row.source : null,
+          status: typeof row.status === "string" ? row.status : null,
+          bot_username:
+            typeof row.bot_username === "string" ? row.bot_username : null,
+        });
+      }
+    } catch {
+      rawLookupFailed = true;
+      break;
+    }
+  }
+
+  if (rawLookupFailed) {
+    for (const ids of chunk(messageIds, SOURCE_LOOKUP_CHUNK)) {
+      const { data, error } = await supabase
+        .from("evidence_redacted")
+        .select("id,credential_id,content,media_type,created_at")
+        .in("id", ids)
+        .limit(SOURCE_LOOKUP_CHUNK);
+      if (error) continue;
+      for (const row of (data || []) as Array<Record<string, unknown>>) {
+        details.set(`exfiltrated_messages:${String(row.id)}`, {
+          content: typeof row.content === "string" ? row.content : null,
+          credential_id:
+            typeof row.credential_id === "string" ? row.credential_id : null,
+          media_type:
+            typeof row.media_type === "string" ? row.media_type : null,
+          created_at:
+            typeof row.created_at === "string" ? row.created_at : null,
+        });
+      }
     }
   }
 
@@ -338,7 +387,9 @@ export default function FindingsQueue({
         setFindings([]);
         setError(`Findings could not be loaded: ${queryError.message}`);
       } else {
-        const rows = (data || []) as unknown as Finding[];
+        const rows = ((data || []) as unknown as Finding[]).filter(
+          (row) => row.evidence_count > 0,
+        );
         setFindings(rows);
         const requested = new URLSearchParams(window.location.search).get("finding");
         const requestedFinding = rows.find((row) => row.id === requested);
@@ -756,6 +807,14 @@ export default function FindingsQueue({
                                 {detail && item.source_table === "exfiltrated_messages" && !detail.content && (
                                   <p className="mt-1 text-xs text-slate-500">
                                     Source message contains no text (media or service message).
+                                  </p>
+                                )}
+                                {detail?.sender_name && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Sender: {detail.sender_name}
+                                    {detail.sender_user_id
+                                      ? ` · ${detail.sender_user_id}`
+                                      : ""}
                                   </p>
                                 )}
                                 {detail?.chat_name && (
