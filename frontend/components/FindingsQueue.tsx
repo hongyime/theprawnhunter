@@ -50,6 +50,19 @@ type Finding = {
   last_material_change_at: string;
 };
 
+type EvidenceSourceDetail = {
+  content?: string | null;
+  credential_id?: string | null;
+  media_type?: string | null;
+  created_at?: string | null;
+  chat_id?: number | null;
+  chat_name?: string | null;
+  chat_type?: string | null;
+  source?: string | null;
+  status?: string | null;
+  bot_username?: string | null;
+};
+
 type FindingEvidence = {
   id: string;
   finding_id: string;
@@ -60,6 +73,7 @@ type FindingEvidence = {
   weight: number;
   excerpt_redacted?: string | null;
   provenance?: Record<string, unknown> | null;
+  source_detail?: EvidenceSourceDetail | null;
 };
 
 type FeedbackAction = {
@@ -158,7 +172,90 @@ async function resolveCredentialId(finding: Finding, rows: FindingEvidence[]) {
   return data?.[0]?.credential_id ? String(data[0].credential_id) : null;
 }
 
-async function fetchFindingEvidence(finding: Finding) {
+const EVIDENCE_PAGE_SIZE = 200;
+const SOURCE_LOOKUP_CHUNK = 50;
+const SESSION_EXPIRED_EVIDENCE =
+  "Your operator session expired, so the evidence could not be read. Sign in again to reload it.";
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function resolveSourceDetails(rows: FindingEvidence[]) {
+  const details = new Map<string, EvidenceSourceDetail>();
+  const messageIds = [
+    ...new Set(
+      rows
+        .filter((item) => item.source_table === "exfiltrated_messages")
+        .map((item) => item.source_id),
+    ),
+  ];
+  const credentialIds = [
+    ...new Set(
+      rows
+        .filter((item) => item.source_table === "discovered_credentials")
+        .map((item) => item.source_id),
+    ),
+  ];
+
+  for (const ids of chunk(messageIds, SOURCE_LOOKUP_CHUNK)) {
+    const { data, error } = await supabase
+      .from("evidence_redacted")
+      .select("id,credential_id,content,media_type,created_at")
+      .in("id", ids)
+      .limit(SOURCE_LOOKUP_CHUNK);
+    if (error) continue;
+    for (const row of (data || []) as Array<Record<string, unknown>>) {
+      details.set(`exfiltrated_messages:${String(row.id)}`, {
+        content: typeof row.content === "string" ? row.content : null,
+        credential_id:
+          typeof row.credential_id === "string" ? row.credential_id : null,
+        media_type: typeof row.media_type === "string" ? row.media_type : null,
+        created_at: typeof row.created_at === "string" ? row.created_at : null,
+      });
+    }
+  }
+
+  for (const ids of chunk(credentialIds, SOURCE_LOOKUP_CHUNK)) {
+    const { data, error } = await supabase
+      .from("discovered_credentials_public")
+      .select("id,source,status,chat_id,chat_name,chat_type,meta")
+      .in("id", ids)
+      .limit(SOURCE_LOOKUP_CHUNK);
+    if (error) continue;
+    for (const row of (data || []) as Array<Record<string, unknown>>) {
+      const meta = (row.meta || {}) as Record<string, unknown>;
+      details.set(`discovered_credentials:${String(row.id)}`, {
+        credential_id: String(row.id),
+        chat_id: typeof row.chat_id === "number" ? row.chat_id : null,
+        chat_name: typeof row.chat_name === "string" ? row.chat_name : null,
+        chat_type: typeof row.chat_type === "string" ? row.chat_type : null,
+        source: typeof row.source === "string" ? row.source : null,
+        status: typeof row.status === "string" ? row.status : null,
+        bot_username:
+          typeof meta.bot_username === "string" ? meta.bot_username : null,
+      });
+    }
+  }
+
+  return details;
+}
+
+async function fetchFindingEvidence(finding: Finding, offset = 0) {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData.session) {
+    return {
+      rows: [] as FindingEvidence[],
+      credentialId: null,
+      error: null,
+      sessionExpired: true,
+    };
+  }
+
   const { data, error } = await supabase
     .from("finding_evidence")
     .select(
@@ -167,13 +264,31 @@ async function fetchFindingEvidence(finding: Finding) {
     )
     .eq("finding_id", finding.id)
     .order("observed_at", { ascending: false })
-    .limit(200);
-  if (error) return { rows: [] as FindingEvidence[], credentialId: null, error };
-  const rows = (data || []) as unknown as FindingEvidence[];
+    .range(offset, offset + EVIDENCE_PAGE_SIZE - 1);
+  if (error) {
+    const code = (error as { code?: string }).code;
+    const sessionExpired =
+      code === "42501" || /permission denied|jwt|session/i.test(error.message);
+    return {
+      rows: [] as FindingEvidence[],
+      credentialId: null,
+      error,
+      sessionExpired,
+    };
+  }
+
+  const baseRows = (data || []) as unknown as FindingEvidence[];
+  const sourceDetails = await resolveSourceDetails(baseRows);
+  const rows = baseRows.map((item) => ({
+    ...item,
+    source_detail:
+      sourceDetails.get(`${item.source_table}:${item.source_id}`) ?? null,
+  }));
   return {
     rows,
     credentialId: await resolveCredentialId(finding, rows),
     error: null,
+    sessionExpired: false,
   };
 }
 
@@ -192,6 +307,9 @@ export default function FindingsQueue({
   const [credentialByFinding, setCredentialByFinding] = useState<Record<string, string | null>>({});
   const [pendingFinding, setPendingFinding] = useState<string | null>(null);
   const [noticeByFinding, setNoticeByFinding] = useState<Record<string, string>>({});
+  const [evidenceLoading, setEvidenceLoading] = useState<Record<string, boolean>>({});
+  const [evidenceError, setEvidenceError] = useState<Record<string, string>>({});
+  const [evidenceSessionExpired, setEvidenceSessionExpired] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -226,10 +344,27 @@ export default function FindingsQueue({
         const requestedFinding = rows.find((row) => row.id === requested);
         if (requestedFinding) {
           setExpanded((current) => new Set(current).add(requestedFinding.id));
+          setEvidenceLoading((current) => ({
+            ...current,
+            [requestedFinding.id]: true,
+          }));
           const details = await fetchFindingEvidence(requestedFinding);
           if (!active) return;
-          if (details.error) {
-            setNoticeByFinding((current) => ({
+          setEvidenceLoading((current) => ({
+            ...current,
+            [requestedFinding.id]: false,
+          }));
+          if (details.sessionExpired) {
+            setEvidenceSessionExpired((current) => ({
+              ...current,
+              [requestedFinding.id]: true,
+            }));
+            setEvidenceError((current) => ({
+              ...current,
+              [requestedFinding.id]: SESSION_EXPIRED_EVIDENCE,
+            }));
+          } else if (details.error) {
+            setEvidenceError((current) => ({
               ...current,
               [requestedFinding.id]: `Evidence could not be loaded: ${details.error.message}`,
             }));
@@ -260,11 +395,34 @@ export default function FindingsQueue({
     return `${findings.length} shown · ${critical} critical · ${unassigned} unassigned`;
   }, [findings]);
 
-  async function loadEvidence(finding: Finding) {
-    if (evidence[finding.id]) return;
+  async function loadEvidence(finding: Finding, force = false) {
+    if (
+      !force &&
+      (evidence[finding.id] !== undefined || evidenceLoading[finding.id])
+    ) {
+      return;
+    }
+    setEvidenceLoading((current) => ({ ...current, [finding.id]: true }));
+    setEvidenceError((current) => ({ ...current, [finding.id]: "" }));
+    setEvidenceSessionExpired((current) => ({
+      ...current,
+      [finding.id]: false,
+    }));
     const details = await fetchFindingEvidence(finding);
+    setEvidenceLoading((current) => ({ ...current, [finding.id]: false }));
+    if (details.sessionExpired) {
+      setEvidenceSessionExpired((current) => ({
+        ...current,
+        [finding.id]: true,
+      }));
+      setEvidenceError((current) => ({
+        ...current,
+        [finding.id]: SESSION_EXPIRED_EVIDENCE,
+      }));
+      return;
+    }
     if (details.error) {
-      setNoticeByFinding((current) => ({
+      setEvidenceError((current) => ({
         ...current,
         [finding.id]: `Evidence could not be loaded: ${details.error.message}`,
       }));
@@ -275,6 +433,59 @@ export default function FindingsQueue({
       ...current,
       [finding.id]: details.credentialId,
     }));
+  }
+
+  async function loadMoreEvidence(finding: Finding) {
+    const currentRows = evidence[finding.id] || [];
+    if (
+      evidenceLoading[finding.id] ||
+      currentRows.length >= finding.evidence_count
+    ) {
+      return;
+    }
+    setEvidenceLoading((current) => ({ ...current, [finding.id]: true }));
+    setEvidenceError((current) => ({ ...current, [finding.id]: "" }));
+    setEvidenceSessionExpired((current) => ({
+      ...current,
+      [finding.id]: false,
+    }));
+    const details = await fetchFindingEvidence(finding, currentRows.length);
+    setEvidenceLoading((current) => ({ ...current, [finding.id]: false }));
+    if (details.sessionExpired) {
+      setEvidenceSessionExpired((current) => ({
+        ...current,
+        [finding.id]: true,
+      }));
+      setEvidenceError((current) => ({
+        ...current,
+        [finding.id]: SESSION_EXPIRED_EVIDENCE,
+      }));
+      return;
+    }
+    if (details.error) {
+      setEvidenceError((current) => ({
+        ...current,
+        [finding.id]: `Evidence could not be loaded: ${details.error.message}`,
+      }));
+      return;
+    }
+    setEvidence((current) => ({
+      ...current,
+      [finding.id]: [...(current[finding.id] || []), ...details.rows],
+    }));
+    setCredentialByFinding((current) => ({
+      ...current,
+      [finding.id]: details.credentialId,
+    }));
+  }
+
+  async function retryEvidence(finding: Finding) {
+    setEvidence((current) => {
+      const next = { ...current };
+      delete next[finding.id];
+      return next;
+    });
+    await loadEvidence(finding, true);
   }
 
   async function toggleFinding(finding: Finding) {
@@ -420,6 +631,9 @@ export default function FindingsQueue({
           const isOpen = expanded.has(finding.id);
           const rows = evidence[finding.id] || [];
           const credentialId = credentialByFinding[finding.id];
+          const evidenceBusy = evidenceLoading[finding.id] ?? false;
+          const evidenceFailure = evidenceError[finding.id];
+          const evidenceExpired = evidenceSessionExpired[finding.id] ?? false;
           const pending = pendingFinding === finding.id;
           return (
             <div role="listitem" key={finding.id} className="contents">
@@ -474,21 +688,110 @@ export default function FindingsQueue({
                         <p className="mt-1 text-sm leading-6 text-slate-800">{finding.recommended_action}</p>
                       </div>
                       <div>
-                        <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Evidence trail</p>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Evidence trail</p>
+                          {finding.evidence_count > 0 && (
+                            <span className="font-mono text-xs text-slate-500">
+                              Showing {rows.length} of {finding.evidence_count}
+                            </span>
+                          )}
+                        </div>
                         <div className="mt-2 space-y-2">
-                          {rows.length === 0 ? (
-                            <p className="text-sm text-slate-500">No redacted evidence rows are available.</p>
-                          ) : rows.map((item) => (
-                            <div key={item.id} className="relative border-l-2 border-slate-300 pl-4 text-sm before:absolute before:-left-[5px] before:top-1.5 before:h-2 before:w-2 before:rounded-full before:bg-accent">
-                              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                                <span className="font-mono font-semibold text-slate-700">{item.evidence_type}</span>
-                                <span>{formatTime(item.observed_at)}</span>
-                                <span>{Math.round(item.weight * 100)}% weight</span>
+                          {evidenceFailure && (
+                            <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                              <p>{evidenceFailure}</p>
+                              <div className="mt-2 flex flex-wrap items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => { void retryEvidence(finding); }}
+                                  className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                >
+                                  Retry
+                                </button>
+                                {evidenceExpired && (
+                                  <a href="/signin" className="text-xs font-bold underline">Sign in again</a>
+                                )}
                               </div>
-                              {item.excerpt_redacted && <p className="mt-1 text-slate-700">{item.excerpt_redacted}</p>}
-                              <p className="mt-1 font-mono text-xs text-slate-400">{item.source_table} · {item.source_id.slice(0, 12)}</p>
                             </div>
-                          ))}
+                          )}
+                          {evidenceBusy && rows.length === 0 && (
+                            <p className="text-sm text-slate-500">Loading evidence…</p>
+                          )}
+                          {!evidenceBusy && !evidenceFailure && rows.length === 0 && (
+                            finding.evidence_count > 0 ? (
+                              <div className="rounded-md border border-slate-300 bg-slate-100 p-3 text-sm text-slate-700">
+                                <p>The index reports {finding.evidence_count} evidence records, but none were returned.</p>
+                                <button
+                                  type="button"
+                                  onClick={() => { void retryEvidence(finding); }}
+                                  className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                >
+                                  Retry
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-slate-500">No redacted evidence rows are available.</p>
+                            )
+                          )}
+                          {rows.map((item) => {
+                            const detail = item.source_detail;
+                            const detailCredentialId = detail?.credential_id ?? null;
+                            return (
+                              <div key={item.id} className="relative border-l-2 border-slate-300 pl-4 text-sm before:absolute before:-left-[5px] before:top-1.5 before:h-2 before:w-2 before:rounded-full before:bg-accent">
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                  <span className="font-mono font-semibold text-slate-700">{item.evidence_type}</span>
+                                  <span>{formatTime(item.observed_at)}</span>
+                                  <span>{Math.round(item.weight * 100)}% weight</span>
+                                </div>
+                                {detail?.content ? (
+                                  <p className="mt-1 whitespace-pre-wrap text-slate-700">{detail.content}</p>
+                                ) : item.excerpt_redacted ? (
+                                  <p className="mt-1 text-slate-700">{item.excerpt_redacted}</p>
+                                ) : null}
+                                {item.source_table === "exfiltrated_messages" && !detail && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Source message was pruned after broadcast; only the pseudonymized evidence link remains.
+                                  </p>
+                                )}
+                                {detail && item.source_table === "exfiltrated_messages" && !detail.content && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Source message contains no text (media or service message).
+                                  </p>
+                                )}
+                                {detail?.chat_name && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Chat: {detail.chat_name}
+                                    {detail.chat_id ? ` · ${detail.chat_id}` : ""}
+                                  </p>
+                                )}
+                                {detailCredentialId && (
+                                  <p className="mt-1 font-mono text-xs text-slate-500">
+                                    Credential: {detailCredentialId}
+                                  </p>
+                                )}
+                                <p className="mt-1 font-mono text-xs text-slate-400">{item.source_table} · {item.source_id.slice(0, 12)}</p>
+                                {detailCredentialId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onDrilldown(detailCredentialId, "chat")}
+                                    className="mt-1 text-xs font-bold text-accent underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                  >
+                                    Open chat
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {rows.length > 0 && rows.length < finding.evidence_count && (
+                            <button
+                              type="button"
+                              onClick={() => { void loadMoreEvidence(finding); }}
+                              disabled={evidenceBusy}
+                              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+                            >
+                              {evidenceBusy ? "Loading more…" : `Load more (${rows.length} of ${finding.evidence_count})`}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>

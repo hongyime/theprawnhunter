@@ -4,11 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockRpc = vi.hoisted(() => vi.fn());
+const mockGetSession = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: mockFrom,
     rpc: mockRpc,
+    auth: { getSession: mockGetSession },
   },
 }));
 
@@ -54,19 +56,24 @@ const evidence = {
   provenance: { producer: "credential_exposure_v1" },
 };
 
-function builderFor(data: unknown[], error: { message: string } | null = null) {
+function builderFor(
+  data: unknown[],
+  error: { message: string; code?: string } | null = null,
+) {
   const builder = {
     select: vi.fn(),
     eq: vi.fn(),
     in: vi.fn(),
     order: vi.fn(),
     limit: vi.fn(),
+    range: vi.fn(),
   };
   builder.select.mockReturnValue(builder);
   builder.eq.mockReturnValue(builder);
   builder.in.mockReturnValue(builder);
   builder.order.mockReturnValue(builder);
   builder.limit.mockResolvedValue({ data, error });
+  builder.range.mockResolvedValue({ data, error });
   return builder;
 }
 
@@ -74,9 +81,26 @@ describe("FindingsQueue", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.history.replaceState({}, "", "/");
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: { id: "operator" } } },
+      error: null,
+    });
     mockFrom.mockImplementation((table: string) => {
       if (table === "findings") return builderFor([finding]);
       if (table === "finding_evidence") return builderFor([evidence]);
+      if (table === "discovered_credentials_public") {
+        return builderFor([
+          {
+            id: "30000000-0000-0000-0000-000000000001",
+            source: "github",
+            status: "active",
+            chat_id: -1001234567890,
+            chat_name: "Alpha HQ",
+            chat_type: "supergroup",
+            meta: { bot_username: "alpha_bot" },
+          },
+        ]);
+      }
       if (table === "exfiltrated_messages") return builderFor([]);
       throw new Error(`Unexpected table ${table}`);
     });
@@ -93,8 +117,54 @@ describe("FindingsQueue", () => {
     await userEvent.click(title.closest("button")!);
 
     expect(await screen.findByText("status=active; source=github")).toBeInTheDocument();
+    expect(screen.getByText("Showing 1 of 1")).toBeInTheDocument();
     expect(screen.getByText(/validated_active/)).toBeInTheDocument();
     expect(screen.queryByText(/bot token/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a session-expired state instead of an empty evidence trail", async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    render(<FindingsQueue onDrilldown={vi.fn()} />);
+
+    const title = await screen.findByText("Active Telegram credential exposure");
+    await userEvent.click(title.closest("button")!);
+
+    expect(
+      await screen.findByText(/operator session expired/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /sign in again/i }),
+    ).toHaveAttribute("href", "/signin");
+    expect(
+      screen.queryByText("No redacted evidence rows are available."),
+    ).toBeNull();
+    expect(mockFrom).not.toHaveBeenCalledWith("finding_evidence");
+  });
+
+  it("surfaces an evidence permission failure with a retry", async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "findings") return builderFor([finding]);
+      if (table === "finding_evidence") {
+        return builderFor([], {
+          message: "permission denied for table finding_evidence",
+          code: "42501",
+        });
+      }
+      if (table === "discovered_credentials_public") return builderFor([]);
+      throw new Error(`Unexpected table ${table}`);
+    });
+    render(<FindingsQueue onDrilldown={vi.fn()} />);
+
+    const title = await screen.findByText("Active Telegram credential exposure");
+    await userEvent.click(title.closest("button")!);
+
+    expect(
+      await screen.findByText(/operator session expired/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(
+      screen.queryByText("No redacted evidence rows are available."),
+    ).toBeNull();
   });
 
   it("records one-click feedback and updates the visible disposition", async () => {
@@ -146,7 +216,15 @@ describe("FindingsQueue", () => {
       if (table === "findings") return builderFor([crossBotFinding]);
       if (table === "finding_evidence") return builderFor([messageEvidence]);
       if (table === "evidence_redacted") {
-        return builderFor([{ credential_id: "30000000-0000-0000-0000-000000000001" }]);
+        return builderFor([
+          {
+            id: messageEvidence.source_id,
+            credential_id: "30000000-0000-0000-0000-000000000001",
+            content: "actual message body",
+            media_type: "text",
+            created_at: "2026-09-04T01:00:00Z",
+          },
+        ]);
       }
       throw new Error(`Forbidden raw table query: ${table}`);
     });
@@ -155,6 +233,7 @@ describe("FindingsQueue", () => {
 
     const title = await screen.findByText("Shared indicator across bots");
     await userEvent.click(title.closest("button")!);
+    expect(await screen.findByText("actual message body")).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
 
     expect(onDrilldown).toHaveBeenCalledWith(
@@ -162,6 +241,35 @@ describe("FindingsQueue", () => {
       "chat",
     );
     expect(mockFrom).not.toHaveBeenCalledWith("exfiltrated_messages");
+  });
+
+  it("labels a message source that was pruned after broadcast", async () => {
+    const crossBotFinding = {
+      ...finding,
+      type: "cross_bot_pattern",
+      canonical_key: "cross-bot:pruned-source",
+      title: "Pruned source finding",
+    };
+    const messageEvidence = {
+      ...evidence,
+      source_table: "exfiltrated_messages",
+      source_id: "50000000-0000-0000-0000-000000000001",
+    };
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "findings") return builderFor([crossBotFinding]);
+      if (table === "finding_evidence") return builderFor([messageEvidence]);
+      if (table === "evidence_redacted") return builderFor([]);
+      throw new Error(`Unexpected table ${table}`);
+    });
+    render(<FindingsQueue onDrilldown={vi.fn()} />);
+
+    const title = await screen.findByText("Pruned source finding");
+    await userEvent.click(title.closest("button")!);
+
+    expect(
+      await screen.findByText(/source message was pruned/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("status=active; source=github")).toBeInTheDocument();
   });
 
   it("opens digest deep links with evidence already loaded", async () => {

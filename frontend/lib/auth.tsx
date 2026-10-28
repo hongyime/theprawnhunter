@@ -48,6 +48,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initSession();
 
+    async function syncSession() {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!mounted) return;
+        if (error) {
+          setError(error.message);
+          return;
+        }
+        setSession(data.session);
+        setUser(data.session?.user ?? null);
+      } catch (err) {
+        if (mounted) {
+          setError(err instanceof Error ? err.message : "Failed to get session");
+        }
+      }
+    }
+
+    const handleFocus = () => {
+      void syncSession();
+    };
+    const handleVisibility = () => {
+      if (!document.hidden) void syncSession();
+    };
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
       setSession(session);
@@ -59,6 +85,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
       subscription.unsubscribe();
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
 
