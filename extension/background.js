@@ -15,6 +15,18 @@ const MAX_STORED_RESULTS = 300;
 // Max concurrent getMe validation calls (keeps Telegram rate-limit happy)
 const VALIDATE_CONCURRENCY = 5;
 
+// A FOFA login lasts 30 days (fofa_token Max-Age=720h) and the server does not
+// slide it on activity, so stop before the cookie dies instead of scanning
+// country after country with a dead session.
+const FOFA_SESSION_URL = "https://fofa.info/";
+const FOFA_SESSION_WARN_DAYS = 2;
+const DEFAULT_API_URL = "https://winnethepooh.hong-yi.me";
+
+// In-Chrome schedule for the extension lane. The alarm survives service-worker
+// restarts; the Playwright lane runs on its own host timer.
+const AUTO_SCAN_ALARM = "auto_scan";
+const AUTO_SCAN_PERIOD_MINUTES = 240;
+
 // --- STATE ---
 let state = {
     isRunning: false,
@@ -48,7 +60,7 @@ function restoreActiveTab() {
             activeTabId = r.activeTabId;
             // Verify the tab still exists — clear if it doesn't
             chrome.tabs.get(activeTabId, (tab) => {
-                if (chrome.runtime.lastError || !tab) {
+                if (chrome.runtime.lastError || !tab || !isFofaUrl(tab.url)) {
                     activeTabId = null;
                     chrome.storage.local.remove("activeTabId");
                 }
@@ -76,7 +88,7 @@ function recoverRunningScan() {
                         if (tab.status === "complete") {
                             // Page already loaded — send SCRAPE_PAGE directly
                             chrome.tabs.sendMessage(r.activeTabId, { action: "SCRAPE_PAGE" })
-                                .catch(() => nextCountry());
+                                .catch(() => pauseScan("⚠️ FOFA tab not reachable — reload the page, then click Resume"));
                         }
                         // If tab is still loading, onUpdated will fire and create the alarm
                     });
@@ -84,6 +96,209 @@ function recoverRunningScan() {
             }
         });
     });
+}
+
+// --- LANE / SESSION HELPERS ---
+
+function isFofaUrl(url) {
+    return !!url && /^https:\/\/(en\.)?fofa\.info\//.test(url);
+}
+
+function publishLaneDomain(domain) {
+    chrome.cookies.set({
+        url:            "https://fofa.info/",
+        name:           "th_fofa_lane_domain",
+        value:          domain === "fofa.info" ? "cn" : "en",
+        path:           "/",
+        secure:         true,
+        sameSite:       "lax",
+        expirationDate: Math.floor(Date.now() / 1000) + 86400,
+    }).catch((err) => console.warn("[BG] could not publish lane domain:", err.message));
+}
+
+function handleLoginRequired() {
+    if (!state.isRunning || state.isPaused) return;
+    if (!state.loginFallbackTried) {
+        state.loginFallbackTried = true;
+        const oldDomain = state.domain;
+        const nextDomain = oldDomain === "fofa.info" ? "en.fofa.info" : "fofa.info";
+        notifyOperators(
+            `🔁 FOFA ${oldDomain === "fofa.info" ? "CN" : "EN"} login required — ` +
+            `extension switched to ${nextDomain === "fofa.info" ? "CN" : "EN"} for this run.`
+        );
+        state.domain = nextDomain;
+        state.domainMode = nextDomain === "fofa.info" ? "cn" : "en";
+        state.domainPhase = 1;
+        state.status = "🔒 Login required — switching to the other FOFA domain...";
+        saveState();
+        broadcastState();
+        publishLaneDomain(nextDomain);
+        processNextCountry();
+        return;
+    }
+    pauseScan("🔒 Login required on CN and EN — log in then click Resume");
+}
+
+async function ensureOtherDomainTab(tab, domain) {
+    const other = domain === "fofa.info" ? "en.fofa.info" : "fofa.info";
+    const prefix = `https://${other}/`;
+    const tabs = await chrome.tabs.query({ windowId: tab.windowId });
+    const present = tabs.some((t) => (t.url || t.pendingUrl || "").startsWith(prefix));
+    if (!present) {
+        await chrome.tabs.create({
+            windowId: tab.windowId,
+            url:      prefix,
+            active:   false,
+        }).catch((err) => console.warn("[BG] could not open FOFA companion tab:", err.message));
+    }
+}
+
+async function consolidateFofaWindow(windowId) {
+    const tabs = await chrome.tabs.query({ url: ["https://fofa.info/*", "https://en.fofa.info/*"] });
+    for (const tab of tabs) {
+        if (tab.windowId !== windowId) {
+            await chrome.tabs.move(tab.id, { windowId, index: -1 }).catch(() => {});
+        }
+    }
+}
+
+async function ensureFofaWindow(tab, domain) {
+    await consolidateFofaWindow(tab.windowId);
+    await ensureOtherDomainTab(tab, domain);
+}
+
+function readConfig() {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(["supabase_config"], (r) => resolve(r.supabase_config || {}));
+    });
+}
+
+// Post to the API so the message lands in the Telegram System Logs topic.
+// A 503 means the broadcaster rate-limited us (2 s global cooldown); retry once.
+async function notifyOperators(message) {
+    const cfg = await readConfig();
+    const apiUrl = (cfg.apiUrl || DEFAULT_API_URL).trim().replace(/\/+$/, "");
+    const headers = { "Content-Type": "application/json" };
+    if (cfg.monitorKey) headers["X-Monitor-Key"] = cfg.monitorKey.trim();
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const res = await fetch(`${apiUrl}/monitor/ops/system-log`, {
+                method:  "POST",
+                headers,
+                body:    JSON.stringify({ message: message.slice(0, 3900) }),
+            });
+            if (res.ok) return true;
+            if (res.status !== 503) return false;
+        } catch (err) {
+            if (attempt === 1) {
+                console.warn("[BG] System Logs notify failed:", err.message);
+                return false;
+            }
+        }
+        await new Promise((r) => setTimeout(r, 2500));
+    }
+    return false;
+}
+
+function sessionIssue(cookie, now = Date.now()) {
+    if (!cookie) {
+        return "🔒 FOFA session cookie not found — log in to FOFA, then start again";
+    }
+    if (typeof cookie.expirationDate !== "number") {
+        return "⚠️ FOFA session cookie is session-only — log in again so it survives a restart";
+    }
+    const daysLeft = (cookie.expirationDate * 1000 - now) / 86400000;
+    if (daysLeft <= 0) {
+        return "🔒 FOFA session expired — log in to FOFA, then start again";
+    }
+    if (daysLeft < FOFA_SESSION_WARN_DAYS) {
+        const days = Math.max(1, Math.ceil(daysLeft));
+        const expires = new Date(cookie.expirationDate * 1000)
+            .toISOString().slice(0, 16).replace("T", " ");
+        return `⚠️ FOFA session expires in ${days} day(s) (${expires} UTC) — log in again soon`;
+    }
+    return null;
+}
+
+async function checkFofaSession() {
+    try {
+        const cookie = await chrome.cookies.get({ url: FOFA_SESSION_URL, name: "fofa_token" });
+        return sessionIssue(cookie);
+    } catch (err) {
+        console.warn("[BG] FOFA cookie check failed:", err.message);
+        return null;
+    }
+}
+
+// Each lane opens its own tab in its own window. Never take over the tab the
+// Playwright lane (or the user) is driving.
+async function ensureScanTab(domain) {
+    if (activeTabId) {
+        const existing = await chrome.tabs.get(activeTabId).catch(() => null);
+        if (existing && (isFofaUrl(existing.url) || isFofaUrl(existing.pendingUrl))) {
+            return existing;
+        }
+        activeTabId = null;
+        chrome.storage.local.remove("activeTabId");
+    }
+
+    // Reuse the existing dedicated FOFA window (prefer the one with both
+    // domains) instead of spawning a second lane window after every stop.
+    const fofaTabs = await chrome.tabs.query({ url: ["https://fofa.info/*", "https://en.fofa.info/*"] });
+    if (fofaTabs.length) {
+        const counts = new Map();
+        for (const tab of fofaTabs) {
+            counts.set(tab.windowId, (counts.get(tab.windowId) || 0) + 1);
+        }
+        const windowId = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        const prefix = `https://${domain}/`;
+        const same = fofaTabs.find(
+            (tab) => tab.windowId === windowId && (tab.url || tab.pendingUrl || "").startsWith(prefix)
+        );
+        if (same) {
+            activeTabId = same.id;
+            chrome.storage.local.set({ activeTabId: same.id });
+            return same;
+        }
+        const created = await chrome.tabs.create({ windowId, url: prefix, active: false });
+        activeTabId = created.id;
+        chrome.storage.local.set({ activeTabId: created.id });
+        return created;
+    }
+
+    const created = await chrome.windows.create({
+        url:     `https://${domain}/`,
+        focused: false,
+        type:    "normal",
+    });
+    const tab = created && created.tabs && created.tabs[0];
+    if (!tab) return null;
+    activeTabId = tab.id;
+    chrome.storage.local.set({ activeTabId: tab.id });
+    return tab;
+}
+
+function ensureAutoScanAlarm() {
+    chrome.alarms.get(AUTO_SCAN_ALARM, (alarm) => {
+        if (!alarm) {
+            chrome.alarms.create(AUTO_SCAN_ALARM, { periodInMinutes: AUTO_SCAN_PERIOD_MINUTES });
+        }
+    });
+}
+
+async function autoScanTick() {
+    await stateReady;
+    const cfg = await readConfig();
+    if (cfg.autoScan === false) return;
+
+    if (state.isRunning && state.isPaused) {
+        if (!(await checkFofaSession())) await resumeScan();
+        return;
+    }
+    if (state.isRunning) return;
+
+    await startScan(cfg.query || BASE_QUERY_TEMPLATE, undefined, cfg.domainMode || "both");
 }
 
 // --- LISTENERS ---
@@ -110,7 +325,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             pauseScan("⚠️ Captcha Detected!");
             break;
         case "LOGIN_REQUIRED":
-            pauseScan("🔒 Login required — log into FOFA then click Resume");
+            handleLoginRequired();
+            break;
+        case "QUOTA_EXHAUSTED":
+            pauseScan("💳 FOFA monthly free quota exhausted — recharge F-coins, then click Resume");
             break;
         case "RESULTS_FOUND":
             // Batch: msg.data is an array of {token, chatId} objects
@@ -176,10 +394,11 @@ function loadState() {
                     loaded.countryList = [...COUNTRY_CODES].sort(() => Math.random() - 0.5);
                     loaded.countryIndex = 0;
                 }
-                // Mark as stopped if it was mid-run when the SW died
+                // Keep the run alive as a paused scan so countryIndex and
+                // results survive a service-worker restart.
                 if (loaded.isRunning && !loaded.isPaused) {
-                    loaded.isRunning = false;
-                    loaded.status = "Stopped (Recovered)";
+                    loaded.isPaused = true;
+                    loaded.status = "⏸ Interrupted — click Resume";
                 }
                 state = loaded;
             }
@@ -223,6 +442,15 @@ function serializeState(s, options = {}) {
 async function startScan(userQuery, userDomain, userDomainMode) {
     if (state.isRunning) return;
 
+    const issue = await checkFofaSession();
+    if (issue) {
+        state.status = issue;
+        saveState();
+        broadcastState();
+        notifyOperators(`FOFA extension scan did not start.\n${issue}`);
+        return;
+    }
+
     const shuffled = [...COUNTRY_CODES].sort(() => Math.random() - 0.5);
 
     // Resolve domain from mode
@@ -243,21 +471,14 @@ async function startScan(userQuery, userDomain, userDomainMode) {
     state.results        = [];
     state.seenTokens     = new Set();
     state.countryList    = shuffled;
+    state.loginFallbackTried = false;
 
     saveState();
+    publishLaneDomain(domain);
 
-    // Find the FOFA tab — prefer active tab if it's FOFA, otherwise find any FOFA tab
-    let tab = null;
-    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (activeTab && (activeTab.url || "").includes("fofa.info")) {
-        tab = activeTab;
-    } else {
-        const fofaTabs = await chrome.tabs.query({ url: ["https://fofa.info/*", "https://en.fofa.info/*"] });
-        tab = fofaTabs[0] || activeTab; // fall back to active tab if no FOFA tab open
-    }
-    if (!tab) { stopScan("No active tab found"); return; }
-    activeTabId = tab.id;
-    chrome.storage.local.set({ activeTabId: tab.id });
+    const tab = await ensureScanTab(domain);
+    if (!tab) { stopScan("Could not open a FOFA tab"); return; }
+    await ensureFofaWindow(tab, domain);
 
     chrome.alarms.create("watchdog", { periodInMinutes: 3 });
 
@@ -269,7 +490,9 @@ function stopScan(reason) {
     state.isRunning = false;
     state.isPaused  = false;
     state.status    = reason || "Stopped";
-    chrome.alarms.clearAll();
+    // Do not clearAll: the auto_scan schedule must outlive an individual run.
+    chrome.alarms.clear("watchdog");
+    chrome.alarms.clear("scrape_page");
     chrome.storage.local.remove("activeTabId");
     if (activeTabId) {
         chrome.tabs.sendMessage(activeTabId, { action: "STOP_WORK" }).catch(() => {});
@@ -280,30 +503,51 @@ function stopScan(reason) {
 }
 
 function pauseScan(reason) {
+    const nextStatus = reason || "Paused";
+    const changed = !state.isPaused || state.status !== nextStatus;
     state.isPaused = true;
-    state.status   = reason || "Paused";
+    state.status   = nextStatus;
     saveState();
     broadcastState();
+
+    if (!changed) return;
+    const total = state.countryList.length || COUNTRY_CODES.length;
+    notifyOperators(
+        `FOFA extension scan paused.\n` +
+        `reason: ${nextStatus}\n` +
+        `progress: country ${Math.min(state.countriesDone + 1, total)}/${total}, ` +
+        `${state.results.length} results kept\n` +
+        `action: fix the FOFA tab or session, then click Resume`
+    );
 }
 
-function resumeScan() {
+async function resumeScan() {
     if (!state.isRunning && state.status !== "Stopped (Recovered)") return;
     if (!state.isRunning) state.isRunning = true;
+    state.loginFallbackTried = false;
+
+    const cfg = await readConfig();
+    if (cfg.domainMode && cfg.domainMode !== state.domainMode) {
+        state.domainMode = cfg.domainMode;
+        state.domain = cfg.domainMode === "cn" ? "fofa.info" : "en.fofa.info";
+        state.domainPhase = 1;
+    }
+
+    publishLaneDomain(state.domain);
     state.isPaused = false;
     state.status   = "Resuming...";
     saveState();
     broadcastState();
+    chrome.alarms.create("watchdog", { periodInMinutes: 3 });
 
-    chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-        if (tab) {
-            activeTabId = tab.id;
-            chrome.storage.local.set({ activeTabId: tab.id });
-            chrome.tabs.sendMessage(activeTabId, { action: "RESUME_WORK" }).catch(() => {
-                processNextCountry(false);
-            });
-        } else {
-            stopScan("Could not find active tab to resume");
-        }
+    const tab = await ensureScanTab(state.domain || "en.fofa.info");
+    if (!tab) {
+        stopScan("Could not open a FOFA tab to resume");
+        return;
+    }
+    await ensureFofaWindow(tab, state.domain || "en.fofa.info");
+    chrome.tabs.sendMessage(activeTabId, { action: "RESUME_WORK" }).catch(() => {
+        processNextCountry();
     });
 }
 
@@ -324,6 +568,12 @@ function nextCountry() {
 async function processNextCountry() {
     if (!state.isRunning || state.isPaused) return;
 
+    const issue = await checkFofaSession();
+    if (issue) {
+        pauseScan(issue);
+        return;
+    }
+
     // Guard: realign if countryList missing after SW restart
     if (!Array.isArray(state.countryList) || state.countryList.length === 0) {
         state.countryList  = [...COUNTRY_CODES].sort(() => Math.random() - 0.5);
@@ -337,6 +587,7 @@ async function processNextCountry() {
             const shuffled   = [...COUNTRY_CODES].sort(() => Math.random() - 0.5);
             state.domainPhase  = 2;
             state.domain       = nextDomain;
+            publishLaneDomain(nextDomain);
             state.countryIndex = 0;
             state.countryList  = shuffled;
             state.status = `✅ EN done — switching to CN (fofa.info)...`;
@@ -364,20 +615,16 @@ async function processNextCountry() {
     const encoded    = btoa(fullQuery);
     const targetUrl  = `https://${state.domain}/result?qbase64=${encoded}`;
 
-    // Navigate the tracked tab — if it's dead, find a FOFA tab or bail clearly
+    // Navigate the lane's own tab — if it is gone, open a fresh one.
     try {
         await chrome.tabs.update(activeTabId, { url: targetUrl });
     } catch (e) {
-        // Tab is gone — try to find any open FOFA tab to take over
-        const fofaTabs = await chrome.tabs.query({ url: ['https://fofa.info/*','https://en.fofa.info/*'] });
-        if (fofaTabs.length) {
-            activeTabId = fofaTabs[0].id;
-            chrome.storage.local.set({ activeTabId });
-            await chrome.tabs.update(activeTabId, { url: targetUrl });
-        } else {
-            pauseScan('⚠️ FOFA tab was closed — reopen FOFA then click Resume');
+        const tab = await ensureScanTab(state.domain);
+        if (!tab) {
+            pauseScan("⚠️ Could not open a FOFA tab — reopen FOFA then click Resume");
             return;
         }
+        await chrome.tabs.update(activeTabId, { url: targetUrl });
     }
 }
 
@@ -397,7 +644,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         if (!state.isRunning || state.isPaused || !activeTabId) return;
         chrome.tabs.sendMessage(activeTabId, { action: "SCRAPE_PAGE" }).catch((err) => {
             console.log("SCRAPE_PAGE send failed:", err);
-            nextCountry();
+            // Do not advance the country: a missing content script means no
+            // results were read, and skipping would silently lose the country.
+            pauseScan("⚠️ FOFA tab not reachable — reload the page, then click Resume");
         });
     }
 
@@ -410,13 +659,21 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 }
                 if (tab.status === "complete") {
                     chrome.tabs.sendMessage(activeTabId, { action: "SCRAPE_PAGE" }).catch(() => {
-                        nextCountry();
+                        pauseScan("⚠️ FOFA tab not reachable — reload the page, then click Resume");
                     });
                 }
             });
         }
     }
+
+    if (alarm.name === AUTO_SCAN_ALARM) {
+        autoScanTick().catch((err) => console.warn("[BG] auto scan failed:", err));
+    }
 });
+
+chrome.runtime.onInstalled.addListener(ensureAutoScanAlarm);
+chrome.runtime.onStartup.addListener(ensureAutoScanAlarm);
+ensureAutoScanAlarm();
 
 // --- VALIDATION ---
 
@@ -607,9 +864,7 @@ async function uploadToSupabase({ persistState = true } = {}) {
         return false;
     }
 
-    const cfg = await new Promise((resolve) => {
-        chrome.storage.local.get(["supabase_config"], (r) => resolve(r.supabase_config || {}));
-    });
+    const cfg = await readConfig();
 
     const apiUrl          = (cfg.apiUrl          || "").trim().replace(/\/+$/, "");
     const monitorKey      = (cfg.monitorKey       || "").trim();

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the FOFA browser lane every 4 hours
+
+[Timer]
+OnCalendar=*-*-* 02/4:20:00
+RandomizedDelaySec=300
+Unit=fofa-browser.service
+
+[Install]
+WantedBy=timers.target

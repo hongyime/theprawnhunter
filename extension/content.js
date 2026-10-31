@@ -1,9 +1,17 @@
 
+// A sendMessage rejects when the background worker is unreachable; never
+// leave that rejection uncaught in the page console.
+function sendToBackground(msg) {
+    chrome.runtime.sendMessage(msg).catch((err) => {
+        console.warn("[TH Content] message failed:", msg.action, err.message);
+    });
+}
+
 // CDP automation hook: scripts/run_fofa_overnight.ps1 sends postMessage
 // from the page context. Content script bridges it to the background SW.
 window.addEventListener("message", (event) => {
     if (event.data && event.data.type === "TH_START_SCAN") {
-        chrome.runtime.sendMessage({
+        sendToBackground({
             action: "START_SCAN",
             query: event.data.query || 'body="api.telegram.org/bot"',
             domain: event.data.domain || "en.fofa.info",
@@ -25,7 +33,12 @@ const CLICK_SELECTORS = [
     '[title="Source code"]',          // attribute-based fallback
     '[class*="icon-daima"]',          // partial class match
     '[class*="icon-code"]',
-    'i[class*="icon-"]',              // generic icon fallback
+    // Generic icon fallback, scoped to result rows: an unscoped match clicks
+    // header/sidebar icons on a zero-result page and times out on fake popups.
+    '.hsxa-host-table-body i[class*="icon-"]',
+    '.host-table-body i[class*="icon-"]',
+    '[class*="result-item"] i[class*="icon-"]',
+    '[class*="host-item"] i[class*="icon-"]',
 ];
 
 const POPUP_CONTENT_SELECTORS = [
@@ -79,13 +92,18 @@ async function startScraping() {
 
         // 1. Captcha check
         if (checkForCaptcha()) {
-            chrome.runtime.sendMessage({ action: "CAPTCHA_DETECTED" });
+            sendToBackground({ action: "CAPTCHA_DETECTED" });
             return;
         }
 
         // 2. Login-wall check (FOFA -3000: IP flagged as crawler, login required)
         if (checkLoginWall()) {
-            chrome.runtime.sendMessage({ action: "LOGIN_REQUIRED" });
+            sendToBackground({ action: "LOGIN_REQUIRED" });
+            return;
+        }
+
+        if (checkQuotaWall()) {
+            sendToBackground({ action: "QUOTA_EXHAUSTED" });
             return;
         }
 
@@ -163,12 +181,12 @@ async function startScraping() {
         const batch = Array.from(pageTokenMap.values());
         if (batch.length > 0) {
             log(`Sending batch of ${batch.length} token(s) to background`);
-            chrome.runtime.sendMessage({ action: "RESULTS_FOUND", data: batch });
+            sendToBackground({ action: "RESULTS_FOUND", data: batch });
         }
 
         log("Page complete.");
         if (!shouldStop) {
-            chrome.runtime.sendMessage({ action: "PAGE_COMPLETE" });
+            sendToBackground({ action: "PAGE_COMPLETE" });
         }
     } finally {
         isWorking = false;
@@ -179,11 +197,20 @@ async function startScraping() {
 
 function log(msg) {
     console.log("[TH Content]", msg);
-    chrome.runtime.sendMessage({ action: "LOG", message: msg });
+    sendToBackground({ action: "LOG", message: msg });
 }
 
 function delay(ms) {
     return new Promise((r) => setTimeout(r, ms));
+}
+
+function checkQuotaWall() {
+    const text = document.body.textContent;
+    return (
+        text.includes("本月免费额度已用尽") ||
+        text.includes("需要F点")          ||
+        text.includes("去兑换或充值")
+    );
 }
 
 function checkForCaptcha() {
@@ -202,10 +229,16 @@ function checkForCaptcha() {
 function checkLoginWall() {
     const text = document.body.textContent;
     return (
+        location.pathname.startsWith("/f_login")                      ||
+        location.pathname.startsWith("/login")                        ||
         text.includes("-3000")                                         ||
         text.includes("IP access is abnormal")                        ||
         text.includes("suspected to be a web crawler")                ||
         text.includes("can be used after logging in")                 ||
+        text.includes("[-700]")                                       ||
+        text.includes('"code":-700')                                  ||
+        text.includes("账号无效")                                      ||
+        text.toLowerCase().includes("account invalid")                ||
         text.includes("IP访问异常")                                    ||
         text.includes("疑似为爬虫")                                    ||
         text.includes("登录账号可用")                                  ||
@@ -217,6 +250,11 @@ function checkLoginWall() {
 }
 
 function getVisibleItems() {
+    // An empty result page still has header/sidebar icons; never treat those
+    // as results or the click pass burns the full popup timeout on each one.
+    if (document.querySelectorAll(RESULT_ROW_SELECTORS.join(",")).length === 0) {
+        return [];
+    }
     for (const selector of CLICK_SELECTORS) {
         const all = document.querySelectorAll(selector);
         const visible = Array.from(all).filter((el) => el.offsetParent !== null);

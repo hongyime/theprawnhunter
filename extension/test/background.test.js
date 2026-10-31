@@ -16,6 +16,8 @@ function loadBackground(responses) {
   const chrome = {
     runtime: {
       onMessage: noListener,
+      onInstalled: noListener,
+      onStartup: noListener,
       sendMessage: () => Promise.resolve(),
     },
     storage: {
@@ -34,6 +36,7 @@ function loadBackground(responses) {
     alarms: {
       onAlarm: noListener,
       create() {},
+      clear() {},
       get(_name, callback) {
         callback(null);
       },
@@ -60,7 +63,7 @@ function loadBackground(responses) {
 
   vm.runInNewContext(
     `${backgroundSource}\nglobalThis.__testHooks = {\n` +
-      "  get state() { return state; }, stateReady, makeRoomForResults\n" +
+      "  get state() { return state; }, stateReady, makeRoomForResults, sessionIssue\n" +
       "};",
     context,
     { filename: backgroundPath },
@@ -102,4 +105,16 @@ test("prunes the oldest results only after the upload succeeds", async () => {
   assert.equal(hooks.state.results.length, 299);
   assert.equal(hooks.state.results[0].token, "synthetic-token-1");
   assert.equal(hooks.state.results.at(-1).token, "synthetic-token-299");
+});
+
+test("warns only inside the final week of the FOFA session", () => {
+  const { hooks } = loadBackground([]);
+  const now = Date.UTC(2026, 9, 30, 12, 0, 0);
+  const inDays = (days) => ({ expirationDate: now / 1000 + days * 86400 });
+
+  assert.equal(hooks.sessionIssue(inDays(30), now), null);
+  assert.equal(hooks.sessionIssue(inDays(3), now), null);
+  assert.match(hooks.sessionIssue(inDays(1), now), /expires in 1 day/);
+  assert.match(hooks.sessionIssue(inDays(0), now), /expired/);
+  assert.match(hooks.sessionIssue(null, now), /not found/);
 });

@@ -1,0 +1,10 @@
+[Unit]
+Description=FOFA browser lane (Playwright, dedicated tab)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/theprawnhunter
+ExecStart=%h/Projects/theprawnhunter/scripts/ops/run_fofa_browser.sh --cdp http://127.0.0.1:9222 --queries-file scripts/ops/fofa_queries.txt --fetch-hosts 5
+TimeoutStartSec=2h
+Nice=10

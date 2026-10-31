@@ -11,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const inputApiUrl   = document.getElementById("input-api-url");
     const inputMonKey   = document.getElementById("input-monitor-key");
     const elTotal       = document.getElementById("count-total");
+    const inputAutoScan = document.getElementById("input-auto-scan");
 
     // Render from local storage first so popup paint does not depend on
     // waking the Manifest V3 background service worker.
@@ -18,6 +19,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const cfg = result.supabase_config || {};
         inputApiUrl.value = cfg.apiUrl || DEFAULT_API_URL;
         if (cfg.monitorKey) inputMonKey.value = cfg.monitorKey;
+        if (cfg.query) inputQuery.value = cfg.query;
+        if (cfg.domainMode) selectMode.value = cfg.domainMode;
+        if (inputAutoScan) inputAutoScan.checked = cfg.autoScan !== false;
         if (result.scraper_state) updateUI(summarizeStoredState(result.scraper_state));
         if (!cfg.apiUrl) saveConfig();
     });
@@ -27,17 +31,39 @@ document.addEventListener("DOMContentLoaded", () => {
             supabase_config: {
                 apiUrl:     (inputApiUrl.value || "").trim(),
                 monitorKey: (inputMonKey.value || "").trim(),
+                query:      (inputQuery.value || "").trim(),
+                domainMode: selectMode.value,
+                autoScan:   !!inputAutoScan && inputAutoScan.checked,
             }
         });
     }
 
     inputApiUrl.onchange = saveConfig;
     inputMonKey.onchange = saveConfig;
+    inputQuery.onchange  = saveConfig;
+    selectMode.onchange  = saveConfig;
+    if (inputAutoScan) inputAutoScan.onchange = saveConfig;
+
+    // sendMessage rejects ("Could not establish connection. Receiving end does
+    // not exist.") when no extension context can receive it — the MV3 worker
+    // is not running, or the extension was just reloaded. Report it instead of
+    // leaving an uncaught promise rejection and silently dead buttons.
+    function send(msg) {
+        return Promise.resolve()
+            .then(() => chrome.runtime.sendMessage(msg))
+            .catch((err) => {
+                const statusEl = document.getElementById("status");
+                statusEl.innerText = "⚠️ Extension background unavailable — reload the extension";
+                statusEl.style.color = "red";
+                btnStart.disabled = btnStop.disabled = btnResume.disabled = btnUpload.disabled = true;
+                console.warn("[Popup] message failed:", err);
+                return null;
+            });
+    }
 
     // Refresh from the background worker when it is awake.
-    chrome.runtime.sendMessage({ action: "GET_STATE" }, (response) => {
-        if (chrome.runtime.lastError) return;
-        updateUI(response);
+    send({ action: "GET_STATE" }).then((response) => {
+        if (response) updateUI(response);
     });
 
     // Live updates while popup is open
@@ -47,18 +73,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     btnStart.onclick = () => {
         saveConfig();
-        chrome.runtime.sendMessage({
+        send({
             action:     "START_SCAN",
             query:      inputQuery.value,
             domainMode: selectMode.value,
         });
     };
 
-    btnStop.onclick   = () => chrome.runtime.sendMessage({ action: "STOP_SCAN" });
-    btnResume.onclick = () => chrome.runtime.sendMessage({ action: "RESUME_SCAN" });
+    btnStop.onclick   = () => send({ action: "STOP_SCAN" });
+    btnResume.onclick = () => send({ action: "RESUME_SCAN" });
     btnUpload.onclick = () => {
         saveConfig();
-        chrome.runtime.sendMessage({ action: "UPLOAD_RESULTS" });
+        send({ action: "UPLOAD_RESULTS" });
     };
 
     function summarizeStoredState(state) {
@@ -105,6 +131,8 @@ document.addEventListener("DOMContentLoaded", () => {
             btnStop.classList.add("hidden");
             btnResume.classList.remove("hidden");
             btnStart.classList.add("hidden");
+            inputQuery.disabled = false;
+            selectMode.disabled = false;
             const statusEl = document.getElementById("status");
             // Show the actual pause reason from background (login wall vs captcha)
             statusEl.innerText = state.status;

@@ -1,0 +1,5 @@
+# Queries used by the scheduled FOFA browser lane (one per line).
+# Keep these different from the extension's per-country
+# body="api.telegram.org/bot" sweep so the two lanes cover different terms.
+body="TELEGRAM_BOT_TOKEN" && status_code="200"
+body="bot_token" && status_code="200"

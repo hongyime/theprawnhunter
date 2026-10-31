@@ -248,3 +248,54 @@ def test_export_limit_param(mock_db, client):
     response = client.get("/monitor/export?limit=1", headers=AUTH)
     assert response.status_code == 200
     assert len(response.json()) <= 1
+
+
+def test_system_log_endpoint_forwards_message(client, monkeypatch):
+    from app.api.routers._monitor import ops
+
+    calls = []
+
+    class FakeBroadcaster:
+        async def send_log(self, message: str) -> bool:
+            calls.append(message)
+            return True
+
+    monkeypatch.setattr(ops, "BroadcasterService", FakeBroadcaster)
+    response = client.post(
+        "/monitor/ops/system-log",
+        headers=AUTH,
+        json={"message": "FOFA extension paused at country 12"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"sent": True}
+    assert calls == ["FOFA extension paused at country 12"]
+
+
+def test_system_log_endpoint_requires_key_and_caps_message(client):
+    assert client.post(
+        "/monitor/ops/system-log", json={"message": "hello"}
+    ).status_code == 403
+    assert client.post(
+        "/monitor/ops/system-log",
+        headers=AUTH,
+        json={"message": "x" * 4001},
+    ).status_code == 422
+
+
+def test_system_log_endpoint_suppresses_duplicate_key(client, monkeypatch):
+    from app.api.routers._monitor import ops
+
+    class FakeRedis:
+        def exists(self, *_args, **_kwargs) -> bool:
+            return True
+
+    monkeypatch.setattr(ops, "_redis_client", lambda: FakeRedis())
+    response = client.post(
+        "/monitor/ops/system-log",
+        headers=AUTH,
+        json={"message": "duplicate", "dedupe_key": "fofa:extension:paused"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"sent": False}

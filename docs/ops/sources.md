@@ -19,7 +19,7 @@ upstream is unavailable. Ingestion narrows; the pipeline keeps running.
 | PyPI | 6 h (:35) | web search is bot-blocked; discovery goes through Exa (`includeDomains: pypi.org`), sdists via JSON API |
 | GitHub Actions CI logs | daily 06:20 UTC | ≤25 repos, latest ≤3 runs, zip-bomb guarded |
 | **SearXNG** | 6 h (:55) | self-hosted meta-search (Google CSE + Brave); `docker compose up -d searxng` |
-| FOFA (browser) | manual | `scripts/ops/fofa_browser.py` against a logged-in Chrome profile |
+| FOFA (browser) | 4 h (:20) | `scripts/ops/fofa_browser.py` via systemd timer ([runbook](fofa-browser.md)); uses the domain opposite the extension; stops on a session wall |
 | FOFA (API) | 4 h when keyed | requires an API-enabled account with F-coins |
 | Google CSE | 12 h when keyed | disabled in beat: engine "entire web" is unavailable to new engines, and the project's keys return 403 |
 | Bitbucket | dropped | API is workspace-scoped only; global code search was retired |

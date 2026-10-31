@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Fofa Scraper",
-  "version": "1.2",
+  "version": "1.3.1",
   "description": "Automated FOFA scraper for Telegram bot token hunting",
   "permissions": [
     "activeTab",
     "alarms",
+    "cookies",
     "scripting",
     "storage",
     "tabs"
@@ -14,6 +15,7 @@
     "https://fofa.info/*",
     "https://en.fofa.info/*",
     "https://api.telegram.org/*",
+    "https://winnethepooh.hong-yi.me/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],

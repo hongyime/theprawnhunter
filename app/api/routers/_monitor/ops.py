@@ -6,11 +6,12 @@ exact same Redis key (imported, never copied) so the dashboard cannot drift from
 the bot semantics. No new storage, no second pause mechanism.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.queue_monitor import DEFAULT_QUEUES, get_queue_snapshot
 from app.core.redis_srv import redis_srv
 from app.services._bot_listener.runtime import PAUSE_KEY
+from app.services.broadcaster_srv import BroadcasterService
 
 from .common import *
 
@@ -47,6 +48,21 @@ class OpsStatusOut(BaseModel):
 
 class OpsToggleOut(BaseModel):
     paused: bool
+
+
+class SystemLogIn(BaseModel):
+    """Operator message forwarded to the Telegram ``System Logs`` topic.
+
+    ``dedupe_key`` is optional: when supplied, the same key is delivered at most
+    once per six hours so a paused lane cannot spam the topic on every retry.
+    """
+
+    message: str = Field(min_length=1, max_length=3900)
+    dedupe_key: str | None = Field(default=None, max_length=120)
+
+
+class SystemLogOut(BaseModel):
+    sent: bool
 
 
 def _redis_client():
@@ -197,3 +213,62 @@ async def ops_resume():
         raise HTTPException(status_code=503, detail="Redis unavailable")
     _audit(OPS_RESUME_EVENT, paused=False)
     return OpsToggleOut(paused=False)
+
+
+@router.post(
+    "/ops/system-log",
+    response_model=SystemLogOut,
+    dependencies=[Depends(require_monitor_key)],
+)
+async def ops_system_log(payload: SystemLogIn):
+    """Post an operator message to the Telegram ``System Logs`` topic.
+
+    Used by the browser-based FOFA lanes to report a paused scan, a session
+    that is about to expire, or a login wall. Delivery is immediate (no queue).
+    ``send_log`` never redacts: callers must keep cookies and tokens out of the
+    message.
+    """
+    dedupe_key = (
+        f"monitor:ops:system-log:{payload.dedupe_key}" if payload.dedupe_key else None
+    )
+    if dedupe_key:
+        try:
+            if await asyncio.to_thread(_redis_client().exists, dedupe_key):
+                return SystemLogOut(sent=False)
+        except Exception as exc:
+            # Fail open: a Redis outage must not swallow the alert.
+            logger.warning("monitor/ops system-log dedupe failed (%s)", type(exc).__name__)
+
+    broadcaster = BroadcasterService()
+    for attempt in range(2):
+        try:
+            sent = await asyncio.wait_for(broadcaster.send_log(payload.message), timeout=10)
+        except TimeoutError as exc:
+            if attempt == 0:
+                await asyncio.sleep(2.5)
+                continue
+            raise HTTPException(status_code=504, detail="System Logs send timed out") from exc
+
+        if sent:
+            if dedupe_key:
+
+                def _remember() -> None:
+                    _redis_client().set(dedupe_key, "1", ex=6 * 3600)
+
+                try:
+                    await asyncio.to_thread(_remember)
+                except Exception as exc:
+                    logger.warning(
+                        "monitor/ops system-log dedupe write failed (%s)",
+                        type(exc).__name__,
+                    )
+            return SystemLogOut(sent=True)
+
+        # send_log also returns False for its 2 s global cooldown; retry once.
+        if attempt == 0:
+            await asyncio.sleep(2.5)
+
+    raise HTTPException(
+        status_code=503,
+        detail="System Logs delivery failed or was rate-limited",
+    )
