@@ -1,51 +1,21 @@
 import asyncio
-
-import asyncio
-
 import base64
-
 import contextlib
-
-import contextlib
-
-import html as htmlmod
-
 import hashlib
-
-import logging
-
+import html as htmlmod
 import json
-
-import re
-
-from typing import Any
-
 import logging
-
 import random
-
-import httpx
-
 import re
-
 from datetime import UTC, datetime
-
-from app.core.config import settings
-
 from typing import Any
-
-from app.utils.http_client import get_async_http_client
-
 from urllib.parse import urlparse
 
 import httpx
-
 import urllib3
 
 from app.core.config import settings
-
 from app.domain.tokens import CHAT_ID_PATTERN, TOKEN_PATTERN, _is_valid_token
-
 from app.utils.http_client import (  # noqa: F401 — retry_with_backoff moved here in DEAD-007, re-exported for existing importers
     get_async_http_client,
     retry_with_backoff,
@@ -210,7 +180,7 @@ async def _perform_active_deep_scan(
 
                 if js_tasks:
                     js_responses = await asyncio.gather(*js_tasks, return_exceptions=True)
-                    for js_url, js_res in zip(js_urls, js_responses):
+                    for js_url, js_res in zip(js_urls, js_responses, strict=False):
                         if isinstance(js_res, Exception):
                             report_error(js_url, js_res)
                         elif isinstance(js_res, httpx.Response) and js_res.status_code == 200:

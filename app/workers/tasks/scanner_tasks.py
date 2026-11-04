@@ -28,9 +28,9 @@ from app.workers.tasks.scanners.providers import postman as _provider_21
 from app.workers.tasks.scanners.providers import dockerhub as _provider_22
 from app.workers.tasks.scanners.providers import searchcode as _provider_23
 from app.workers.tasks.scanners.providers import searxng as _provider_24
-from app.workers.tasks.scanners.providers import npm as _provider_24
-from app.workers.tasks.scanners.providers import pypi as _provider_25
-from app.workers.tasks.scanners.providers import ci_logs as _provider_26
+from app.workers.tasks.scanners.providers import npm as _provider_25
+from app.workers.tasks.scanners.providers import pypi as _provider_26
+from app.workers.tasks.scanners.providers import ci_logs as _provider_27
 
 _IMPLEMENTATIONS = (_common,
     _provider_0,
@@ -59,7 +59,8 @@ _IMPLEMENTATIONS = (_common,
     _provider_23,
     _provider_24,
     _provider_25,
-    _provider_26)
+    _provider_26,
+    _provider_27)
 for _implementation in _IMPLEMENTATIONS:
     for _name, _value in vars(_implementation).items():
         if not _name.startswith("__"):

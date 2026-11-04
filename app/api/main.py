@@ -141,8 +141,23 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # calls `exc.detail` — a RateLimitExceeded-only attribute. Register a safe fallback so
 # Redis connection failures degrade gracefully instead of crashing the middleware.
 def _redis_error_handler(request, exc):  # noqa: ARG001
+    # Only swallow ConnectionErrors raised from within slowapi's limit check
+    # (the known 0.1.9/0.1.10 Redis-disconnect bug). Any other ConnectionError
+    # (Supabase, Telegram, internal networking) must surface as a real 500 so
+    # callers don't see a blank 200 OK on a genuine failure.
+    import traceback
+
     from starlette.responses import Response
-    return Response(status_code=200)  # allow request through on Redis miss
+
+    tb = exc.__traceback__
+    raised_in_slowapi = any(
+        "slowapi" in (frame.filename or "")
+        for frame, _ in traceback.walk_tb(tb)
+    )
+    if raised_in_slowapi:
+        return Response(status_code=200)  # allow request through on Redis miss
+    # Not a rate-limiter failure — re-raise for the default 500 handling.
+    raise exc
 app.add_exception_handler(ConnectionError, _redis_error_handler)
 app.add_middleware(SlowAPIMiddleware)
 # ─────────────────────────────────────────────────────────────────────

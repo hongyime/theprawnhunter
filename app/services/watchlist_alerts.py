@@ -108,13 +108,10 @@ async def _resolve_numeric_group_id(broadcaster: Any, group_id: Any) -> int | No
     ``None`` when the lookup or cache is unavailable.
     """
     cache_key = _group_id_cache_key(group_id)
-    client = None
     try:
-        import redis
+        from app.core.redis_srv import redis_srv
 
-        client = redis.from_url(
-            getattr(settings, "REDIS_URL", ""), decode_responses=True
-        )
+        client = redis_srv.client
         cached = client.get(cache_key)
         if cached is not None:
             try:
@@ -124,6 +121,7 @@ async def _resolve_numeric_group_id(broadcaster: Any, group_id: Any) -> int | No
                     f"[WatchlistAlert] invalid cached group id for {group_id}"
                 )
     except Exception as exc:  # noqa: BLE001 - cache is optional
+        client = None
         logger.debug(f"[WatchlistAlert] group id cache read failed: {exc}")
 
     try:

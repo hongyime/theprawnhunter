@@ -63,9 +63,6 @@ async def opt_out_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_user_admin = is_admin(update)
 
-    # Show all available bots in the help text
-    bot_list = ", ".join([f"@{u}" for u in _bot_usernames.values()])
-
     if is_user_admin:
         help_text = (
             "Commands:\n"

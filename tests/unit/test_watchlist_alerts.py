@@ -1,7 +1,6 @@
 """Watchlist alert dispatch: one alert per hit, failure-isolated."""
 
 import logging
-import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -67,12 +66,12 @@ class _FakeRedis:
 
 
 def _patch_redis(monkeypatch, fake_redis):
-    monkeypatch.setitem(
-        sys.modules,
-        "redis",
-        SimpleNamespace(
-            from_url=lambda _url, decode_responses=True: fake_redis
-        ),
+    from app.core import redis_srv as _redis_srv_mod
+
+    monkeypatch.setattr(
+        type(_redis_srv_mod.redis_srv),
+        "client",
+        property(lambda self: fake_redis),
     )
 
 

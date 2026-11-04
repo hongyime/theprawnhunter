@@ -134,8 +134,9 @@ async def receive_webhook_update(credential_id: str, request: Request):
         return {"ok": True}
 
     raw_update_id = payload.get("update_id")
-    # Strict validation: reject bool (subclass of int), floats, strings, None, <= 0, and > 2^31 - 1
-    MAX_TELEGRAM_UPDATE_ID = 2_147_483_647
+    # Strict validation: reject bool (subclass of int), floats, strings, None, <= 0, and > 2^63 - 1.
+    # Telegram update IDs are 64-bit integers (BIGINT in PostgreSQL).
+    MAX_TELEGRAM_UPDATE_ID = 9_223_372_036_854_775_807
     if (
         raw_update_id is None
         or isinstance(raw_update_id, bool)
@@ -143,7 +144,7 @@ async def receive_webhook_update(credential_id: str, request: Request):
         or raw_update_id <= 0
         or raw_update_id > MAX_TELEGRAM_UPDATE_ID
     ):
-        logger.warning(f"[Honeypot] payload update_id={raw_update_id!r} not a valid 32-bit positive integer — dropping")
+        logger.warning(f"[Honeypot] payload update_id={raw_update_id!r} not a valid 64-bit positive integer — dropping")
         return {"ok": True}
 
     update_id = raw_update_id

@@ -57,7 +57,10 @@ def test_search_error_does_not_leak(mock_db, client):
     mock_db.table.side_effect = Exception(secret)
 
     response = client.get("/monitor/search?q=telegram", headers=AUTH)
-    assert response.status_code == 500
+    # Search degrades to a 200 with an empty result set on DB failure
+    # (see _monitor/search.py). The security contract is that the internal
+    # error string must never reach the client, regardless of status.
+    assert response.status_code == 200
     assert secret not in response.text
 
 

@@ -639,7 +639,7 @@ async def _backfill_media_text_logic(dry_run: bool = True) -> dict:
     for row, pipelines in selected:
         message_id = str(row.get("id"))
         if dispatched and delay > 0:
-            time.sleep(delay)
+            await asyncio.sleep(delay)
         tasks = {"asr": transcribe_media, "ocr": ocr_media}
         queued = []
         for pipeline in pipelines:

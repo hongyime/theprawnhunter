@@ -59,12 +59,14 @@ end
         self.client.eval(lua, 1, f"lock:{key}", owner)
 
     def incr_key(self, key: str, ttl_seconds: int | None = None) -> int:
-        pipe = self.client.pipeline()
-        pipe.incr(f"counter:{key}")
-        if ttl_seconds:
-            pipe.expire(f"counter:{key}", ttl_seconds)
-        results = pipe.execute()
-        return int(results[0])
+        count = int(self.client.incr(f"counter:{key}"))
+        if ttl_seconds and (count == 1 or self.client.ttl(f"counter:{key}") < 0):
+            # Only (re)set the TTL when the counter was just created, or when it
+            # somehow lost its expiry. Setting it on every increment would let a
+            # rate-limited caller reset the lockout window on each rejected
+            # attempt, locking themselves out indefinitely.
+            self.client.expire(f"counter:{key}", ttl_seconds)
+        return count
 
     def reset_key(self, key: str):
         self.client.delete(f"counter:{key}")

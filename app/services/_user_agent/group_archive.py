@@ -893,7 +893,7 @@ class UserAgentGroupArchive:
 
         cache_key = f"user_agent:anon_senders:{group_id}"
         try:
-            cached = redis_srv.get(cache_key)
+            cached = redis_srv.client.get(cache_key)
             if cached:
                 import json
 
@@ -937,7 +937,7 @@ class UserAgentGroupArchive:
         try:
             import json
 
-            redis_srv.setex(cache_key, 300, json.dumps(eligible))
+            redis_srv.client.setex(cache_key, 300, json.dumps(eligible))
         except Exception:  # noqa: BLE001
             pass
         return eligible

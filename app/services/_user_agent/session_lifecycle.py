@@ -323,6 +323,26 @@ class UserAgentSessionLifecycle:
                  logger.info(f"    ⏳ [UserAgent] Session '{session_name}' on cooldown ({ttl}s). Rotating...")
                  continue
 
+            # 3. Check if already connected to THIS session; otherwise
+            # disconnect the previous session and release ITS lock BEFORE
+            # acquiring the candidate's lock. Doing this after acquiring the
+            # new lock would overwrite self._session_lock_key with the new key
+            # and then release the new session's lock during the disconnect.
+            if self.client and self.client.is_connected():
+                if getattr(self.client.session, 'filename', '') == session_path:
+                    self.current_session_name = session_name # Update tracker
+                    return True
+
+                # Disconnect old session and release its own lock/lease.
+                session_filename = getattr(self.client.session, 'filename', None)
+                await self.client.disconnect()
+                if session_filename:
+                    self._cleanup_temp_session(session_filename)
+                if self._session_lock_key:
+                    redis_srv.release_lock(self._session_lock_key, owner=self._lock_owner)
+                    self._session_lock_key = None
+                await self._release_db_lease()
+
             lock_key = f"user_agent:lock:{session_name}"
             if not redis_srv.acquire_lock(lock_key, 600, owner=self._lock_owner):
                 logger.info(f"    🔒 [UserAgent] Session '{session_name}' locked by another worker. Rotating...")
@@ -334,23 +354,6 @@ class UserAgentSessionLifecycle:
                     redis_srv.release_lock(self._session_lock_key, owner=self._lock_owner)
                     self._session_lock_key = None
                 continue
-
-
-            # 3. Check if already connected is THIS session
-            if self.client and self.client.is_connected():
-                if getattr(self.client.session, 'filename', '') == session_path:
-                    self.current_session_name = session_name # Update tracker
-                    return True
-
-                # Disconnect old
-                session_filename = getattr(self.client.session, 'filename', None)
-                await self.client.disconnect()
-                if session_filename:
-                    self._cleanup_temp_session(session_filename)
-                if self._session_lock_key:
-                    redis_srv.release_lock(self._session_lock_key, owner=self._lock_owner)
-                    self._session_lock_key = None
-                await self._release_db_lease()
 
             # 4. Initialize & Connect
             import shutil
@@ -488,12 +491,12 @@ class UserAgentSessionLifecycle:
         try:
             client = redis_srv.client
             holder = client.get(key)
-            if holder == self._instance_id:
+            if holder == self._lock_owner:
                 client.expire(key, _SESSION_LEASE_SECONDS)
                 self._lease_key = key
                 self._current_phone = key
                 return True
-            if client.set(key, self._instance_id, nx=True, ex=_SESSION_LEASE_SECONDS):
+            if client.set(key, self._lock_owner, nx=True, ex=_SESSION_LEASE_SECONDS):
                 self._lease_key = key
                 self._current_phone = key
                 return True
@@ -501,7 +504,7 @@ class UserAgentSessionLifecycle:
             if ttl is not None and ttl < 0:
                 # A holder died without expiring the key; reclaim it.
                 client.delete(key)
-                if client.set(key, self._instance_id, nx=True, ex=_SESSION_LEASE_SECONDS):
+                if client.set(key, self._lock_owner, nx=True, ex=_SESSION_LEASE_SECONDS):
                     self._lease_key = key
                     self._current_phone = key
                     return True
@@ -517,7 +520,7 @@ class UserAgentSessionLifecycle:
             return
         try:
             client = redis_srv.client
-            if client.get(key) == self._instance_id:
+            if client.get(key) == self._lock_owner:
                 client.delete(key)
         except Exception as e:
             logger.warning(f"    ⚠️ [UserAgent] Session lease release failed: {e}")
@@ -550,7 +553,13 @@ class UserAgentSessionLifecycle:
             logger.warning(f"    ⚠️ [UserAgent] Failed to cleanup {filename}: {e}")
 
     async def _connect_to_session(self, session_path: str) -> bool:
-        """Internal helper to connect to a specific session file."""
+        """Internal helper to connect to a specific session file.
+
+        On success (authorized) the client is left connected for the caller,
+        which disconnects it. On every failure path the client is disconnected
+        and the temporary SQLite file is removed so probes never leak open
+        connections or /tmp files.
+        """
         session_name = os.path.splitext(os.path.basename(session_path))[0]
         import shutil
         import sqlite3
@@ -563,7 +572,18 @@ class UserAgentSessionLifecycle:
             conn.close()
             self.client = TelegramClient(TEMP_SESSION_PATH, self.api_id, self.api_hash)
             await self.client.connect()
-            return await self.client.is_user_authorized()
+            if await self.client.is_user_authorized():
+                return True
+            await self._cleanup_probe_client(f"{TEMP_SESSION_PATH}.session")
+            return False
         except Exception as _swallowed:
             logger.debug(f"[suppressed] {_swallowed}")
+            await self._cleanup_probe_client(f"{TEMP_SESSION_PATH}.session")
             return False
+
+    async def _cleanup_probe_client(self, temp_session_file: str) -> None:
+        """Disconnect the probe client and remove its temporary session file."""
+        if self.client is not None:
+            with contextlib.suppress(Exception):
+                await self.client.disconnect()
+        self._cleanup_temp_session(temp_session_file)

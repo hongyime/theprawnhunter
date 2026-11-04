@@ -284,7 +284,11 @@ async def test_rate_limit_sleep_between_items(monkeypatch, dispatch):
     sleeps = []
     monkeypatch.setattr(heavy, "db", fake_db)
     monkeypatch.setattr(heavy, "async_execute", fake_async_execute)
-    monkeypatch.setattr(heavy.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(heavy.asyncio, "sleep", fake_sleep)
     monkeypatch.setenv("HEAVY_BACKFILL_DELAY_SECONDS", "1.5")
 
     result = await heavy._backfill_media_text_logic(dry_run=False)

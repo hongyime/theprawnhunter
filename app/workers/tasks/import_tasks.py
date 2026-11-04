@@ -105,14 +105,27 @@ async def _import_csv_logic() -> str:
             continue
 
         saved = 0
+        save_failed = False
         if results:
             try:
                 saved = await _save_credentials_async(results, "csv_import")
                 total_imported += saved
             except Exception as e:
                 logger.error(f"[CSV Import] Save failed for {pending_path.name}: {e}")
+                save_failed = True
 
-        # Move to processed/
+        if save_failed:
+            # Transient failure (e.g. DB timeout): restore to .csv so the next
+            # run retries instead of discarding discovered tokens. No .done
+            # breadcrumb is written, so the file is not treated as completed.
+            try:
+                pending_path.rename(csv_path)
+                logger.warning(f"[CSV Import] {pending_path.name} restored to .csv for retry")
+            except OSError as e:
+                logger.error(f"[CSV Import] Could not restore {pending_path.name} for retry: {e}")
+            continue
+
+        # Move to processed/ only after a successful save.
         try:
             pending_path.rename(PROCESSED_DIR / pending_path.name)
             total_files += 1

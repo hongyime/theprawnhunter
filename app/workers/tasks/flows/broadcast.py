@@ -864,8 +864,6 @@ async def _broadcast_logic():
 
                     logger.info(f"    📌 Claimed message {msg_id}")
                     _enqueue_heavy_enrichment(msg)
-                    _embed_message(msg)
-                    await _alert_watchlist(msg)
 
                     # Extract meta from the joined discovered_credentials
                     cred_info = msg.get("discovered_credentials", {})
@@ -1071,6 +1069,12 @@ async def _broadcast_logic():
                             local_skipped += 1
                             continue
                         local_sent += 1
+                        # Embedding + watchlist alerts run ONLY after the send is
+                        # confirmed and the message is marked broadcasted, so a
+                        # retried (not-yet-sent) message can't fire duplicate
+                        # alerts or repeat embedding API calls.
+                        _embed_message(msg)
+                        await _alert_watchlist(msg)
                         if performed_real_send:
                             # PERF-002: only count metric for real over-the-wire sends,
                             # not idempotent skip-paths (INTR-001).
