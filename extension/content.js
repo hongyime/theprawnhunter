@@ -29,20 +29,18 @@ window.addEventListener("message", (event) => {
 const CLICK_SELECTORS = [
     'i.iconfont.icon-daima',          // primary: "view source" icon (current FOFA)
     'i.iconfont.icon-code',           // alt class seen in some regions
-    '.hsxa-host-table-body-item .iconfont',  // broader table-item icon match
+    '.hsxa-meta-data-item i.icon-daima',
+    '.hsxa-meta-data-item i.icon-code',
+    '.hsxa-host-table-body-item i.icon-daima',
+    '.hsxa-host-table-body-item i.icon-code',
     '[title="Source code"]',          // attribute-based fallback
     '[class*="icon-daima"]',          // partial class match
     '[class*="icon-code"]',
-    // Generic icon fallback, scoped to result rows: an unscoped match clicks
-    // header/sidebar icons on a zero-result page and times out on fake popups.
-    '.hsxa-host-table-body i[class*="icon-"]',
-    '.host-table-body i[class*="icon-"]',
-    '[class*="result-item"] i[class*="icon-"]',
-    '[class*="host-item"] i[class*="icon-"]',
 ];
 
 const POPUP_CONTENT_SELECTORS = [
     '.source-content',                // primary: HTML source viewer
+    '.body-detail-dialog__content',   // current FOFA body detail dialog container
     '.el-dialog__body pre',           // code in pre block
     '.el-dialog__body code',
     '.el-dialog__body .CodeMirror-code',  // CodeMirror editor
@@ -50,6 +48,7 @@ const POPUP_CONTENT_SELECTORS = [
 ];
 
 const RESULT_ROW_SELECTORS = [
+    '.hsxa-meta-data-item',
     '.hsxa-host-table-body .hsxa-host-table-body-item',
     '.host-table-body .host-table-body-item',
     '[class*="result-item"]',
@@ -266,46 +265,62 @@ function getVisibleItems() {
     return [];
 }
 
+function getVisibleDialog() {
+    const wrappers = document.querySelectorAll(
+        '.el-overlay:not([style*="display: none"]), .el-dialog__wrapper:not([style*="display: none"])'
+    );
+    for (const wrapper of wrappers) {
+        if (wrapper.offsetParent !== null || window.getComputedStyle(wrapper).display !== "none") {
+            const dialog = wrapper.querySelector('.el-dialog') || wrapper;
+            if (dialog && (dialog.offsetParent !== null || window.getComputedStyle(dialog).display !== "none")) {
+                return dialog;
+            }
+        }
+    }
+    const dialogs = document.querySelectorAll('.el-dialog.body-detail-dialog, .el-dialog');
+    for (const d of dialogs) {
+        if (d.offsetParent !== null || window.getComputedStyle(d).display !== "none") {
+            return d;
+        }
+    }
+    return null;
+}
+
 async function waitForPopupContent(timeout) {
     let elapsed = 0;
     let dialogSeenAt = null;
 
     while (elapsed < timeout) {
-        // Try each popup content selector in order
-        for (const sel of POPUP_CONTENT_SELECTORS) {
-            const el = document.querySelector(sel);
-            if (el && el.textContent && el.textContent.length > 30) {
-                return decodeHTMLEntities(el.textContent);
-            }
-        }
-
-        // Track when the dialog first appeared (XHR has been dispatched)
-        const dialogOpen = document.querySelector(
-            '.el-overlay.el-modal-dialog, .el-dialog__wrapper:not([style*="display: none"])'
-        );
-        if (dialogOpen && dialogOpen.textContent.trim().length > 10) {
+        const dialog = getVisibleDialog();
+        if (dialog) {
             if (!dialogSeenAt) dialogSeenAt = elapsed;
+
+            // Try each popup content selector strictly scoped inside the visible dialog
+            for (const sel of POPUP_CONTENT_SELECTORS) {
+                const el = dialog.querySelector(sel);
+                if (el && el.textContent && el.textContent.length > 30) {
+                    return decodeHTMLEntities(el.textContent);
+                }
+            }
+
             // Dialog has been open for 2.5s but source-content still empty?
             // This host has no indexed body content — bail early, don't waste 8s.
             if (elapsed - dialogSeenAt > 2500) {
                 log("Dialog open but no source content after 2.5s — empty host, skipping");
-                // Close the empty dialog before returning
-                const cb = document.querySelector('.el-dialog__headerbtn, [aria-label="Close"]');
-                if (cb) cb.click();
-                else document.body.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',keyCode:27,bubbles:true}));
+                closePopup();
                 return null;
             }
-        }
 
-        // Try iframes inside the dialog
-        const iframes = document.querySelectorAll(".el-dialog__body iframe");
-        for (const iframe of iframes) {
-            try {
-                const doc = iframe.contentDocument || iframe.contentWindow.document;
-                if (doc && doc.body && doc.body.textContent.length > 30) {
-                    return doc.body.textContent;
-                }
-            } catch (_) { /* cross-origin */ }
+            // Try iframes inside this visible dialog
+            const iframes = dialog.querySelectorAll(".el-dialog__body iframe, iframe");
+            for (const iframe of iframes) {
+                try {
+                    const doc = iframe.contentDocument || iframe.contentWindow.document;
+                    if (doc && doc.body && doc.body.textContent.length > 30) {
+                        return doc.body.textContent;
+                    }
+                } catch (_) { /* cross-origin */ }
+            }
         }
 
         await delay(300);

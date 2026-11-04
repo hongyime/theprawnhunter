@@ -102,6 +102,21 @@ Messages use `dedupe_key` so repeated retries inside six hours do not spam the
 topic. `send_log` does not redact, so the lane never includes cookies or tokens
 in a notification. Use `--no-notify` for an interactive run.
 
+## Desktop window with a virtual fallback
+
+`fofa-chrome.service` prefers your desktop display (`:10.0`, then `:0`, probed
+with `xdpyinfo`) and falls back to `Xvfb` when nobody is logged in, so the lane
+keeps scanning while the session is gone. Whenever you are logged in the window
+is visible and usable: log in to FOFA there, or watch a scan.
+
+Logging in starts `~/.config/autostart/fofa-chrome-show.desktop`, which restarts
+the browser onto the desktop unless a lane run is in progress. If a run was
+active at login, move it yourself with:
+
+```bash
+systemctl --user restart fofa-chrome.service
+```
+
 ## Troubleshooting
 
 | Symptom | Fix |

@@ -1,6 +1,7 @@
 [Unit]
 Description=FOFA browser lane (Playwright, dedicated tab)
-After=network-online.target
+After=network-online.target fofa-chrome.service
+Requires=fofa-chrome.service
 
 [Service]
 Type=oneshot

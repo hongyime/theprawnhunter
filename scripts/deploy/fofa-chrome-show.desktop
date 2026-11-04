@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=FOFA Chrome on desktop
+Comment=Move the supervised FOFA browser onto the desktop after login
+Exec=/bin/sh -c 'systemctl --user is-active --quiet fofa-browser.service || systemctl --user restart fofa-chrome.service'
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

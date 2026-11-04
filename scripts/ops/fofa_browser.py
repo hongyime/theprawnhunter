@@ -51,11 +51,21 @@ def _jitter(low: float = 2.5, high: float = 7.0) -> None:
 
 def _human_scroll(page, rounds: int = 4) -> None:
     for _ in range(rounds):
-        page.mouse.wheel(0, random.randint(400, 900))
+        if page.is_closed():
+            raise RuntimeError("Page was closed during scroll")
+        try:
+            page.mouse.wheel(0, random.randint(400, 900))
+        except Exception as error:
+            if "closed" in str(error).lower() or page.is_closed():
+                raise
+            print(f"[fofa] scroll warning ({type(error).__name__}): {error}")
         time.sleep(random.uniform(0.6, 1.8))
 
 
-RESULT_ROWS = ".result-item, .result, table tbody tr, .result-list > *"
+RESULT_ROWS = (
+    ".hsxa-meta-data-item, [class*='meta-data-item'], "
+    ".result-item, .result, table tbody tr, .result-list > *"
+)
 
 
 PROBE_QUERY = base64.b64encode(b'body="th-lane-probe-nonexistent"').decode()
@@ -207,6 +217,8 @@ def _has_results(page) -> bool:
 
 
 def _needs_attention(page) -> str | None:
+    if page.is_closed():
+        raise RuntimeError("Target page was closed")
     try:
         if "/f_login" in (page.url or "") or "/login" in (page.url or ""):
             return "login"
@@ -504,6 +516,16 @@ def main(argv: list[str] | None = None) -> int:
                             dedupe_key=f"fofa:browser:{reason}",
                         )
                     return 3
+                if reason == "results-missing":
+                    # A cold browser often misses the first render; retry once
+                    # before treating the page as blocked.
+                    print("[fofa] results-missing — reloading once")
+                    try:
+                        page.reload(wait_until="domcontentloaded", timeout=60000)
+                    except Exception as error:  # noqa: BLE001 - the next check decides
+                        print(f"[fofa] reload slow ({type(error).__name__})")
+                    _wait_for_results(page, 45)
+                    reason = _needs_attention(page)
                 if reason:
                     print(f"[fofa] {reason} detected — waiting up to {args.login_wait}s for a manual fix.")
                     if not args.no_notify:

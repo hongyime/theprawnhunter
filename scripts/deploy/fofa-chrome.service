@@ -1,0 +1,13 @@
+[Unit]
+Description=FOFA CDP Chrome (desktop when logged in, else virtual display)
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/Projects/theprawnhunter/scripts/ops/run_fofa_chrome.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

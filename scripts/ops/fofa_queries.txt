@@ -3,3 +3,6 @@
 # body="api.telegram.org/bot" sweep so the two lanes cover different terms.
 body="TELEGRAM_BOT_TOKEN" && status_code="200"
 body="bot_token" && status_code="200"
+body="TELEGRAM_TOKEN" && status_code="200"
+body="tg_bot_token" && status_code="200"
+body="setWebhook" && body="api.telegram.org" && status_code="200"

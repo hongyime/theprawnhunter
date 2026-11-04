@@ -599,7 +599,7 @@ async function processNextCountry() {
             return;
         }
         stopScan("✅ Scan Complete!");
-        await uploadToSupabase();
+        await uploadToSupabase({ atScanEnd: true });
         return;
     }
 
@@ -853,12 +853,14 @@ function broadcastState() {
 // Direct Supabase write removed — it stored raw plaintext tokens with no
 // encryption path, creating a permanent security hole in the DB.
 
-async function uploadToSupabase({ persistState = true } = {}) {
+async function uploadToSupabase({ persistState = true, atScanEnd = false } = {}) {
     // Send ALL found results — valid, invalid, and unvalidated
     // The backend re-validates via enrich_credential anyway
     const allResults = (state.results || []);
     if (allResults.length === 0) {
-        state.status = "⚠️ Nothing to upload (no tokens found)";
+        state.status = atScanEnd
+            ? "✅ Scan complete — no tokens found"
+            : "⚠️ Nothing to upload (no tokens found)";
         if (persistState) saveState();
         broadcastState();
         return false;
