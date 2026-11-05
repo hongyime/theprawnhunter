@@ -49,7 +49,7 @@ async def _probe_webhook_url(url: str) -> dict:
 
         # DNS resolution
         try:
-            infos = await asyncio.get_event_loop().getaddrinfo(hostname, port)
+            infos = await asyncio.get_running_loop().getaddrinfo(hostname, port)
             ips = sorted({addr[4][0] for addr in infos})
             result["ip_addresses"] = ips
         except Exception as dns_exc:
