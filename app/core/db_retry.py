@@ -3,6 +3,7 @@ Database retry wrapper for Supabase operations.
 Handles transient connection errors with exponential backoff.
 """
 import functools
+import re
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -12,6 +13,13 @@ logger = get_logger(__name__)
 
 T = TypeVar('T')
 
+# Postgres SQLSTATE codes are 5 digits; class 42 (syntax/access) and 23
+# (integrity constraint) are permanent. Word-bounded so it doesn't match
+# "42" appearing inside an unrelated number (a port, a duration, a byte
+# count) in the same error message — a bare substring check on "42"/"23"
+# would wrongly skip retrying a transient error like "timed out after 420ms".
+_PERMANENT_SQLSTATE_RE = re.compile(r'\b(?:42|23)\d{3}\b')
+
 
 def _is_transient_db_error(e: Exception) -> bool:
     """Return True only for errors worth retrying (connection/timeout). Not 4xx logic errors."""
@@ -19,8 +27,8 @@ def _is_transient_db_error(e: Exception) -> bool:
     transient_markers = ("connection", "timeout", "socket", "econnreset", "broken pipe",
                          "server disconnected", "eof occurred", "network")
     permanent_markers = ("unique", "violates", "not-null", "foreign key", "permission",
-                         "relation", "column", "syntax", "invalid input", "42", "23")
-    if any(p in msg for p in permanent_markers):
+                         "relation", "column", "syntax", "invalid input")
+    if any(p in msg for p in permanent_markers) or _PERMANENT_SQLSTATE_RE.search(msg):
         return False
     return any(t in msg for t in transient_markers)
 
