@@ -213,16 +213,16 @@ class ShodanService:
         # which can use more query credits.
 
         # Sort and filter the one page we asked Shodan for.
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
-        three_hours_ago = datetime.utcnow() - timedelta(hours=3)
+        three_hours_ago = datetime.now(UTC) - timedelta(hours=3)
         matches = sorted(matches, key=lambda item: item.get("timestamp", ""), reverse=True)
         recent_matches = []
         for match in matches:
             try:
                 timestamp = match.get("timestamp", "")
                 if timestamp:
-                    match_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00").split("+")[0])
+                    match_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
                     if match_time >= three_hours_ago:
                         recent_matches.append(match)
             except Exception as error:
