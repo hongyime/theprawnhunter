@@ -349,7 +349,7 @@ async def schedule_deletion(context: ContextTypes.DEFAULT_TYPE, chat_id: int, me
         except Exception as e:
             logger.error(f"Failed to delete sensitive message {message_id}: {e}")
 
-    asyncio.create_task(delete_task())
+    _track_background_task(asyncio.create_task(delete_task()))
 
 async def _wipe_conversation(context: ContextTypes.DEFAULT_TYPE, chat_id: int, bot_message_ids: list):
     """
@@ -373,4 +373,4 @@ async def _wipe_conversation(context: ContextTypes.DEFAULT_TYPE, chat_id: int, b
             except Exception as _swallowed:
                 logger.debug(f"[suppressed] {_swallowed}")  # already deleted or no permission — both are fine
 
-    asyncio.create_task(_do_wipe())
+    _track_background_task(asyncio.create_task(_do_wipe()))

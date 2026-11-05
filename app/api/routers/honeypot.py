@@ -42,6 +42,17 @@ def _json_loads(raw: bytes) -> dict:
 
 router = APIRouter(prefix="/honeypot", tags=["Honeypot"])
 
+# asyncio.create_task() results must be referenced somewhere — the event loop
+# only holds a weak reference, so an unreferenced alert-dispatch task can be
+# garbage-collected before it runs, silently dropping the alert.
+_background_tasks: set = set()
+
+
+def _fire_and_forget(coro) -> None:
+    task = _asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 def _honeypot_credential_allowed(credential_id: str) -> bool:
     """Check per-credential opt-in.
@@ -200,7 +211,7 @@ async def receive_webhook_update(credential_id: str, request: Request):
         logger.error(f"[Honeypot] forwarding message failed for {credential_id[:8]}...: {fwd_exc}")
         raise HTTPException(status_code=500, detail="Message forwarding failed") from fwd_exc
 
-    _asyncio.create_task(_dispatch_alert({
+    _fire_and_forget(_dispatch_alert({
         "event": "honeypot_update",
         "timestamp": now.isoformat(),
         "credential_id": str(credential_id),

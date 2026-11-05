@@ -41,6 +41,18 @@ from app.infrastructure.database import execute_async as _execute_async_shared
 
 AUTO_DELETE_SECONDS = 30
 
+# Fire-and-forget asyncio.create_task() results must be referenced somewhere —
+# the event loop only holds a weak reference, so an unreferenced task (e.g.
+# deleting a sensitive phone/2FA message) can be garbage-collected before it
+# runs. Track every background task here so it survives until done.
+_background_tasks: set[asyncio.Task] = set()
+
+def _track_background_task(task: asyncio.Task) -> asyncio.Task:
+    """Keep a strong reference to a fire-and-forget task until it completes."""
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 async def _auto_delete_msg(msg, delay=AUTO_DELETE_SECONDS):
     """Delete a sent Telegram message after delay seconds."""
     await asyncio.sleep(delay)
@@ -58,13 +70,13 @@ async def _reply_and_delete(update, text, delay=AUTO_DELETE_SECONDS, **kwargs):
             sent = await update.get_bot().send_message(chat_id=update.effective_chat.id, text=text, **kwargs)
         else:
             raise
-    asyncio.create_task(_auto_delete_msg(sent, delay))
+    _track_background_task(asyncio.create_task(_auto_delete_msg(sent, delay)))
     return sent
 
 async def _send_and_delete(bot, chat_id, text, delay=AUTO_DELETE_SECONDS, **kwargs):
     """Send a message via bot and schedule auto-deletion."""
     sent = await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-    asyncio.create_task(_auto_delete_msg(sent, delay))
+    _track_background_task(asyncio.create_task(_auto_delete_msg(sent, delay)))
     return sent
 
 from telethon import TelegramClient
@@ -197,4 +209,4 @@ def _get_all_bot_usernames_except(current_bot_username: str) -> list[str]:
 
 INDICATOR_TYPES = ("network_domain", "canonical_url", "wallet_address")
 
-__all__ = ['ANONYMOUS_ADMIN_ID', 'AUTO_DELETE_SECONDS', 'Any', 'Application', 'ApplicationBuilder', 'BOT_LISTENER_SOURCE_FILE', 'ChatMemberHandler', 'CommandHandler', 'Conflict', 'ContextTypes', 'ConversationHandler', 'HTTPXRequest', 'INDICATOR_TYPES', 'INSTANCE_ID', 'LOCK_TTL_SECONDS', 'MessageHandler', 'PAUSE_KEY', 'ParseMode', 'SESSION_FILE_PERMISSIONS', 'SessionPasswordNeededError', 'TELEGRAM_SERVICE_NOTIFICATIONS_ID', 'TelegramClient', 'Update', 'WAIT_CODE', 'WAIT_PASSWORD', 'WAIT_PHONE', '_auto_delete_msg', '_bot_usernames', '_execute_async_shared', '_get_all_bot_usernames_except', '_get_other_bot_usernames', '_get_whitelisted_usernames', '_locked_bots', '_reply_and_delete', '_send_and_delete', '_subject_label', 'asyncio', 'contextlib', 'db', 'escape_markdown', 'filters', 'is_admin', 'logging', 'logger', 'os', 'redis', 'redis_client', 'settings', 'shutil', 'signal', 'stop_event', 'sys', 'uuid']
+__all__ = ['ANONYMOUS_ADMIN_ID', 'AUTO_DELETE_SECONDS', 'Any', 'Application', 'ApplicationBuilder', 'BOT_LISTENER_SOURCE_FILE', 'ChatMemberHandler', 'CommandHandler', 'Conflict', 'ContextTypes', 'ConversationHandler', 'HTTPXRequest', 'INDICATOR_TYPES', 'INSTANCE_ID', 'LOCK_TTL_SECONDS', 'MessageHandler', 'PAUSE_KEY', 'ParseMode', 'SESSION_FILE_PERMISSIONS', 'SessionPasswordNeededError', 'TELEGRAM_SERVICE_NOTIFICATIONS_ID', 'TelegramClient', 'Update', 'WAIT_CODE', 'WAIT_PASSWORD', 'WAIT_PHONE', '_auto_delete_msg', '_background_tasks', '_bot_usernames', '_execute_async_shared', '_get_all_bot_usernames_except', '_get_other_bot_usernames', '_get_whitelisted_usernames', '_locked_bots', '_reply_and_delete', '_send_and_delete', '_subject_label', '_track_background_task', 'asyncio', 'contextlib', 'db', 'escape_markdown', 'filters', 'is_admin', 'logging', 'logger', 'os', 'redis', 'redis_client', 'settings', 'shutil', 'signal', 'stop_event', 'sys', 'uuid']
