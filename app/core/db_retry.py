@@ -18,13 +18,14 @@ T = TypeVar('T')
 # "42" appearing inside an unrelated number (a port, a duration, a byte
 # count) in the same error message — a bare substring check on "42"/"23"
 # would wrongly skip retrying a transient error like "timed out after 420ms".
-_PERMANENT_SQLSTATE_RE = re.compile(r'\b(?:42|23)[0-9a-z]{3}\b')
+# PostgreSQL standard subclasses are 3 digits; PG-specific subclasses start with P (42P01, 23P01).
+_PERMANENT_SQLSTATE_RE = re.compile(r'\b(?:42|23)(?:\d{3}|[pP][0-9a-zA-Z]{2})\b')
 
 
 def _is_transient_db_error(e: Exception) -> bool:
     """Return True only for errors worth retrying (connection/timeout). Not 4xx logic errors."""
     msg = str(e).lower()
-    transient_markers = ("connection", "timeout", "socket", "econnreset", "broken pipe",
+    transient_markers = ("connection", "timeout", "timed out", "socket", "econnreset", "broken pipe",
                          "server disconnected", "eof occurred", "network")
     permanent_markers = ("unique", "violates", "not-null", "foreign key", "permission",
                          "relation", "column", "syntax", "invalid input")
