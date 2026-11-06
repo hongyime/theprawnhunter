@@ -223,6 +223,8 @@ class ShodanService:
                 timestamp = match.get("timestamp", "")
                 if timestamp:
                     match_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    if match_time.tzinfo is None:
+                        match_time = match_time.replace(tzinfo=UTC)
                     if match_time >= three_hours_ago:
                         recent_matches.append(match)
             except Exception as error:

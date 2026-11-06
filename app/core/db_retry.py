@@ -18,7 +18,7 @@ T = TypeVar('T')
 # "42" appearing inside an unrelated number (a port, a duration, a byte
 # count) in the same error message — a bare substring check on "42"/"23"
 # would wrongly skip retrying a transient error like "timed out after 420ms".
-_PERMANENT_SQLSTATE_RE = re.compile(r'\b(?:42|23)\d{3}\b')
+_PERMANENT_SQLSTATE_RE = re.compile(r'\b(?:42|23)[0-9a-z]{3}\b')
 
 
 def _is_transient_db_error(e: Exception) -> bool:
