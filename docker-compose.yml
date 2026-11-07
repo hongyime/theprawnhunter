@@ -27,7 +27,7 @@ x-logging: &default-logging
   driver: "json-file"
   options:
     max-size: "10m"
-    max-file: "100"
+    max-file: "3"
 
 x-app-build: &app-build
   build:
@@ -133,13 +133,13 @@ services:
       redis:
         condition: service_healthy
       worker:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - sessions:/app/sessions
       - beat_schedule:/app/beat
     healthcheck:
       # Beat runs no Celery worker — lightweight liveness only.
-      test: ["CMD", "python3", "-c", "import os; p='/app/beat/celerybeat-schedule'; assert os.path.exists(p) or True"]
+      test: ["CMD", "python3", "-c", "import os; assert os.path.exists('/app/beat/celerybeat-schedule')"]
       interval: 60s
       timeout: 5s
       retries: 3
@@ -159,6 +159,12 @@ services:
     environment:
       SEARXNG_BASE_URL: http://127.0.0.1:8888/
       SEARXNG_SECRET: ${SEARXNG_SECRET:-prawn-local-searxng}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "--header=X-Real-IP: 127.0.0.1", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     logging: *default-logging
 
   # =========================================================================
@@ -254,7 +260,7 @@ services:
       redis:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - sessions:/app/sessions
     logging: *default-logging
@@ -337,7 +343,7 @@ services:
       - .cloudflared/tunnel.env
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
     logging: *default-logging
 
 # Single explicit network so every service shares one stack.
