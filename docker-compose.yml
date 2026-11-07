@@ -138,8 +138,8 @@ services:
       - sessions:/app/sessions
       - beat_schedule:/app/beat
     healthcheck:
-      # Beat runs no Celery worker — lightweight liveness only.
-      test: ["CMD", "python3", "-c", "import os; assert os.path.exists('/app/beat/celerybeat-schedule')"]
+      # PersistentScheduler syncs at least once per five-minute max loop interval.
+      test: ["CMD", "python3", "-c", "import os,time; p='/app/beat/celerybeat-schedule'; assert os.path.exists(p) and time.time()-os.path.getmtime(p) < 600"]
       interval: 60s
       timeout: 5s
       retries: 3
