@@ -1,5 +1,6 @@
 """Regression coverage for honeypot summary delivery without evidence files."""
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -308,3 +309,9 @@ def test_deferred_evidence_batch_does_not_load_a_broadcaster(monkeypatch):
     }
     get_broadcaster.assert_not_called()
     broadcaster.send_document.assert_not_called()
+
+
+def test_honeypot_flow_has_no_evidence_document_delivery_code():
+    from app.workers.tasks.flows import honeypot as honeypot_tasks
+
+    assert ".send_document(" not in inspect.getsource(honeypot_tasks)
