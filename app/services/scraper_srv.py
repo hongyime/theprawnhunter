@@ -1127,7 +1127,7 @@ class ScraperService:
                     logger.info("    ⏳ [Scraper] Invite sent. Starting Command Fuzzing...")
 
                     # === TRIGGER COMMAND FUZZING ===
-                    params = ["/start", "/help", "/admin", "/config", "dashboard"]
+                    params = ["/start", "/help", "/admin", "/config", "dashboard", "/menu", "/settings", "/balance", "/profile", "/stats", "/support", "menu", "balance"]
                     for cmd in params:
                         await user_agent.send_message(dest, cmd)
                         await asyncio.sleep(1.5)  # Pace out commands
