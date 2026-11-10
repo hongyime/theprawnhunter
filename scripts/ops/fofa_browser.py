@@ -43,10 +43,31 @@ DEFAULT_PROFILE = os.environ.get(
 RESULTS_SELECTOR = "#result, .result-list, .result-table, [class*='result']"
 LOGIN_MARKERS = ("login-form", "login-container", "login-form-wrap")
 CAPTCHA_MARKERS = ("verify-wrap", "nc-container", "captcha", "challenge")
+CDP_CONNECT_ATTEMPTS = 7
+CDP_CONNECT_RETRY_SECONDS = 10
 
 
 def _jitter(low: float = 2.5, high: float = 7.0) -> None:
     time.sleep(random.uniform(low, high))
+
+
+def _connect_over_cdp(connect, url: str):
+    """Wait through a short Chrome restart before declaring the lane unavailable."""
+    last_error = None
+    for attempt in range(1, CDP_CONNECT_ATTEMPTS + 1):
+        try:
+            return connect(url)
+        except Exception as error:  # noqa: BLE001 - Playwright exposes transport-specific errors
+            last_error = error
+            if attempt == CDP_CONNECT_ATTEMPTS:
+                break
+            print(
+                f"[fofa] CDP unavailable ({type(error).__name__}); retrying in "
+                f"{CDP_CONNECT_RETRY_SECONDS}s ({attempt}/{CDP_CONNECT_ATTEMPTS})"
+            )
+            time.sleep(CDP_CONNECT_RETRY_SECONDS)
+    assert last_error is not None
+    raise last_error
 
 
 def _human_scroll(page, rounds: int = 4) -> None:
@@ -410,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     with sync_playwright() as pw:
         if args.cdp:
             try:
-                browser = pw.chromium.connect_over_cdp(args.cdp)
+                browser = _connect_over_cdp(pw.chromium.connect_over_cdp, args.cdp)
             except Exception as error:  # noqa: BLE001 - operator action, not a crash
                 message = (
                     f"FOFA CDP Chrome unreachable at {args.cdp} "

@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
     init: true
     cpus: "${REDIS_CPUS:-0.25}"
-    mem_limit: "${REDIS_MEM_LIMIT:-320m}"
+    mem_limit: "${REDIS_MEM_LIMIT:-512m}"
     mem_reservation: "${REDIS_MEM_RESERVATION:-128m}"
     command: redis-server --appendonly yes --appendfsync everysec --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy noeviction
     ports:
@@ -64,7 +64,7 @@ services:
     restart: unless-stopped
     init: true
     cpus: "${API_CPUS:-1.00}"
-    mem_limit: "${API_MEM_LIMIT:-512m}"
+    mem_limit: "${API_MEM_LIMIT:-768m}"
     mem_reservation: "${API_MEM_RESERVATION:-256m}"
     dns:
       - 8.8.8.8
@@ -125,7 +125,7 @@ services:
     restart: unless-stopped
     init: true
     cpus: "${BEAT_CPUS:-0.25}"
-    mem_limit: "${BEAT_MEM_LIMIT:-256m}"
+    mem_limit: "${BEAT_MEM_LIMIT:-192m}"
     mem_reservation: "${BEAT_MEM_RESERVATION:-128m}"
     env_file: .env
     command: celery -A app.workers.celery_app beat --loglevel=${CELERY_LOG_LEVEL:-info} --schedule /app/beat/celerybeat-schedule
@@ -152,6 +152,9 @@ services:
     image: searxng/searxng:latest
     container_name: theprawnhunter_searxng
     restart: unless-stopped
+    cpus: "${SEARXNG_CPUS:-0.50}"
+    mem_limit: "${SEARXNG_MEM_LIMIT:-512m}"
+    mem_reservation: "${SEARXNG_MEM_RESERVATION:-256m}"
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
@@ -242,7 +245,7 @@ services:
     restart: unless-stopped
     init: true
     cpus: "${BOT_CPUS:-0.25}"
-    mem_limit: "${BOT_MEM_LIMIT:-256m}"
+    mem_limit: "${BOT_MEM_LIMIT:-192m}"
     mem_reservation: "${BOT_MEM_RESERVATION:-128m}"
     dns:
       - 8.8.8.8

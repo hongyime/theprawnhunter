@@ -30,8 +30,8 @@ fewer than two days left.
 
 ## Extension lane
 
-Load `extension/` unpacked in the Chrome profile that is logged in to FOFA and
-reload it after an update (the `cookies` permission is new). Keep that Chrome
+`scripts/ops/run_fofa_chrome.sh` loads only this repository's unpacked
+`extension/` and disables every other profile extension. Keep that Chrome
 running: the `auto_scan` alarm fires every 4 h and opens its own FOFA window.
 The popup has an "Auto-scan every 4 hours" toggle and stores the query and
 domain mode the alarm uses.
@@ -43,6 +43,8 @@ domain mode the alarm uses.
   google-chrome \
     --user-data-dir="$HOME/.config/google-chrome-cdp" \
     --remote-debugging-port=9222 \
+    --disable-extensions-except="$PWD/extension" \
+    --load-extension="$PWD/extension" \
     --disable-background-timer-throttling \
     --disable-renderer-backgrounding
   ```
@@ -69,7 +71,8 @@ systemctl --user list-timers fofa-browser.timer
 
 The timer runs at 02:20, 06:20, 10:20, and so on — offset from the
 extension's 4-hour alarm so the two lanes do not start together. `Type=oneshot` means a slow
-run finishes before the next tick and a second copy is never started.
+run finishes before the next tick and a second copy is never started. The CDP
+attachment retries for one minute, so the lane tolerates a brief Chrome recycle.
 
 Run it once by hand:
 

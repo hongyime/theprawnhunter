@@ -3,6 +3,7 @@
 set -euo pipefail
 
 PROFILE="${HOME}/.config/google-chrome-cdp"
+EXTENSION="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/extension"
 CHROME=(
     /usr/bin/google-chrome
     --user-data-dir="$PROFILE"
@@ -10,9 +11,10 @@ CHROME=(
     --remote-allow-origins=*
     --no-first-run
     --no-default-browser-check
+    --disable-extensions-except="$EXTENSION"
+    --load-extension="$EXTENSION"
     --disable-background-timer-throttling
     --disable-renderer-backgrounding
-    --new-window about:blank
 )
 
 for display in :10.0 :0; do
