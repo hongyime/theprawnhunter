@@ -83,6 +83,26 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
     if not claim_res.data:
         return {"status": "contended"}
 
+    if attachment_only:
+        completed = await async_execute(
+            db.table("exfiltrated_messages")
+            .update({
+                "broadcast_claimed_at": None,
+                "file_meta": {
+                    **file_meta,
+                    "honeypot_evidence_file_status": "sent",
+                },
+            })
+            .eq("id", msg["id"])
+            .eq("is_broadcasted", True)
+            .eq("broadcast_claimed_at", claim_time)
+        )
+        return (
+            {"status": "sent", "broadcast_message_id": msg.get("broadcast_message_id")}
+            if completed.data
+            else {"status": "fenced_out"}
+        )
+
     # Resolve topic & broadcaster
     group_id = settings.MONITOR_GROUP_ID
     broadcaster = get_broadcaster()
@@ -190,7 +210,7 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
                     "file_meta": {
                         **file_meta,
                         "honeypot_evidence_file_status": (
-                            "pending" if needs_individual else "deferred"
+                            "sent" if needs_individual else "deferred"
                         ),
                     },
                 },
@@ -211,79 +231,7 @@ async def _broadcast_single_honeypot_message(credential_id: str, telegram_msg_id
                 "broadcast_message_id": sent_msg_id,
                 "evidence": "deferred",
             }
-
-        # The summary is committed first so a retry can resume only the evidence step.
-        claim_time = datetime.now(UTC).isoformat()
-        attachment_stale_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
-        attachment_claim = await async_execute(
-            db.table("exfiltrated_messages")
-            .update({"broadcast_claimed_at": claim_time})
-            .eq("id", msg["id"])
-            .eq("is_broadcasted", True)
-            .eq("file_meta->>honeypot_evidence_file_status", "pending")
-            .or_(f"broadcast_claimed_at.is.null,broadcast_claimed_at.lt.{attachment_stale_cutoff}")
-        )
-        if not attachment_claim.data:
-            return {"status": "sent", "broadcast_message_id": sent_msg_id}
-
-    if not await _is_honeypot_evidence_claim_valid(msg["id"], claim_time):
-        logger.warning(f"[HoneypotBroadcast] Fenced out before evidence send for {msg['id']}")
-        return {"status": "fenced_out"}
-
-    try:
-        document, filename = _honeypot_evidence_document(msg, raw_record, meta)
-        await broadcaster.send_document(group_id, thread_id, document, filename)
-    except Exception as document_err:
-        logger.error(f"❌ [HoneypotBroadcast] Evidence file send failed: {document_err}")
-        try:
-            await async_execute(
-                db.table("exfiltrated_messages")
-                .update({"broadcast_claimed_at": None})
-                .eq("id", msg["id"])
-                .eq("broadcast_claimed_at", claim_time)
-            )
-        except Exception:
-            logger.exception(f"[HoneypotBroadcast] Could not release evidence claim for {msg['id']}")
-        return {
-            "status": "evidence_failed",
-            "broadcast_message_id": sent_msg_id,
-            "error": str(document_err),
-        }
-
-    completed = await async_execute(
-        db.table("exfiltrated_messages")
-        .update({
-            "broadcast_claimed_at": None,
-            "file_meta": {
-                **file_meta,
-                "honeypot_evidence_file_status": "sent",
-            },
-        })
-        .eq("id", msg["id"])
-        .eq("is_broadcasted", True)
-        .eq("broadcast_claimed_at", claim_time)
-    )
-    if not completed.data:
-        return {"status": "fenced_out"}
     return {"status": "sent", "broadcast_message_id": sent_msg_id}
-
-
-async def _is_honeypot_evidence_claim_valid(msg_id: str, claim_token: str) -> bool:
-    """Confirm ownership of the pending evidence attachment before sending it."""
-    from datetime import datetime, timedelta
-
-    stale_cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
-    response = await async_execute(
-        db.table("exfiltrated_messages")
-        .select("id")
-        .eq("id", msg_id)
-        .eq("is_broadcasted", True)
-        .eq("file_meta->>honeypot_evidence_file_status", "pending")
-        .eq("broadcast_claimed_at", claim_token)
-        .gte("broadcast_claimed_at", stale_cutoff)
-        .limit(1)
-    )
-    return bool(response.data)
 
 
 _NON_TEXT_UPDATE_FIELDS = frozenset(
@@ -1271,19 +1219,9 @@ def _build_evidence_batch_doc(meta: dict, credential_id: str, updates: list[dict
 
 @app.task(name="flow.honeypot_evidence_batch")
 def honeypot_evidence_batch(dry_run: bool = False):
-    """Roll deferred honeypot evidence into one JSON file per bot topic per run."""
-    lock_key = "theprawnhunter:lock:honeypot_evidence_batch"
-    lock = redis_client.lock(lock_key, timeout=1800, blocking=False)
-    if not lock.acquire():
-        logger.info("[HoneypotEvidenceBatch] Skipped — previous batch still in progress or lock held")
-        return {"status": "skipped", "reason": "lock_held"}
-    try:
-        from app.workers.celery_app import get_worker_loop
-
-        return get_worker_loop().run_until_complete(_honeypot_evidence_batch_logic(dry_run))
-    finally:
-        with contextlib.suppress(Exception):
-            lock.release()
+    """Keep deferred evidence in the database; topic JSON delivery is retired."""
+    logger.info("[HoneypotEvidenceBatch] Disabled; deferred evidence remains in the database")
+    return {"status": "disabled", "batched": 0, "files_sent": 0, "dry_run": dry_run}
 
 
 async def _resolve_batch_topic(meta: dict, credential_id: str):

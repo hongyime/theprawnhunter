@@ -77,7 +77,7 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
     broadcaster = SimpleNamespace(
         ensure_topic=AsyncMock(return_value=correct_topic_id),
         send_message=AsyncMock(return_value=9002),
-        send_document=AsyncMock(return_value=9003),
+        send_document=AsyncMock(),
     )
 
     monkeypatch.setattr(flow_tasks, "db", fake_db)
@@ -85,7 +85,6 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
     monkeypatch.setattr(flow_tasks, "get_broadcaster", lambda: broadcaster)
     monkeypatch.setattr(flow_tasks.settings, "MONITOR_GROUP_ID", -100123)
     monkeypatch.setattr(flow_tasks, "_is_broadcast_claim_valid", AsyncMock(return_value=True))
-    monkeypatch.setattr(flow_tasks, "_is_honeypot_evidence_claim_valid", AsyncMock(return_value=True))
     monkeypatch.setattr(flow_tasks, "_update_message_broadcast_success", AsyncMock(return_value=True))
 
     result = await flow_tasks._broadcast_single_honeypot_message(credential_id, telegram_msg_id)
@@ -97,12 +96,7 @@ async def test_honeypot_broadcast_revalidates_saved_topic_id(monkeypatch):
         preferred_topic_id=stale_topic_id,
     )
     broadcaster.send_message.assert_awaited_once_with(-100123, correct_topic_id, message)
-    broadcaster.send_document.assert_awaited_once_with(
-        -100123,
-        correct_topic_id,
-        broadcaster.send_document.await_args.args[2],
-        "honeypot-evidence-101.json",
-    )
+    broadcaster.send_document.assert_not_awaited()
     assert fake_db.queries[3].table_name == "discovered_credentials"
     assert fake_db.queries[3].update_payload == {
         "meta": {
@@ -189,7 +183,7 @@ async def test_honeypot_broadcast_uses_saved_topic_when_user_sessions_unavailabl
 
     service = broadcaster_srv.BroadcasterService.__new__(broadcaster_srv.BroadcasterService)
     service.send_message = AsyncMock(return_value=9002)
-    service.send_document = AsyncMock(return_value=9003)
+    service.send_document = AsyncMock()
     find_topic = AsyncMock()
     fake_db = FakeDb()
 
@@ -199,7 +193,6 @@ async def test_honeypot_broadcast_uses_saved_topic_when_user_sessions_unavailabl
     monkeypatch.setattr(flow_tasks.settings, "MONITOR_GROUP_ID", -100123)
     monkeypatch.setattr(flow_tasks, "_is_broadcast_claim_valid", AsyncMock(return_value=True))
     monkeypatch.setattr(flow_tasks, "_update_message_broadcast_success", AsyncMock(return_value=True))
-    monkeypatch.setattr(flow_tasks, "_honeypot_evidence_document", lambda *_args: (b"{}", "evidence.json"))
 
     with patch.object(
         broadcaster_srv.user_agent,
@@ -220,10 +213,8 @@ async def test_honeypot_broadcast_uses_saved_topic_when_user_sessions_unavailabl
     assert start_session.await_count == 1
     find_topic.assert_not_awaited()
     service.send_message.assert_awaited_once_with(-100123, saved_topic_id, message)
-    assert len(evidence_claim_queries) == 1
-    assert ("is_broadcasted", True) in evidence_claim_queries[0].filters
-    assert ("file_meta->>honeypot_evidence_file_status", "pending") in evidence_claim_queries[0].filters
-    assert any(column == "broadcast_claimed_at" for column, _value in evidence_claim_queries[0].filters)
+    service.send_document.assert_not_awaited()
+    assert evidence_claim_queries == []
 
 
 @pytest.mark.asyncio
@@ -300,8 +291,12 @@ async def test_topic_lookup_failure_preserves_previously_sent_broadcast(monkeypa
     assert message["broadcast_status"] == "sent"
     assert message["broadcast_attempts"] == 7
     assert len(updates) == 2
-    assert updates[-1] == {"broadcast_claimed_at": None}
+    assert updates[-1] == {
+        "broadcast_claimed_at": None,
+        "file_meta": {"source": "bot_api", "honeypot_evidence_file_status": "sent"},
+    }
     assert all("broadcast_status" not in (payload or {}) for payload in updates)
+    broadcaster.ensure_topic.assert_not_awaited()
     broadcaster.send_message.assert_not_awaited()
     broadcaster.send_document.assert_not_awaited()
 

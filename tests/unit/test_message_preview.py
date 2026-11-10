@@ -1,7 +1,6 @@
-"""Real extraction, Telegram broadcast and evidence generation; only HTTP replies are replaced."""
+"""Real extraction and Telegram text broadcast; only HTTP replies are replaced."""
 
 import itertools
-import json
 from urllib.parse import parse_qs
 
 import httpx
@@ -14,7 +13,6 @@ from app.services.broadcaster_srv import BroadcasterService
 from app.services.honeypot_srv import extract_honeypot_message
 from app.services.honeypot_urls import format_link_preview
 from app.services.message_preview import TextPreview, prepare_stored_content
-from app.workers.tasks.flows.honeypot import _honeypot_evidence_document
 
 
 @pytest.mark.asyncio
@@ -57,16 +55,6 @@ async def test_over_limit_text_is_stored_and_sent_in_full(field: str):
     assert sent_text[0].startswith("[ID: -101] [From: Fixture]\nBEGIN ")
     assert "END-FULL-TEXT" in sent_text[0]
     assert "Preview only" not in sent_text[0]
-    document, filename = _honeypot_evidence_document(record, {
-        "update_id": 101, "payload": payload, "received_at": record["created_at"],
-    }, {})
-    evidence = json.loads(document)
-    assert filename == "honeypot-evidence-101.json"
-    assert evidence["message_text"] == full_text
-    assert evidence["raw_telegram_update"] == payload
-    assert set(evidence) == {"message_text", "sender", "received_by", "message_ids", "raw_telegram_update"}
-
-
 @pytest.mark.parametrize("size", [100, 1100, 2000, 2001, 6000])
 def test_storage_keeps_full_text_at_all_sizes(size):
     text = "x" * size

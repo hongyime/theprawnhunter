@@ -1,6 +1,5 @@
-"""Regression coverage for attaching the complete honeypot update to its topic."""
+"""Regression coverage for honeypot summary delivery without evidence files."""
 
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -83,23 +82,7 @@ def test_supabase_fake_rejects_select_after_filter():
 
 
 @pytest.mark.asyncio
-async def test_real_evidence_claim_check_uses_datetime(monkeypatch):
-    from app.workers.tasks.flows import honeypot as honeypot_tasks
-
-    monkeypatch.setattr(honeypot_tasks, "db", StrictFakeDb())
-    monkeypatch.setattr(
-        honeypot_tasks,
-        "async_execute",
-        AsyncMock(return_value=SimpleNamespace(data=[{"id": "message-1"}])),
-    )
-
-    valid = await honeypot_tasks._is_honeypot_evidence_claim_valid("message-1", "claim-token")
-
-    assert valid is True
-
-
-@pytest.mark.asyncio
-async def test_summary_update_persists_pending_evidence_with_default_rows(monkeypatch):
+async def test_summary_update_persists_sent_evidence_with_default_rows(monkeypatch):
     from app.workers.tasks.flows import broadcast as broadcast_tasks
 
     queries = []
@@ -122,14 +105,14 @@ async def test_summary_update_persists_pending_evidence_with_default_rows(monkey
         "message-1",
         broadcast_message_id=9002,
         claim_token="claim-token",
-        additional_payload={"file_meta": {"source": "bot_api", "honeypot_evidence_file_status": "pending"}},
+        additional_payload={"file_meta": {"source": "bot_api", "honeypot_evidence_file_status": "sent"}},
     )
 
     assert updated is True
     assert len(queries) == 1
     assert queries[0].update_payload["file_meta"] == {
         "source": "bot_api",
-        "honeypot_evidence_file_status": "pending",
+        "honeypot_evidence_file_status": "sent",
     }
     assert queries[0].update_payload["broadcast_message_id"] == 9002
     assert queries[0].filters == [("id", "message-1"), ("broadcast_claimed_at", "claim-token")]
@@ -182,9 +165,20 @@ async def test_honeypot_sweep_requeues_pending_evidence(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw_record_available", [True, False], ids=["raw-retained", "raw-expired"])
-async def test_honeypot_broadcast_sends_evidence_once_and_retry_skips_it(
+@pytest.mark.parametrize(
+    ("media_type", "evidence_status", "expected_result"),
+    [
+        (None, "sent", {"status": "sent", "broadcast_message_id": 9002}),
+        ("text", "deferred", {"status": "sent", "broadcast_message_id": 9002, "evidence": "deferred"}),
+    ],
+    ids=["individual", "deferred"],
+)
+async def test_honeypot_broadcast_sends_summary_without_evidence_document(
     monkeypatch,
     raw_record_available,
+    media_type,
+    evidence_status,
+    expected_result,
 ):
     from app.workers.tasks import flow_tasks
 
@@ -219,6 +213,7 @@ async def test_honeypot_broadcast_sends_evidence_once_and_retry_skips_it(
         "content": full_text[:2000],
         "created_at": "2026-10-12T06:07:08+00:00",
         "is_broadcasted": False,
+        "media_type": media_type,
         "file_meta": {"source": "bot_api", "message_id": 72, "chat_id": 987654},
         "discovered_credentials": {
             "meta": {
@@ -278,7 +273,6 @@ async def test_honeypot_broadcast_sends_evidence_once_and_retry_skips_it(
     monkeypatch.setattr(flow_tasks, "get_broadcaster", lambda: broadcaster)
     monkeypatch.setattr(flow_tasks.settings, "MONITOR_GROUP_ID", -100123)
     monkeypatch.setattr(flow_tasks, "_is_broadcast_claim_valid", AsyncMock(return_value=True))
-    monkeypatch.setattr(flow_tasks, "_is_honeypot_evidence_claim_valid", AsyncMock(return_value=True))
     monkeypatch.setattr(
         flow_tasks,
         "_update_message_broadcast_success",
@@ -287,39 +281,30 @@ async def test_honeypot_broadcast_sends_evidence_once_and_retry_skips_it(
 
     result = await flow_tasks._broadcast_single_honeypot_message(credential_id, telegram_msg_id)
 
-    assert result == {"status": "sent", "broadcast_message_id": 9002}
+    assert result == expected_result
     broadcaster.send_message.assert_awaited_once_with(-100123, 456, message)
-    broadcaster.send_document.assert_awaited_once()
-    sent_document = broadcaster.send_document.await_args.args[2]
-    assert broadcaster.send_document.await_args.args[3] == "honeypot-evidence-101.json"
-    evidence = json.loads(sent_document.decode("utf-8"))
-    assert evidence["message_text"] == (full_text if raw_record_available else message["content"])
-    assert evidence["sender"] == {
-        "telegram_user_id": 234567,
-        "display_name": "Alex Example" if raw_record_available else "scammer_handle",
-        "username": "scammer_handle" if raw_record_available else None,
-    }
-    assert evidence["received_by"] == {
-        "credential_id": credential_id,
-        "bot_id": 7654321,
-        "bot_username": "CapturedBot",
-        "received_at": "2026-10-12T06:07:08+00:00",
-    }
-    assert evidence["message_ids"]["update_id"] == 101
-    assert evidence["message_ids"]["honeypot_telegram_msg_id"] == telegram_msg_id
-    assert evidence["message_ids"]["telegram_message_id"] == 72
-    assert evidence["message_ids"]["chat_id"] == 987654
-    assert evidence["raw_telegram_update"] == (raw_update if raw_record_available else None)
-    if raw_record_available:
-        assert "raw_copy_note" not in evidence
-    else:
-        assert evidence["raw_copy_note"] == (
-            "The raw Telegram update has expired from honeypot_updates retention."
-        )
-    assert message["file_meta"]["honeypot_evidence_file_status"] == "sent"
+    broadcaster.send_document.assert_not_awaited()
+    assert message["file_meta"]["honeypot_evidence_file_status"] == evidence_status
 
     retry_result = await flow_tasks._broadcast_single_honeypot_message(credential_id, telegram_msg_id)
 
     assert retry_result == {"status": "already_broadcasted"}
     broadcaster.send_message.assert_awaited_once()
-    broadcaster.send_document.assert_awaited_once()
+    broadcaster.send_document.assert_not_awaited()
+
+
+def test_deferred_evidence_batch_does_not_load_a_broadcaster(monkeypatch):
+    from app.workers.tasks.flows import honeypot as honeypot_tasks
+
+    broadcaster = MagicMock()
+    get_broadcaster = MagicMock(return_value=broadcaster)
+    monkeypatch.setattr(honeypot_tasks, "get_broadcaster", get_broadcaster)
+
+    assert honeypot_tasks.honeypot_evidence_batch.run() == {
+        "status": "disabled",
+        "batched": 0,
+        "files_sent": 0,
+        "dry_run": False,
+    }
+    get_broadcaster.assert_not_called()
+    broadcaster.send_document.assert_not_called()

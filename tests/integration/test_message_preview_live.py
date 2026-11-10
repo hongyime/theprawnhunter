@@ -1,4 +1,4 @@
-"""Opt-in fresh capture: verifies marked storage, a real preview and the delivered full JSON."""
+"""Opt-in fresh capture: verifies marked storage and the delivered text preview."""
 
 import json
 import os
@@ -57,7 +57,6 @@ async def main():
     assert row["file_meta"]["content_truncated"] is True
     assert row["file_meta"]["content_original_length"] == len(full_text)
     confirmations = []
-    evidence_files = []
     requests = []
 
     def observe_reply(owner):
@@ -66,6 +65,7 @@ async def main():
             if method not in {"sendMessage", "sendDocument"}:
                 return
             await response.aread()
+            assert method == "sendMessage", "honeypot evidence must not be sent as a document"
             reply = response.json()
             if not reply.get("ok"):
                 return
@@ -77,9 +77,6 @@ async def main():
                 assert "END-FIX5-FULL-TEXT" not in text
                 assert len(text.encode("utf-16-le")) // 2 <= 1024
                 confirmations.append(result["message_id"])
-            else:
-                assert result["document"]["file_name"] == f"honeypot-evidence-{uid}.json"
-                evidence_files.append((owner, result["document"]["file_id"], result["message_id"]))
         return observe
 
     broadcaster = flow.get_broadcaster()
@@ -95,22 +92,14 @@ async def main():
         ).eq("id", row["id"]).execute().data[0]
         assert stored["is_broadcasted"] and confirmations == [stored["broadcast_message_id"]]
         assert stored["file_meta"]["content_truncated"] is True
-        assert stored["file_meta"]["honeypot_evidence_file_status"] == "sent"
-        assert len(evidence_files) == 1
-        owner, file_id, evidence_message_id = evidence_files[0]
-        PHASE = "verify_delivered_evidence"
-        remote = await broadcaster._get_bot_instance(owner).get_file(file_id)
-        evidence = json.loads(await remote.download_as_bytearray())
-        assert evidence["message_text"] == full_text
-        assert evidence["raw_telegram_update"] == payload
-        assert set(evidence) == {"message_text", "sender", "received_by", "message_ids", "raw_telegram_update"}
+        assert stored["file_meta"]["honeypot_evidence_file_status"] == "deferred"
         print("FIX5_RESULT=" + json.dumps({
             "result": "passed", "update_id": uid,
-            "broadcast_message_id": confirmations[0], "evidence_message_id": evidence_message_id,
+            "broadcast_message_id": confirmations[0],
             "original_length": len(full_text), "stored_length": len(stored["content"]),
             "stored_truncation_flag": stored["file_meta"]["content_truncated"],
-            "preview_notice_confirmed_by_telegram": True, "delivered_evidence_has_full_text": True,
-            "evidence_format_unchanged": True, "historical_messages_rebroadcast": 0,
+            "preview_notice_confirmed_by_telegram": True, "evidence_document_sent": False,
+            "historical_messages_rebroadcast": 0,
         }))
     finally:
         for request in requests:
@@ -125,7 +114,7 @@ except Exception as exc:
 '''
 
 
-def test_live_over_limit_message_has_preview_and_full_evidence():
+def test_live_over_limit_message_has_preview_without_evidence_document():
     if os.getenv("RUN_LIVE_PREVIEW_TEST") != "1":
         pytest.skip("set RUN_LIVE_PREVIEW_TEST=1 to capture one fresh controlled message")
     completed = subprocess.run(

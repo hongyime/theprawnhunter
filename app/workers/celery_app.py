@@ -435,11 +435,6 @@ app.conf.update(
             "task": "flow.honeypot_redirect_sweep",
             "schedule": 30.0,
         },
-        "honeypot-evidence-batch-daily": {
-            "task": "flow.honeypot_evidence_batch",
-            "schedule": crontab(minute=40, hour=3),
-            "kwargs": {"dry_run": False},
-        },
         "membership-rotation-15min": {
             "task": "validation.membership_rotation",
             "schedule": crontab(minute="9,24,39,54"),
@@ -787,7 +782,6 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "import-csv-5min": 240,
     "retry-cold-12hours": 1800,
     "scan-searxng-2hours": 900,
-    "honeypot-evidence-batch-daily": 7200,
     "membership-rotation-15min": 1800,
     "scan-github-4hours": 900,
     "scan-shodan-4hours": 900,
