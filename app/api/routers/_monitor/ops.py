@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.core.queue_monitor import DEFAULT_QUEUES, get_queue_snapshot
 from app.core.redis_srv import redis_srv
+from app.core.config import settings
 from app.services._bot_listener.runtime import PAUSE_KEY
 from app.services.broadcaster_srv import BroadcasterService
 
@@ -21,6 +22,7 @@ router = APIRouter()
 # does not widen the shared AuditEvent surface used by unrelated services.
 OPS_PAUSE_EVENT = "monitor.ops.pause"
 OPS_RESUME_EVENT = "monitor.ops.resume"
+OPS_RETRY_FAILED_BROADCASTS_EVENT = "monitor.ops.retry_failed_broadcasts"
 OPS_ACTOR = "monitor-api"
 
 # Cluster-wide view of live bot pollers, same namespace the listener uses.
@@ -36,6 +38,21 @@ class QueueLengths(BaseModel):
     validation: int = 0
 
 
+class DeliveryMetricsOut(BaseModel):
+    monitorable_topics: int | None = None
+    polled_24h_topics: int | None = None
+    stale_topics: int | None = None
+    no_chat_credentials: int | None = None
+    active_message_topics: int | None = None
+    pending_messages: int | None = None
+    oldest_pending_age_seconds: int | None = None
+    selected_last_run: int | None = None
+    delivered_last_run: int | None = None
+    eligible_anonymous_senders: int | None = None
+    coverage_24h_percent: float | None = None
+    coverage_slo_percent: int = 95
+
+
 class OpsStatusOut(BaseModel):
     """Pause state plus the health fields the bot's /status command reports."""
 
@@ -44,10 +61,17 @@ class OpsStatusOut(BaseModel):
     pending_broadcasts: int | None
     queue_lengths: QueueLengths
     bot_count: int | None
+    circuit_breakers: dict[str, dict[str, Any]] = {}
+    delivery: DeliveryMetricsOut = DeliveryMetricsOut()
 
 
 class OpsToggleOut(BaseModel):
     paused: bool
+
+
+class RetryFailedBroadcastsOut(BaseModel):
+    queued: bool
+    task_id: str
 
 
 class SystemLogIn(BaseModel):
@@ -124,7 +148,16 @@ def _read_redis_state() -> dict[str, Any]:
         "paused": paused,
         "queue_lengths": queue_lengths,
         "bot_count": bot_count,
+        "selected_last_run": _safe_int(client.get("metrics:broadcast:selected_last_run")),
+        "delivered_last_run": _safe_int(client.get("metrics:broadcast:delivered_last_run")),
     }
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 async def _pending_broadcast_count() -> int | None:
@@ -139,6 +172,32 @@ async def _pending_broadcast_count() -> int | None:
             type(exc).__name__,
         )
         return None
+
+
+async def _delivery_metrics(state: dict[str, Any]) -> DeliveryMetricsOut:
+    values: dict[str, Any] = {
+        "selected_last_run": state.get("selected_last_run"),
+        "delivered_last_run": state.get("delivered_last_run"),
+    }
+    try:
+        response = await execute_async(db.rpc("monitor_delivery_metrics"))
+        row = (response.data or [{}])[0]
+        values.update(row)
+        monitorable = row.get("monitorable_topics")
+        polled = row.get("polled_24h_topics")
+        if monitorable is not None and polled is not None:
+            values["coverage_24h_percent"] = round(100 * int(polled) / int(monitorable), 1) if monitorable else 100.0
+    except Exception as exc:
+        logger.warning("monitor/ops delivery metrics failed (%s)", type(exc).__name__)
+    try:
+        from app.services.user_agent_srv import user_agent
+
+        values["eligible_anonymous_senders"] = len(
+            await user_agent.eligible_anonymous_senders(settings.MONITOR_GROUP_ID)
+        )
+    except Exception as exc:
+        logger.warning("monitor/ops anonymous sender probe failed (%s)", type(exc).__name__)
+    return DeliveryMetricsOut(**values)
 
 
 def _set_pause_key() -> bool:
@@ -180,12 +239,16 @@ async def ops_status():
     """Return pause state, Redis health, pending broadcasts and queue depths."""
     state = await asyncio.to_thread(_read_redis_state)
     pending_broadcasts = await _pending_broadcast_count()
+    delivery = await _delivery_metrics(state)
+    from app.core.circuit_breaker import get_all_circuit_status
     return OpsStatusOut(
         paused=state["paused"],
         redis=state["redis"],
         pending_broadcasts=pending_broadcasts,
         queue_lengths=QueueLengths(**state["queue_lengths"]),
         bot_count=state["bot_count"],
+        circuit_breakers=get_all_circuit_status(),
+        delivery=delivery,
     )
 
 
@@ -213,6 +276,24 @@ async def ops_resume():
         raise HTTPException(status_code=503, detail="Redis unavailable")
     _audit(OPS_RESUME_EVENT, paused=False)
     return OpsToggleOut(paused=False)
+
+
+@router.post(
+    "/ops/retry-failed-broadcasts",
+    response_model=RetryFailedBroadcastsOut,
+    dependencies=[Depends(require_monitor_key)],
+)
+async def retry_failed_broadcasts():
+    """Queue the existing bounded failed-broadcast retry task."""
+    from app.workers.celery_app import app as celery_app
+
+    try:
+        task = celery_app.send_task("flow.retry_failed_broadcasts")
+    except Exception as exc:
+        logger.exception("monitor/ops retry-failed-broadcasts queue failed")
+        raise HTTPException(status_code=503, detail="Task queue unavailable") from exc
+    _audit(OPS_RETRY_FAILED_BROADCASTS_EVENT, paused=False)
+    return RetryFailedBroadcastsOut(queued=True, task_id=str(task.id))
 
 
 @router.post(

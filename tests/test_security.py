@@ -42,3 +42,13 @@ def test_plaintext_mode_bypasses_encryption(monkeypatch):
     monkeypatch.setattr(settings, "PLAINTEXT_TOKEN_MODE", True)
     text = "1234567890:AAtokenlike"
     assert security.encrypt(text) == text
+
+
+def test_plaintext_rows_decrypt_when_encryption_is_enabled():
+    assert security.decrypt("1234567890:AAtokenlike") == "1234567890:AAtokenlike"
+
+
+def test_historical_ciphertext_decrypts_in_plaintext_mode(monkeypatch):
+    ciphertext = security.encrypt("historical token")
+    monkeypatch.setattr(settings, "PLAINTEXT_TOKEN_MODE", True)
+    assert security.decrypt(ciphertext) == "historical token"

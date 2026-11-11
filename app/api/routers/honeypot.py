@@ -21,6 +21,7 @@ Safety & Resilience:
 """
 
 import asyncio as _asyncio
+import hmac
 import json as _json
 from datetime import UTC, datetime
 
@@ -96,7 +97,7 @@ async def receive_webhook_update(credential_id: str, request: Request):
 
     # Prefer header-based secret (Telegram Bot API 6.7+)
     hdr_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if hdr_secret != settings.HONEYPOT_SECRET:
+    if not hmac.compare_digest(hdr_secret, settings.HONEYPOT_SECRET):
         logger.warning("[Honeypot] missing/wrong X-Telegram-Bot-Api-Secret-Token")
         return {"ok": True}
 

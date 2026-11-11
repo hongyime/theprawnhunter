@@ -30,7 +30,7 @@ def test_read_root(client):
     assert response.json()["status"] == "ok"
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.common.db")
 def test_get_stats(mock_db):
     from app.api.routers import monitor
 
@@ -42,7 +42,7 @@ def test_get_stats(mock_db):
     assert exc_info.value.detail == "Internal error"
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.common.db")
 def test_get_stats_uses_monitor_stats_rpc(mock_db):
     from app.api.routers import monitor
 
@@ -67,7 +67,7 @@ def test_get_stats_uses_monitor_stats_rpc(mock_db):
     mock_db.table.assert_not_called()
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.common.db")
 def test_get_stats_serves_cache_from_redis(mock_db, monkeypatch):
     """PERF-004: cache is now Redis-backed. Verify a warm Redis entry
     short-circuits the DB path entirely."""
@@ -167,7 +167,7 @@ def test_monitor_stats_fallback_uses_narrow_counts(monkeypatch):
             return Query(name, self.calls)
 
     fake_db = Db()
-    monkeypatch.setattr(monitor, "db", fake_db)
+    monkeypatch.setattr("app.api.routers._monitor.common.db", fake_db)
 
     stats = monitor._get_monitor_stats()
 
@@ -200,7 +200,7 @@ def test_trigger_scan_invalid_source(client):
 
 # --- Export endpoint tests ---
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.exports.db")
 def test_export_json_default(mock_db, client):
     mock_result = MagicMock()
     mock_result.data = []
@@ -210,7 +210,7 @@ def test_export_json_default(mock_db, client):
     assert isinstance(response.json(), list)
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.exports.db")
 def test_export_csv_format(mock_db, client):
     mock_result = MagicMock()
     mock_result.data = []
@@ -226,7 +226,7 @@ def test_export_auth_enforced(client):
     assert response.status_code in (401, 403)
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.exports.db")
 def test_export_since_filter(mock_db, client):
     mock_result = MagicMock()
     mock_result.data = []
@@ -236,7 +236,7 @@ def test_export_since_filter(mock_db, client):
     assert response.json() == []
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.exports.db")
 def test_export_limit_param(mock_db, client):
     mock_result = MagicMock()
     mock_result.data = [{

@@ -205,6 +205,7 @@ def test_monitor_key_is_required_for_all_ops_routes(monkeypatch):
         == 403
     )
     assert client.post("/monitor/ops/resume").status_code == 403
+    assert client.post("/monitor/ops/retry-failed-broadcasts").status_code == 403
     assert audit.call_count == 0
 
     # The correct key reaches the handler and returns the documented shape.
@@ -216,6 +217,8 @@ def test_monitor_key_is_required_for_all_ops_routes(monkeypatch):
         "pending_broadcasts",
         "queue_lengths",
         "bot_count",
+        "circuit_breakers",
+        "delivery",
     }
     assert set(status.json()["queue_lengths"]) == set(DEFAULT_QUEUES)
 

@@ -1398,3 +1398,24 @@ class BroadcasterService:
                 return True
             logger.warning(f"Topic close failed for {thread_id}: {e}")
             return False
+
+    async def reopen_topic(self, group_id: int | str, thread_id: int) -> bool:
+        """Reopen an existing forum topic without creating a replacement."""
+        try:
+            thread_id_int = int(thread_id)
+        except (TypeError, ValueError):
+            return False
+        if thread_id_int <= 1:
+            return False
+        try:
+            await self._get_bot_instance(self.bot_tokens[0]).reopen_forum_topic(
+                chat_id=group_id, message_thread_id=thread_id_int
+            )
+            logger.info(f"Reopened topic {thread_id_int}")
+            return True
+        except Exception as e:
+            err = str(e).lower()
+            if "topic_not_modified" in err or "not modified" in err:
+                return True
+            logger.warning(f"Topic reopen failed for {thread_id}: {e}")
+            return False

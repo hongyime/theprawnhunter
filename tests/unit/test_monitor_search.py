@@ -320,7 +320,7 @@ def test_route_serializes_snippet_without_dropping_existing_fields(client, monke
     from app.api.routers import monitor
 
     fake_db = _FakeDB(rpc_rows=FTS_ROWS)
-    monkeypatch.setattr(monitor, "db", fake_db)
+    monkeypatch.setattr("app.api.routers._monitor.search.db", fake_db)
 
     response = client.get("/monitor/search?q=bitcoin&limit=10", headers=AUTH)
 

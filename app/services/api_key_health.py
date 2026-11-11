@@ -51,14 +51,6 @@ async def check_github(client: httpx.AsyncClient) -> list[dict]:
     return results
 
 
-async def check_gitlab(client: httpx.AsyncClient) -> list[dict]:
-    token = getattr(settings, "GITLAB_TOKEN", None)
-    if not token:
-        return [{"provider": "gitlab", "ok": False, "detail": "not configured"}]
-    response = await _get(client, "https://gitlab.com/api/v4/user", {"PRIVATE-TOKEN": token})
-    return [{"provider": "gitlab", "ok": response.status_code == 200, "detail": f"HTTP {response.status_code}"}]
-
-
 async def check_exa(client: httpx.AsyncClient) -> list[dict]:
     key = getattr(settings, "EXA_API_KEY", None)
     if not key:
@@ -163,7 +155,6 @@ async def check_bitbucket(client: httpx.AsyncClient) -> list[dict]:
 
 CHECKS = (
     check_github,
-    check_gitlab,
     check_exa,
     check_shodan,
     check_netlas,

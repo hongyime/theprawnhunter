@@ -62,10 +62,10 @@ class SecurityService:
         """Decrypts a token string; tries the primary key first, then any
         legacy keys. Raises InvalidToken if no key in the chain works.
 
-        SEC-001 operator override: when ``settings.PLAINTEXT_TOKEN_MODE`` is
-        True, tokens are stored unencrypted and are returned unchanged (mirrors
-        the encrypt() bypass)."""
-        if getattr(settings, "PLAINTEXT_TOKEN_MODE", False):
+        Plaintext rows are returned unchanged; historical Fernet ciphertext is
+        always decrypted, including when plaintext mode is now enabled."""
+        # Older/plaintext rows can coexist with encryption being enabled.
+        if not token.startswith("gAAAA"):
             return token
         return self.fernet.decrypt(token.encode()).decode()
 

@@ -1,8 +1,8 @@
-from app.core.config import settings
+from app.core.config import Settings, settings
 
 
-def test_auto_archive_media_enabled_by_default():
-    assert settings.AUTO_ARCHIVE_MEDIA is True
+def test_auto_archive_media_disabled_by_default():
+    assert Settings.model_fields["AUTO_ARCHIVE_MEDIA"].default is False
 
 
 def test_auto_invite_captured_bots_disabled_by_default():

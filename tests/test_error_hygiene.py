@@ -15,7 +15,7 @@ pytestmark = pytest.mark.usefixtures("isolated_stats_cache")
 # ---------------------------------------------------------------------------
 # AUDIT-4: 500-class errors should return a generic message
 # ---------------------------------------------------------------------------
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.common.db")
 def test_stats_error_does_not_leak_exception(mock_db, client):
     """A DB failure should not echo 'Password: hunter2\\n...' back to the caller."""
     secret_marker = "DB Connection Error: postgres://user:PASSW0RD@host/db"
@@ -31,7 +31,7 @@ def test_stats_error_does_not_leak_exception(mock_db, client):
     assert response.json()["detail"] == "Internal error"
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.credentials.db")
 def test_credentials_error_does_not_leak(mock_db, client):
     secret = "secret-string-leaked-via-supabase-error"
     mock_db.table.side_effect = Exception(secret)
@@ -41,7 +41,7 @@ def test_credentials_error_does_not_leak(mock_db, client):
     assert secret not in response.text
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.messages.db")
 def test_messages_error_does_not_leak(mock_db, client):
     secret = "boom-secret-token-abc123"
     mock_db.table.side_effect = Exception(secret)
@@ -51,7 +51,7 @@ def test_messages_error_does_not_leak(mock_db, client):
     assert secret not in response.text
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.search.db")
 def test_search_error_does_not_leak(mock_db, client):
     secret = "sensitive-supabase-internal-detail"
     mock_db.table.side_effect = Exception(secret)
@@ -64,7 +64,7 @@ def test_search_error_does_not_leak(mock_db, client):
     assert secret not in response.text
 
 
-@patch("app.api.routers.monitor.db")
+@patch("app.api.routers._monitor.webhooks.db")
 def test_webhooks_error_does_not_leak(mock_db, client):
     secret = "top-secret-supabase-dsn-token"
     mock_db.table.side_effect = Exception(secret)

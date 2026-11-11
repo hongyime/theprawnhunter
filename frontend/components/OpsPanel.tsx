@@ -21,6 +21,23 @@ export type OpsStatus = {
   pending_broadcasts: number | null;
   queue_lengths: OpsQueueLengths;
   bot_count: number | null;
+  circuit_breakers?: CircuitBreakers;
+  delivery?: DeliveryMetrics;
+};
+
+type DeliveryMetrics = {
+  monitorable_topics: number | null;
+  polled_24h_topics: number | null;
+  stale_topics: number | null;
+  no_chat_credentials: number | null;
+  active_message_topics: number | null;
+  pending_messages: number | null;
+  oldest_pending_age_seconds: number | null;
+  selected_last_run: number | null;
+  delivered_last_run: number | null;
+  eligible_anonymous_senders: number | null;
+  coverage_24h_percent: number | null;
+  coverage_slo_percent: number;
 };
 
 const QUEUE_LABELS: Array<{ key: keyof OpsQueueLengths; label: string }> = [
@@ -31,6 +48,7 @@ const QUEUE_LABELS: Array<{ key: keyof OpsQueueLengths; label: string }> = [
 ];
 
 type PendingAction = "pause" | "resume" | null;
+type CircuitBreakers = Record<string, { state: string; failure_count: number }>;
 
 export default function OpsPanel() {
   const [status, setStatus] = useState<OpsStatus | null>(null);
@@ -39,6 +57,9 @@ export default function OpsPanel() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingAction>(null);
   const [confirmingPause, setConfirmingPause] = useState(false);
+  const [circuitBreakers, setCircuitBreakers] = useState<CircuitBreakers>({});
+  const [scanSource, setScanSource] = useState("shodan");
+  const [scanQuery, setScanQuery] = useState("");
 
   const pendingRef = useRef(false);
   const mountedRef = useRef(true);
@@ -70,6 +91,7 @@ export default function OpsPanel() {
       if (!mountedRef.current) return true;
       setStatus(body);
       setLoadError(null);
+      setCircuitBreakers(body.circuit_breakers ?? {});
       return true;
     } catch {
       if (mountedRef.current) {
@@ -175,6 +197,27 @@ export default function OpsPanel() {
     }
   }
 
+  async function applyUtility(action: "retry-failed-broadcasts" | "reset-circuit-breaker" | "scan", body?: Record<string, string>) {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`/api/ops/${action}`, {
+        method: "POST", cache: "no-store", headers: { ...(await authHeaders()), ...(body ? { "Content-Type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const result = (await response.json().catch(() => null)) as { code?: unknown } | null;
+      if (!response.ok) throw new Error(proxyFailureMessage(typeof result?.code === "string" ? result.code : null, response.status, "Operations control"));
+      setActionMessage(action === "scan" ? "Scan queued." : action === "retry-failed-broadcasts" ? "Failed broadcasts queued for retry." : "Circuit breaker reset.");
+      if (action !== "scan") await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "The operation could not be applied.");
+    } finally {
+      pendingRef.current = false;
+    }
+  }
+
   const busy = pending !== null;
 
   return (
@@ -274,6 +317,30 @@ export default function OpsPanel() {
                 </p>
               </div>
             </div>
+
+            {status.delivery && (
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
+                <h2 className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
+                  Delivery coverage (24h SLO: {status.delivery.coverage_slo_percent}%)
+                </h2>
+                <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[
+                    ["Coverage", status.delivery.coverage_24h_percent === null ? "—" : `${status.delivery.coverage_24h_percent}%`],
+                    ["Topics polled", `${status.delivery.polled_24h_topics ?? "—"}/${status.delivery.monitorable_topics ?? "—"}`],
+                    ["Stale / no chat", `${status.delivery.stale_topics ?? "—"}/${status.delivery.no_chat_credentials ?? "—"}`],
+                    ["Active message topics", status.delivery.active_message_topics ?? "—"],
+                    ["Oldest pending", status.delivery.oldest_pending_age_seconds === null ? "—" : `${Math.floor(status.delivery.oldest_pending_age_seconds / 3600)}h`],
+                    ["Selected / delivered", `${status.delivery.selected_last_run ?? "—"}/${status.delivery.delivered_last_run ?? "—"}`],
+                    ["Eligible senders", status.delivery.eligible_anonymous_senders ?? "—"],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
+                      <dt className="text-xs font-semibold text-slate-600">{label}</dt>
+                      <dd className="font-mono text-lg font-bold text-ink">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
 
             <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
               <h2 className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">
@@ -380,6 +447,21 @@ export default function OpsPanel() {
                 </p>
               )}
             </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]">
+              <h2 className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">Circuit breakers</h2>
+              <div className="mt-3 space-y-2">
+                {Object.entries(circuitBreakers).map(([service, breaker]) => (
+                  <div key={service} className="flex items-center gap-3 text-sm"><span className="min-w-24 font-medium">{service}</span><span>{breaker.state} ({breaker.failure_count} failures)</span><button type="button" disabled={busy} onClick={() => void applyUtility("reset-circuit-breaker", { service })} className="rounded border border-slate-300 px-2 py-1 text-xs font-bold">Reset</button></div>
+                ))}
+              </div>
+              <button type="button" disabled={busy} onClick={() => void applyUtility("retry-failed-broadcasts")} className="mt-4 rounded border border-slate-300 px-3 py-2 text-sm font-bold disabled:opacity-50">Retry failed broadcasts</button>
+            </div>
+
+            <form className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(23,32,51,0.04)]" onSubmit={(event) => { event.preventDefault(); void applyUtility("scan", { source: scanSource, query: scanQuery }); }}>
+              <h2 className="font-mono text-xs uppercase tracking-[0.16em] text-slate-500">Manual scan</h2>
+              <div className="mt-3 flex flex-wrap gap-2"><select aria-label="Scan source" value={scanSource} onChange={(event) => setScanSource(event.target.value)} className="rounded border border-slate-300 p-2 text-sm">{["shodan", "fofa", "github", "urlscan", "sourcegraph", "searchcode"].map((source) => <option key={source}>{source}</option>)}</select><input aria-label="Scan query" value={scanQuery} onChange={(event) => setScanQuery(event.target.value)} className="min-w-56 flex-1 rounded border border-slate-300 p-2 text-sm" /><button type="submit" disabled={busy || !scanQuery.trim()} className="rounded bg-ink px-3 py-2 text-sm font-bold text-white disabled:opacity-50">Queue scan</button></div>
+            </form>
           </>
         )}
       </div>

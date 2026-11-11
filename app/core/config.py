@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     SYSTEM_LOGS_TOPIC_ID: int | None = None
     WHITELISTED_BOT_IDS: str = "" # Comma-separated IDs (or usernames)
     ANONYMOUS_ADMIN_ID: int = 1087968824  # Telegram anonymous group admin bot ID
-    AUTO_ARCHIVE_MEDIA: bool = True
+    AUTO_ARCHIVE_MEDIA: bool = False
     # Capture-time media cache (local volume). Bounded so it can never
     # fill the host: new captures stop once either limit is hit.
     MEDIA_ARCHIVE_ENABLED: bool = True
@@ -207,7 +207,6 @@ class Settings(BaseSettings):
     # GITHUB_TOKEN. Each PAT gets its own 30 req/min budget — pool of 5 PATs
     # = 150 req/min total → no more secondary rate limits on big result sets.
     GITHUB_TOKENS: str | None = None
-    GITLAB_TOKEN: str | None = None
     BITBUCKET_USER: str | None = None        # Atlassian account email (for Basic auth with API token)
     BITBUCKET_API_TOKEN: str | None = None   # API token (replaces app password — use Bearer auth)
     EXA_API_KEY: str | None = None

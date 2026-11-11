@@ -126,7 +126,7 @@ Copy `.env.template` → `.env`. Values are never shown here — names only.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENV` | `development` | Set `production` to disable `/docs` and `/scan/trigger` |
+| `ENV` | `development` | Set `production` to disable `/docs`; manual scans remain monitor-key protected |
 | `PLAINTEXT_TOKEN_MODE` | `False` | Bypass Fernet — tokens stored as plaintext. Operator override. |
 | `ENCRYPTION_KEY_LEGACY` | (unset) | Comma-separated previous Fernet keys for decryption |
 | `PSEUDONYMIZATION_KEY` | (unset) | Stable HMAC key for pseudonymous analyst identifiers |
@@ -170,7 +170,6 @@ All degrade gracefully when absent.
 | `FOFA_EMAIL` + `FOFA_KEY` | FOFA (paid plan only) |
 | `URLSCAN_KEY` | URLScan.io |
 | `GITHUB_TOKEN` or `GITHUB_TOKENS` | GitHub Code Search + Gists (comma-separated pool) |
-| `GITLAB_TOKEN` | GitLab Blobs |
 | `BITBUCKET_USER` + `BITBUCKET_API_TOKEN` | Bitbucket workspace |
 | `EXA_API_KEY`, `EXA_API_KEY_2`, `EXA_API_KEY_3` | Exa (keys rotated per request) |
 | `PUBLICWWW_KEY` | PublicWWW |
@@ -347,7 +346,7 @@ npm test   # tsc --noEmit + vitest
 
 ### Current state
 
-- **402 tests collected** — 398 pass, 4 skipped, 0 failures (pytest 8.3.5). Stats-cache fixtures are isolated per test; readiness tests cover event-loop responsiveness, bounded shared probes, recovery, and error redaction.
+- **1,226 tests collected** across 128 unit-test modules. Stats-cache fixtures are isolated per test; readiness tests cover event-loop responsiveness, bounded shared probes, recovery, and error redaction.
 - **Not covered:** `app/services/bot_manager_srv.py`, `app/workers/tasks/pivot_tasks.py`, `app/workers/tasks/firehose_tasks.py`, `app/workers/tasks/import_tasks.py`, `extension/`
 
 ---
@@ -360,13 +359,13 @@ theprawnhunter/
 │   ├── api/                 FastAPI app + 6 routers (31 HTTP endpoints)
 │   ├── core/                Config, security, audit, Redis, DB, metrics, circuit breakers
 │   ├── schemas/             Pydantic request/response models
-│   ├── services/            21 scanner classes, scraper, broadcaster, bot listener, user-agent pool
+│   ├── services/            Scanner providers, scraper, broadcaster, bot listener, user-agent pool
 │   │   └── _scraper/        4-strategy scrape lifecycle
 │   ├── utils/               HTTP client pool (with retry_with_backoff), token helpers
 │   └── workers/
-│       ├── celery_app.py    Celery app, persistent event loop, 60-entry beat schedule
+│       ├── celery_app.py    Celery app, persistent event loop, 79-entry beat schedule
 │       ├── flower_app.py    Minimal Flower-only Celery app
-│       └── tasks/           79 @app.task handlers across 9 modules
+│       └── tasks/           100 @app.task handlers
 ├── database/
 │   ├── init.sql             Canonical schema DDL
 │   ├── rls_policies.sql     Row Level Security policy snapshot/reference
@@ -389,9 +388,9 @@ theprawnhunter/
 │   └── ops/                  Runtime operations and one-off scripts
 ├── supabase/
 │   ├── config.toml
-│   └── migrations/          25 versioned migrations applied to live Supabase
+│   └── migrations/          50 versioned migrations
 ├── tests/
-│   ├── unit/                46 unit test modules
+│   ├── unit/                128 unit test modules
 │   ├── integration/         3 integration test modules
 │   ├── load/                1 load test
 │   └── *.py                 9 top-level test modules

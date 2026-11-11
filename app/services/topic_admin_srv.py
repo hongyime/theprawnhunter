@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.audit import AuditEvent, AuditLogger
@@ -25,6 +25,15 @@ def coerce_topic_id(meta: dict[str, Any]) -> int | None:
     if topic_id_int <= 1:
         return None
     return topic_id_int
+
+
+def _rpc_count(data: Any) -> int:
+    if isinstance(data, list):
+        data = data[0] if data else 0
+    try:
+        return int(data or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 async def fetch_revoked_topic_candidates(limit: int) -> list[dict[str, Any]]:
@@ -56,12 +65,22 @@ async def fetch_revoked_topic_candidates(limit: int) -> list[dict[str, Any]]:
             if topic_id in seen_topic_ids:
                 continue
             seen_topic_ids.add(topic_id)
+            # Unit callers may supply an intentionally minimal DB double; real
+            # deployments always have the migration-backed RPC.
+            if hasattr(db, "rpc"):
+                pending = await async_execute(
+                    db.rpc("topic_pending_count", {"p_topic_id": topic_id})
+                )
+                pending_count = _rpc_count(pending.data)
+            else:
+                pending_count = 0
             candidates.append(
                 {
                     "id": row.get("id"),
                     "topic_id": topic_id,
                     "meta": meta,
                     "updated_at": row.get("updated_at"),
+                    "pending_count": pending_count,
                 }
             )
             if len(candidates) >= limit:
@@ -93,14 +112,49 @@ async def fetch_revoked_topic_candidate(credential_id: str) -> list[dict[str, An
     topic_id = coerce_topic_id(meta)
     if not topic_id or meta.get("topic_closed_at"):
         return []
+    pending = await async_execute(db.rpc("topic_pending_count", {"p_topic_id": topic_id}))
+    pending_count = _rpc_count(pending.data)
     return [
         {
             "id": row.get("id"),
             "topic_id": topic_id,
             "meta": meta,
             "updated_at": row.get("updated_at"),
+            "pending_count": pending_count,
         }
     ]
+
+
+async def close_unmonitorable_topic(credential_id: str) -> bool:
+    """Close an idle topic only after a valid credential stayed inaccessible 30 days."""
+    response = await async_execute(
+        db.table("discovered_credentials").select("id,status,meta").eq("id", credential_id).eq("status", "active").limit(1)
+    )
+    rows = response.data or []
+    if not rows:
+        return False
+    meta = dict(rows[0].get("meta") or {})
+    if meta.get("monitorability") != "unmonitorable" or meta.get("topic_closed_at"):
+        return False
+    try:
+        since = datetime.fromisoformat(str(meta["first_unmonitorable_at"]).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        return False
+    if datetime.now(UTC) - since < timedelta(days=30):
+        return False
+    topic_id = coerce_topic_id(meta)
+    if not topic_id:
+        return False
+    pending = await async_execute(db.rpc("topic_pending_count", {"p_topic_id": topic_id}))
+    if _rpc_count(pending.data):
+        return False
+    if not await get_broadcaster().close_topic(getattr(settings, "MONITOR_GROUP_ID", None), topic_id):
+        return False
+    meta["topic_closed_at"] = datetime.now(UTC).isoformat()
+    meta["topic_closed_reason"] = "credential_unmonitorable_30d"
+    meta["topic_status"] = "closed"
+    await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", credential_id))
+    return True
 
 
 def get_broadcaster():
@@ -133,6 +187,7 @@ async def close_revoked_topics_logic(
         candidates = await fetch_revoked_topic_candidate(credential_id)
     else:
         candidates = await fetch_revoked_topic_candidates(limit)
+    candidates = [row for row in candidates if not row.get("pending_count", 0)]
     result: dict[str, Any] = {
         "status": "dry_run" if dry_run else "ok",
         "dry_run": dry_run,
@@ -152,6 +207,9 @@ async def close_revoked_topics_logic(
             }
             for row in candidates
         ]
+        return result
+
+    if not candidates:
         return result
 
     broadcaster = get_broadcaster()

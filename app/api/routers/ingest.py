@@ -58,9 +58,8 @@ class ExtensionIngestResponse(BaseModel):
 @router.post("/extension/credentials", response_model=ExtensionIngestResponse)
 async def ingest_extension_credentials(payload: ExtensionIngestRequest):
     """
-    Ingest endpoint for server-side tooling. Requires X-Monitor-Key header
-    (enforced via router dependency).
-    The Chrome extension writes directly to Supabase and does not use this endpoint.
+    Ingest credentials submitted by the Chrome extension through trusted
+    server-side tooling. Requires X-Monitor-Key (router dependency).
     """
     inserted = 0
     updated = 0

@@ -147,6 +147,34 @@ describe("/api/ops/[action]", () => {
     },
   );
 
+  it("validates and proxies manual scans without exposing the monitor key", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: "triggered" }), { status: 200 }));
+    const response = await POST(
+      authedRequest("http://dashboard.test/api/ops/scan", {
+        method: "POST",
+        body: JSON.stringify({ source: "shodan", query: "telegram" }),
+      }),
+      context("scan"),
+    );
+    expect(response.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://api.test/scan/trigger");
+    expect(init.headers["X-Monitor-Key"]).toBe("server-only-secret");
+    expect(init.body).toBe(JSON.stringify({ source: "shodan", query: "telegram" }));
+  });
+
+  it("rejects blank manual scan queries before proxying", async () => {
+    const response = await POST(
+      authedRequest("http://dashboard.test/api/ops/scan", {
+        method: "POST",
+        body: JSON.stringify({ source: "shodan", query: "  " }),
+      }),
+      context("scan"),
+    );
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each(["API_BASE_URL", "MONITOR_API_KEY"] as const)(
     "returns 503 without fetching when %s is missing",
     async (missing) => {

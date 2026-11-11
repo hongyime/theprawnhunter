@@ -52,10 +52,18 @@ async def test_all_configured_scanners_are_reachable(monkeypatch):
     redis_client = MagicMock()
     redis_client.get.return_value = None
     redis_client.set.return_value = True
-    monkeypatch.setattr(scanner_tasks, "redis_client", redis_client)
+    monkeypatch.setattr("app.workers.tasks.scanners.common.redis_client", redis_client)
 
     # A connectivity probe must never persist discovered credentials or enqueue validation.
-    monkeypatch.setattr(scanner_tasks, "_save_credentials_async", AsyncMock(return_value=0))
+    save_credentials = AsyncMock(return_value=0)
+    monkeypatch.setattr("app.workers.tasks.scanners.common._save_credentials_async", save_credentials)
+    for provider in (
+        "bitbucket", "fofa", "github", "github_gist", "google", "grepapp",
+        "netlas", "publicwww", "shodan", "urlscan",
+    ):
+        module = f"app.workers.tasks.scanners.providers.{provider}"
+        monkeypatch.setattr(f"{module}.redis_client", redis_client)
+        monkeypatch.setattr(f"{module}._save_credentials_async", save_credentials)
 
     probes: list[tuple[str, Callable[[], Awaitable[object]], int]] = [
         (
@@ -63,10 +71,8 @@ async def test_all_configured_scanners_are_reachable(monkeypatch):
             lambda: scanner_tasks._scan_github_async('filename:.env "TELEGRAM_BOT_TOKEN"'),
             45,
         ),
-        ("GitLab", scanner_tasks._scan_gitlab_async, 30),
         ("Gist", scanner_tasks._scan_gist_async, 30),
         ("GrepApp", scanner_tasks._scan_grepapp_async, 30),
-        ("Pastebin", scanner_tasks._scan_pastebin_async, 20),
         (
             "Serper",
             lambda: scanner_tasks._scan_serper_async(

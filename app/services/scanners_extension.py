@@ -8,16 +8,15 @@ from app.infrastructure.scanners.providers import grepapp as _provider_1
 from app.infrastructure.scanners.providers import publicwww as _provider_2
 from app.infrastructure.scanners.providers import google as _provider_3
 from app.infrastructure.scanners.providers import bitbucket as _provider_4
-from app.infrastructure.scanners.providers import pastebin as _provider_5
-from app.infrastructure.scanners.providers import rentry as _provider_6
-from app.infrastructure.scanners.providers import hastebin as _provider_7
-from app.infrastructure.scanners.providers import netlas as _provider_8
-from app.infrastructure.scanners.providers import replit as _provider_9
-from app.infrastructure.scanners.providers import postman as _provider_10
-from app.infrastructure.scanners.providers import searchcode as _provider_11
-from app.infrastructure.scanners.providers import npm as _provider_12
-from app.infrastructure.scanners.providers import pypi as _provider_13
-from app.infrastructure.scanners.providers import ci_logs as _provider_14
+from app.infrastructure.scanners.providers import rentry as _provider_5
+from app.infrastructure.scanners.providers import hastebin as _provider_6
+from app.infrastructure.scanners.providers import netlas as _provider_7
+from app.infrastructure.scanners.providers import replit as _provider_8
+from app.infrastructure.scanners.providers import postman as _provider_9
+from app.infrastructure.scanners.providers import searchcode as _provider_10
+from app.infrastructure.scanners.providers import npm as _provider_11
+from app.infrastructure.scanners.providers import pypi as _provider_12
+from app.infrastructure.scanners.providers import ci_logs as _provider_13
 
 _IMPLEMENTATIONS = (_common,
     _provider_0,
@@ -33,8 +32,7 @@ _IMPLEMENTATIONS = (_common,
     _provider_10,
     _provider_11,
     _provider_12,
-    _provider_13,
-    _provider_14)
+    _provider_13)
 for _implementation in _IMPLEMENTATIONS:
     for _name, _value in vars(_implementation).items():
         if not _name.startswith("__"):

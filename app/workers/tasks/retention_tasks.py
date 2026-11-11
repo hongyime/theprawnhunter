@@ -45,7 +45,7 @@ async def _automated_retention_cleanup_async() -> dict[str, Any]:
     # size budget, while the backlog must survive long enough to be delivered.
     msg_days = max(1, int(getattr(settings, "RETENTION_EXFIL_MESSAGE_DAYS", 30)))
     broadcasted_days = max(1, int(getattr(settings, "RETENTION_BROADCASTED_DAYS", msg_days)))
-    pending_days = max(1, int(getattr(settings, "RETENTION_PENDING_DAYS", msg_days * 2)))
+    pending_days = max(1, int(getattr(settings, "RETENTION_PENDING_DAYS", 90)))
     msg_cutoff = (now - timedelta(days=broadcasted_days)).isoformat()
     msg_stale_cutoff = (now - timedelta(days=pending_days)).isoformat()
 
@@ -157,7 +157,7 @@ async def _automated_retention_cleanup_async() -> dict[str, Any]:
     try:
         del_broadcasted = await _delete_in_batches(
             "exfiltrated_messages",
-            lambda q: q.eq("is_broadcasted", True).lt("created_at", msg_cutoff),
+            lambda q: q.eq("broadcast_status", "sent").lt("created_at", msg_cutoff),
             protect_finding_sources=True,
         )
         del_unbroadcasted = await _delete_in_batches(

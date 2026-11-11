@@ -11,6 +11,7 @@
 #   docker compose --profile frontend   up -d   # + Next.js dashboard
 #   docker compose --profile heavy      up -d   # + isolated ASR/OCR worker (large image)
 #   docker compose --profile full       up -d   # all extras except heavy
+#   docker compose --profile scanners   up -d   # optional SearXNG meta-search
 #
 # PRODUCTION (lean, tuned via .env + overlay):
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
@@ -151,6 +152,7 @@ services:
   searxng:
     image: searxng/searxng:latest
     container_name: theprawnhunter_searxng
+    profiles: ["scanners", "full"]
     restart: unless-stopped
     cpus: "${SEARXNG_CPUS:-0.50}"
     mem_limit: "${SEARXNG_MEM_LIMIT:-512m}"

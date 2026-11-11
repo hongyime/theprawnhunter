@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from scripts import schema_drift_check
+from scripts.ops import schema_drift_check
 
 
 class _Response:

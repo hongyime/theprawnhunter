@@ -33,7 +33,7 @@ frontend/
 extension/
 supabase/
 docs/history/
-scripts/test_operator_authorization.py
+scripts/dev/test_operator_authorization.py
 
 # ── Git & CI ──────────────────────────────────────────────────────────────────
 .git/

@@ -1,8 +1,5 @@
-"""Compatibility facade for the resource-based monitor API routers."""
-from types import ModuleType as _ModuleType
-import sys as _sys
+"""Monitor API router assembled from resource routers."""
 
-from app.api.routers._monitor import common as _common
 from app.api.routers._monitor.common import *
 from app.api.routers._monitor import stats as _stats
 from app.api.routers._monitor import credentials as _credentials
@@ -19,6 +16,21 @@ from app.api.routers._monitor import operators as _operators
 from app.api.routers._monitor import outposts as _outposts
 from app.api.routers._monitor import ops as _ops
 from app.api.routers._monitor import watchlist_hits as _watchlist_hits
+from app.api.routers._monitor.stats import *
+from app.api.routers._monitor.credentials import *
+from app.api.routers._monitor.messages import *
+from app.api.routers._monitor.findings import *
+from app.api.routers._monitor.engagement import *
+from app.api.routers._monitor.exports import *
+from app.api.routers._monitor.broadcasts import *
+from app.api.routers._monitor.topics import *
+from app.api.routers._monitor.webhooks import *
+from app.api.routers._monitor.targets import *
+from app.api.routers._monitor.search import *
+from app.api.routers._monitor.operators import *
+from app.api.routers._monitor.outposts import *
+from app.api.routers._monitor.ops import *
+from app.api.routers._monitor.watchlist_hits import *
 
 router = APIRouter(
     prefix="/monitor",
@@ -41,41 +53,4 @@ router.include_router(_outposts.router)
 router.include_router(_ops.router)
 router.include_router(_watchlist_hits.router)
 
-_IMPLEMENTATIONS = (_common,
-    _stats,
-    _credentials,
-    _messages,
-    _findings,
-    _engagement,
-    _exports,
-    _broadcasts,
-    _topics,
-    _webhooks,
-    _targets,
-    _search,
-    _operators,
-    _outposts,
-    _ops,
-    _watchlist_hits)
-for _implementation in _IMPLEMENTATIONS:
-    for _name, _value in vars(_implementation).items():
-        if not _name.startswith("__"):
-            globals().setdefault(_name, _value)
-
-class _MonitorFacade(_ModuleType):
-    def __getattr__(self, name):
-        for implementation in _IMPLEMENTATIONS:
-            if name in vars(implementation):
-                return vars(implementation)[name]
-        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
-
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        for implementation in _IMPLEMENTATIONS:
-            if name in vars(implementation):
-                setattr(implementation, name, value)
-
-    def __dir__(self):
-        return sorted(set(super().__dir__()).union(*(vars(m) for m in _IMPLEMENTATIONS)))
-
-_sys.modules[__name__].__class__ = _MonitorFacade
+# Public endpoint functions remain importable from their implementation modules.

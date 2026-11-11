@@ -63,7 +63,7 @@ def test_findings_list_is_priority_first_and_raw_content_free(client):
     fake_db = MagicMock()
     fake_db.table.return_value = query
 
-    with patch("app.api.routers.monitor.db", fake_db):
+    with patch("app.api.routers._monitor.findings.db", fake_db):
         response = client.get("/monitor/findings?min_priority=8", headers=AUTH)
 
     assert response.status_code == 200
@@ -83,7 +83,10 @@ def test_finding_detail_contains_redacted_evidence(client):
         "finding_evidence": evidence_query,
     }[table]
 
-    with patch("app.api.routers.monitor.db", fake_db):
+    with (
+        patch("app.api.routers._monitor.findings.db", fake_db),
+        patch("app.api.routers._monitor.common.db", fake_db),
+    ):
         response = client.get(f"/monitor/findings/{FINDING_ID}", headers=AUTH)
 
     assert response.status_code == 200
@@ -99,7 +102,7 @@ def test_feedback_uses_service_rpc_and_pseudonymous_actor(client):
         data="50000000-0000-0000-0000-000000000001"
     )
 
-    with patch("app.api.routers.monitor.db", fake_db):
+    with patch("app.api.routers._monitor.findings.db", fake_db):
         response = client.post(
             f"/monitor/findings/{FINDING_ID}/feedback",
             headers=AUTH,
@@ -122,7 +125,7 @@ def test_feedback_uses_service_rpc_and_pseudonymous_actor(client):
 def test_missing_finding_returns_404(client):
     fake_db = MagicMock()
     fake_db.table.return_value = _query([])
-    with patch("app.api.routers.monitor.db", fake_db):
+    with patch("app.api.routers._monitor.findings.db", fake_db):
         response = client.get(f"/monitor/findings/{FINDING_ID}", headers=AUTH)
     assert response.status_code == 404
     assert response.json() == {"detail": "Finding not found"}

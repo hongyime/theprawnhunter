@@ -96,7 +96,7 @@ def test_target_feed_export_requires_monitor_key(client):
 def test_target_feed_export_sanitizes_and_dedupes(client):
     fake_db = _Db()
 
-    with patch("app.api.routers.monitor.db", fake_db):
+    with patch("app.api.routers._monitor.common.db", fake_db):
         response = client.get("/monitor/targets/export?limit=10", headers=AUTH)
 
     assert response.status_code == 200
@@ -145,7 +145,7 @@ def test_target_feed_export_sanitizes_and_dedupes(client):
 def test_target_feed_export_applies_limit_after_dedupe(client):
     fake_db = _Db()
 
-    with patch("app.api.routers.monitor.db", fake_db):
+    with patch("app.api.routers._monitor.common.db", fake_db):
         response = client.get("/monitor/targets/export?limit=1", headers=AUTH)
 
     assert response.status_code == 200

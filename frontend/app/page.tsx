@@ -140,6 +140,18 @@ export default function Home() {
     );
   }
 
+  if (session.user.app_metadata?.operator !== true) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-100">
+        <NeoCard className="p-8 text-center">
+          <h1 className="text-2xl font-bold text-slate-900">Access Pending Operator Approval</h1>
+          <p className="mt-2 text-slate-600">Your account is signed in but has not been approved for operator access.</p>
+          <button onClick={handleSignOut} className="mt-5 rounded-md bg-accent px-4 py-2 font-medium text-white">Sign Out</button>
+        </NeoCard>
+      </div>
+    );
+  }
+
   return (
     <main className="flex h-screen w-full flex-col overflow-hidden bg-paper">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 md:px-4">

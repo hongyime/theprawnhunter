@@ -630,6 +630,7 @@ async def test_revoked_topic_candidates_exclude_canary(monkeypatch):
             "topic_id": 45,
             "meta": {"topic_id": 45},
             "updated_at": None,
+            "pending_count": 0,
         }
     ]
 

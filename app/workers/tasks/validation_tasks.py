@@ -404,6 +404,10 @@ async def _validate_token_core(item: dict, source_name: str) -> int:
             merged_meta["confidence_score"] = confidence_score
             merged_meta["collection_yield_reasons"] = confidence_reasons
             merged_meta["confidence_reasons"] = confidence_reasons
+            merged_meta["monitorability"] = "monitorable"
+            merged_meta["last_recheck_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            merged_meta.pop("first_unmonitorable_at", None)
+            merged_meta.pop("unmonitorable_reason", None)
             update_data = {
                 "chat_id": chat_id,
                 "status": "active",
@@ -439,13 +443,18 @@ async def _validate_token_core(item: dict, source_name: str) -> int:
             "bot_id": str(bot_info.get("id")),
             "bot_username": bot_username,
             "source": source_name,
-            "status": "pending" if not chat_id else "active",
+            # A successful getMe proves token validity even if no chat is
+            # presently accessible; monitorability records that separate state.
+            "status": "active",
             "meta": {
                 **item.get("meta", {}),
                 "bot_username": bot_username,
                 "bot_id": bot_info.get("id"),
                 "chat_name": chat_name,
                 "chat_type": chat_type,
+                "monitorability": "monitorable" if chat_id else "unmonitorable",
+                "last_recheck_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                **({"first_unmonitorable_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "unmonitorable_reason": "no_accessible_chat"} if not chat_id else {}),
                 **({"webhook_url": webhook_url} if webhook_url else {}),
                 **(chat_enrichment or {}),
                 # Write both keys during rename transition (see migration 20260903000003).

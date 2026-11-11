@@ -16,23 +16,16 @@ router = APIRouter(
 async def trigger_scan(request: ScanRequest):
     """
     Manually trigger an OSINT scan task.
-    DISABLED in Production to prevent public abuse.
     Requires X-Monitor-Key header (enforced via router dependency).
-    Valid sources: shodan, fofa, github, gitlab, urlscan, sourcegraph, searchcode
+    Valid sources: shodan, fofa, github, urlscan, sourcegraph, searchcode
     """
-    if settings.ENV == "production":
-        raise HTTPException(
-            status_code=403,
-            detail="Manual triggering is disabled in production. Scheduled tasks only."
-        )
-
     task_name = f"scanner.scan_{request.source.lower()}"
 
     # Valid sources — censys and hybrid removed (no tasks exist for them)
-    if request.source.lower() not in ["shodan", "fofa", "github", "gitlab", "urlscan", "sourcegraph", "searchcode"]:
+    if request.source.lower() not in ["shodan", "fofa", "github", "urlscan", "sourcegraph", "searchcode"]:
         raise HTTPException(
             status_code=400,
-            detail="Unsupported source. Use 'shodan', 'fofa', 'github', 'gitlab', 'urlscan', 'sourcegraph', or 'searchcode'."
+            detail="Unsupported source. Use 'shodan', 'fofa', 'github', 'urlscan', 'sourcegraph', or 'searchcode'."
         )
 
     try:

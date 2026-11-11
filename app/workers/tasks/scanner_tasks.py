@@ -1,85 +1,59 @@
-"""Compatibility facade for provider-specific scanner Celery tasks."""
-from types import ModuleType as _ModuleType
-import sys as _sys
+"""Stable, explicit re-exports for provider-specific scanner Celery tasks."""
 
-from app.workers.tasks.scanners import common as _common
-from app.workers.tasks.scanners.providers import shodan as _provider_0
-from app.workers.tasks.scanners.providers import urlscan as _provider_1
-from app.workers.tasks.scanners.providers import github as _provider_2
-from app.workers.tasks.scanners.providers import fofa as _provider_3
-from app.workers.tasks.scanners.providers import gitlab as _provider_4
-from app.workers.tasks.scanners.providers import bitbucket as _provider_5
-from app.workers.tasks.scanners.providers import github_gist as _provider_6
-from app.workers.tasks.scanners.providers import grepapp as _provider_7
-from app.workers.tasks.scanners.providers import publicwww as _provider_8
-from app.workers.tasks.scanners.providers import pastebin as _provider_9
-from app.workers.tasks.scanners.providers import rentry as _provider_10
-from app.workers.tasks.scanners.providers import hastebin as _provider_11
-from app.workers.tasks.scanners.providers import exa as _provider_12
-from app.workers.tasks.scanners.providers import cold as _provider_13
-from app.workers.tasks.scanners.providers import google as _provider_14
-from app.workers.tasks.scanners.providers import netlas as _provider_15
-from app.workers.tasks.scanners.providers import wayback as _provider_16
-from app.workers.tasks.scanners.providers import telegram_search as _provider_17
-from app.workers.tasks.scanners.providers import commoncrawl as _provider_18
-from app.workers.tasks.scanners.providers import sourcegraph as _provider_19
-from app.workers.tasks.scanners.providers import replit as _provider_20
-from app.workers.tasks.scanners.providers import postman as _provider_21
-from app.workers.tasks.scanners.providers import dockerhub as _provider_22
-from app.workers.tasks.scanners.providers import searchcode as _provider_23
-from app.workers.tasks.scanners.providers import searxng as _provider_24
-from app.workers.tasks.scanners.providers import npm as _provider_25
-from app.workers.tasks.scanners.providers import pypi as _provider_26
-from app.workers.tasks.scanners.providers import ci_logs as _provider_27
+from app.workers.tasks.scanners.common import *
+from app.workers.tasks.scanners.providers.bitbucket import *
+from app.workers.tasks.scanners.providers.ci_logs import *
+from app.workers.tasks.scanners.providers.cold import *
+from app.workers.tasks.scanners.providers.commoncrawl import *
+from app.workers.tasks.scanners.providers.dockerhub import *
+from app.workers.tasks.scanners.providers.exa import *
+from app.workers.tasks.scanners.providers.fofa import *
+from app.workers.tasks.scanners.providers.github import *
+from app.workers.tasks.scanners.providers.github_gist import *
+from app.workers.tasks.scanners.providers.google import *
+from app.workers.tasks.scanners.providers.grepapp import *
+from app.workers.tasks.scanners.providers.hastebin import *
+from app.workers.tasks.scanners.providers.netlas import *
+from app.workers.tasks.scanners.providers.npm import *
+from app.workers.tasks.scanners.providers.postman import *
+from app.workers.tasks.scanners.providers.publicwww import *
+from app.workers.tasks.scanners.providers.pypi import *
+from app.workers.tasks.scanners.providers.rentry import *
+from app.workers.tasks.scanners.providers.replit import *
+from app.workers.tasks.scanners.providers.searchcode import *
+from app.workers.tasks.scanners.providers.searxng import *
+from app.workers.tasks.scanners.providers.shodan import *
+from app.workers.tasks.scanners.providers.sourcegraph import *
+from app.workers.tasks.scanners.providers.telegram_search import *
+from app.workers.tasks.scanners.providers.urlscan import *
+from app.workers.tasks.scanners.providers.wayback import *
 
-_IMPLEMENTATIONS = (_common,
-    _provider_0,
-    _provider_1,
-    _provider_2,
-    _provider_3,
-    _provider_4,
-    _provider_5,
-    _provider_6,
-    _provider_7,
-    _provider_8,
-    _provider_9,
-    _provider_10,
-    _provider_11,
-    _provider_12,
-    _provider_13,
-    _provider_14,
-    _provider_15,
-    _provider_16,
-    _provider_17,
-    _provider_18,
-    _provider_19,
-    _provider_20,
-    _provider_21,
-    _provider_22,
-    _provider_23,
-    _provider_24,
-    _provider_25,
-    _provider_26,
-    _provider_27)
-for _implementation in _IMPLEMENTATIONS:
-    for _name, _value in vars(_implementation).items():
-        if not _name.startswith("__"):
-            globals().setdefault(_name, _value)
-
-class _ScannerTaskFacade(_ModuleType):
-    def __getattr__(self, name):
-        for implementation in _IMPLEMENTATIONS:
-            if name in vars(implementation):
-                return vars(implementation)[name]
-        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
-
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        for implementation in _IMPLEMENTATIONS:
-            if name in vars(implementation):
-                setattr(implementation, name, value)
-
-    def __dir__(self):
-        return sorted(set(super().__dir__()).union(*(vars(m) for m in _IMPLEMENTATIONS)))
-
-_sys.modules[__name__].__class__ = _ScannerTaskFacade
+# Task coroutines are intentionally explicit: callers historically import these
+# helpers from this compatibility module, while monkeypatching belongs on their
+# owning provider modules.
+from app.workers.tasks.scanners.providers.bitbucket import _scan_bitbucket_async
+from app.workers.tasks.scanners.providers.ci_logs import _scan_ci_logs_async
+from app.workers.tasks.scanners.providers.cold import _retry_cold_async
+from app.workers.tasks.scanners.providers.commoncrawl import _scan_commoncrawl_async
+from app.workers.tasks.scanners.providers.dockerhub import _scan_dockerhub_async
+from app.workers.tasks.scanners.providers.exa import _scan_exa_async
+from app.workers.tasks.scanners.providers.fofa import _scan_fofa_async
+from app.workers.tasks.scanners.providers.github import _scan_github_async
+from app.workers.tasks.scanners.providers.github_gist import _scan_gist_async
+from app.workers.tasks.scanners.providers.google import _scan_google_async
+from app.workers.tasks.scanners.providers.grepapp import _scan_grepapp_async
+from app.workers.tasks.scanners.providers.hastebin import _scan_hastebin_async
+from app.workers.tasks.scanners.providers.netlas import _scan_netlas_async
+from app.workers.tasks.scanners.providers.npm import _scan_npm_async
+from app.workers.tasks.scanners.providers.postman import _scan_postman_async
+from app.workers.tasks.scanners.providers.publicwww import _scan_publicwww_async
+from app.workers.tasks.scanners.providers.pypi import _scan_pypi_async
+from app.workers.tasks.scanners.providers.rentry import _scan_rentry_async
+from app.workers.tasks.scanners.providers.replit import _scan_replit_async
+from app.workers.tasks.scanners.providers.searchcode import _scan_searchcode_async
+from app.workers.tasks.scanners.providers.searxng import _scan_searxng_async
+from app.workers.tasks.scanners.providers.shodan import _scan_shodan_async, _scan_shodan_c2_async
+from app.workers.tasks.scanners.providers.sourcegraph import _scan_sourcegraph_async
+from app.workers.tasks.scanners.providers.telegram_search import _scan_telegram_search_async
+from app.workers.tasks.scanners.providers.urlscan import _scan_urlscan_async
+from app.workers.tasks.scanners.providers.wayback import _scan_wayback_async

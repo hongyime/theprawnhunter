@@ -251,12 +251,10 @@ app.conf.update(
         "app.workers.tasks.scanners.providers.urlscan",
         "app.workers.tasks.scanners.providers.github",
         "app.workers.tasks.scanners.providers.fofa",
-        "app.workers.tasks.scanners.providers.gitlab",
         "app.workers.tasks.scanners.providers.bitbucket",
         "app.workers.tasks.scanners.providers.github_gist",
         "app.workers.tasks.scanners.providers.grepapp",
         "app.workers.tasks.scanners.providers.publicwww",
-        "app.workers.tasks.scanners.providers.pastebin",
         "app.workers.tasks.scanners.providers.rentry",
         "app.workers.tasks.scanners.providers.hastebin",
         "app.workers.tasks.scanners.providers.exa",
@@ -355,6 +353,15 @@ app.conf.update(
                 "limit": int(os.getenv("REVOKED_TOPIC_CLOSE_BATCH_SIZE", 25)),
                 "dry_run": False,
             },
+        },
+        "recheck-unmonitorable-credentials-daily": {
+            "task": "flow.recheck_unmonitorable_credentials",
+            "schedule": crontab(minute=25, hour=3),
+            "kwargs": {"limit": int(os.getenv("UNMONITORABLE_RECHECK_BATCH_SIZE", 20))},
+        },
+        "diagnose-anonymous-senders-daily": {
+            "task": "flow.diagnose_anonymous_senders",
+            "schedule": crontab(minute=40, hour=3),
         },
         "mute-monitor-topics-daily": {
             "task": "flow.mute_monitor_topics",
@@ -555,10 +562,6 @@ app.conf.update(
             "task": "scanner.scan_fofa",
             "schedule": crontab(minute=51, hour="*/4"),
         },
-        # scan-gitlab-6hours: DISABLED — gitlab.com free tier has global blob
-        # search disabled (returns "403 Forbidden - Global Search is disabled
-        # for this scope"). Re-enable only if upgrading to paid GitLab plan
-        # OR refactoring scanner to project-scoped search.
         "scan-grepapp-6hours": {
             "task": "scanner.scan_grepapp",
             "schedule": crontab(minute=27, hour="*/6"),
@@ -567,9 +570,6 @@ app.conf.update(
             "task": "scanner.scan_gist",
             "schedule": crontab(minute=43, hour="*/6"),
         },
-        # scan-pastebin-12hours: DISABLED — Pastebin scraping API requires
-        # paid IP whitelist ($30 + manual approval). Exa scanner already
-        # covers pastebin.com via includeDomains with full content extraction.
         "scan-exa-12hours": {
             "task": "scanner.scan_exa",
             "schedule": crontab(minute=31, hour="*/12"),

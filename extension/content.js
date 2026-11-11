@@ -7,7 +7,7 @@ function sendToBackground(msg) {
     });
 }
 
-// CDP automation hook: scripts/run_fofa_overnight.ps1 sends postMessage
+// CDP automation hook: scripts/ops/run_fofa_overnight.ps1 sends postMessage
 // from the page context. Content script bridges it to the background SW.
 window.addEventListener("message", (event) => {
     if (event.data && event.data.type === "TH_START_SCAN") {

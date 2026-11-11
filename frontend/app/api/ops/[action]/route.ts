@@ -18,6 +18,10 @@ const ACTION_METHODS = {
   status: "GET",
   pause: "POST",
   resume: "POST",
+  "retry-failed-broadcasts": "POST",
+  "circuit-breakers": "GET",
+  "reset-circuit-breaker": "POST",
+  scan: "POST",
 } as const;
 
 type OpsAction = keyof typeof ACTION_METHODS;
@@ -39,11 +43,15 @@ function errorResponse(
   return json({ error: reason, code }, status);
 }
 
-function upstreamUrl(apiBase: string, action: OpsAction): string {
-  return `${apiBase.replace(/\/+$/, "")}/monitor/ops/${action}`;
+function upstreamUrl(apiBase: string, action: OpsAction, body?: Record<string, string>): string {
+  const base = apiBase.replace(/\/+$/, "");
+  if (action === "circuit-breakers") return `${base}/health/circuit-breakers`;
+  if (action === "reset-circuit-breaker") return `${base}/health/circuit-breakers/${encodeURIComponent(body!.service)}/reset`;
+  if (action === "scan") return `${base}/scan/trigger`;
+  return `${base}/monitor/ops/${action}`;
 }
 
-async function proxy(action: OpsAction): Promise<Response> {
+async function proxy(action: OpsAction, body?: Record<string, string>): Promise<Response> {
   const apiBase = (process.env.API_BASE_URL || "").trim();
   const monitorKey = (process.env.MONITOR_API_KEY || "").trim();
 
@@ -53,12 +61,14 @@ async function proxy(action: OpsAction): Promise<Response> {
   }
 
   try {
-    const upstream = await fetch(upstreamUrl(apiBase, action), {
+    const upstream = await fetch(upstreamUrl(apiBase, action, body), {
       method: ACTION_METHODS[action],
       headers: {
         Accept: "application/json",
         "X-Monitor-Key": monitorKey,
+        ...(body ? { "Content-Type": "application/json" } : {}),
       },
+      ...(body ? { body: JSON.stringify(body) } : {}),
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
     });
@@ -115,10 +125,10 @@ export async function GET(
   const denied = await requireOperator(request);
   if (denied) return denied;
   const action = await resolveAction(context);
-  if (action === "status") {
-    return proxy("status");
+  if (action === "status" || action === "circuit-breakers") {
+    return proxy(action);
   }
-  if (action === "pause" || action === "resume") {
+  if (action === "pause" || action === "resume" || action === "retry-failed-broadcasts" || action === "reset-circuit-breaker" || action === "scan") {
     return errorResponse("method not allowed", 405, "method_not_allowed");
   }
   return errorResponse("unknown ops action", 404, "unknown_action");
@@ -132,10 +142,24 @@ export async function POST(
   const denied = await requireOperator(request);
   if (denied) return denied;
   const action = await resolveAction(context);
-  if (action === "pause" || action === "resume") {
+  if (action === "pause" || action === "resume" || action === "retry-failed-broadcasts") {
     return proxy(action);
   }
-  if (action === "status") {
+  if (action === "reset-circuit-breaker" || action === "scan") {
+    let body: unknown;
+    try { body = await request.json(); } catch { return errorResponse("invalid request body", 400, "invalid_body"); }
+    if (!body || typeof body !== "object") return errorResponse("invalid request body", 400, "invalid_body");
+    if (action === "reset-circuit-breaker") {
+      const service = (body as { service?: unknown }).service;
+      if (typeof service !== "string" || !/^[a-z0-9_-]+$/i.test(service)) return errorResponse("invalid service", 400, "invalid_body");
+      return proxy(action, { service });
+    }
+    const { source, query } = body as { source?: unknown; query?: unknown };
+    const sources = ["shodan", "fofa", "github", "urlscan", "sourcegraph", "searchcode"];
+    if (typeof source !== "string" || !sources.includes(source) || typeof query !== "string" || !query.trim()) return errorResponse("invalid scan request", 400, "invalid_body");
+    return proxy(action, { source, query: query.trim() });
+  }
+  if (action === "status" || action === "circuit-breakers") {
     return errorResponse("method not allowed", 405, "method_not_allowed");
   }
   return errorResponse("unknown ops action", 404, "unknown_action");

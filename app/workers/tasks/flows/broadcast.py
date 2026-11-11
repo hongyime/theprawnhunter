@@ -268,24 +268,12 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
     if os.getenv("BROADCAST_STRICT_PER_TOPIC_ORDER", "1") == "1":
         try:
             response = await async_execute(
-                db.rpc("oldest_pending_per_credential", {"p_limit": max(1, batch_size)})
+                db.rpc(
+                    "pending_broadcast_fifo",
+                    {"p_limit": max(1, min(batch_size, 200)), "p_per_topic": 20},
+                )
             )
             oldest_rows = response.data or []
-            # A row in retry backoff still owns its topic: hold the topic
-            # rather than letting a newer message overtake it.
-            if oldest_rows:
-                now_dt = datetime.now(UTC)
-                ready_rows = []
-                for row in oldest_rows:
-                    retry_at = row.get("next_retry_at")
-                    if retry_at:
-                        try:
-                            if datetime.fromisoformat(str(retry_at).replace("Z", "+00:00")) > now_dt:
-                                continue
-                        except ValueError:
-                            pass
-                    ready_rows.append(row)
-                oldest_rows = ready_rows
             if oldest_rows:
                 ids = [row["id"] for row in oldest_rows]
                 hydrated = await async_execute(
@@ -294,7 +282,14 @@ async def _fetch_pending_broadcast_messages(batch_size: int, now_iso: str) -> li
                     .in_("id", ids)
                 )
                 by_id = {row["id"]: row for row in (hydrated.data or [])}
-                return [by_id[row_id] for row_id in ids if row_id in by_id]
+                messages = []
+                for selected in oldest_rows:
+                    message = by_id.get(selected["id"])
+                    if message:
+                        message["_delivery_topic_id"] = selected["destination_topic_id"]
+                        message["_delivery_topic_closed"] = bool(selected.get("destination_topic_closed"))
+                        messages.append(message)
+                return messages
         except Exception as exc:  # noqa: BLE001 - fall back to the legacy sweep
             logger.warning(
                 f"[Broadcast] per-topic batch query unavailable, using legacy sweep: {exc}"
@@ -663,6 +658,7 @@ def broadcast_pending():
     # Check Pause State
     if redis_client.get("broadcast:paused"):
         logger.warning("[Broadcast] Delivery paused via broadcast:paused; messages stay queued.")
+        lock.release()
         return {"status": "paused", "reason": "broadcast:paused"}
     if redis_client.get("system:paused"):
         lock.release()
@@ -715,7 +711,7 @@ async def _broadcast_logic():
     # in the rotation pool to sustain the higher send rate without flood-wait.
     # Telegram allows ~20 sends/min per identity; claiming far more than that
     # per cycle only produces claim updates that are immediately released.
-    BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 60))  # noqa: N806 — function-scoped constant
+    BROADCAST_BATCH_SIZE = int(os.getenv("BROADCAST_BATCH_SIZE", 200))  # noqa: N806 — function-scoped constant
 
     restricted = _restricted_sender_count()
     skip_at = int(os.getenv("BROADCAST_RESTRICTED_SKIP_AT", 900))
@@ -808,24 +804,39 @@ async def _broadcast_logic():
     }
     _run_started = time.time()
     logger.info(
-        f"[Broadcast] starting run: batch={len(messages)}, groups={len({m['credential_id'] for m in messages})}, "
+        f"[Broadcast] starting run: batch={len(messages)}, groups={len({m.get('_delivery_topic_id') for m in messages})}, "
         f"delay={_adaptive_state['delay']:.2f}s (base={_base_delay:.2f}s), max_parallel={_max_parallel}"
     )
 
     from collections import defaultdict
     _grouped: dict[str, list[dict]] = defaultdict(list)
     for _m in messages:
-        _grouped[_m["credential_id"]].append(_m)
+        _grouped[str(_m.get("_delivery_topic_id") or _m["credential_id"])].append(_m)
 
-    async def _process_topic_group(cred_id: str, group_msgs: list[dict]) -> tuple[int, int]:
-        """Process all pending messages for a single cred_id sequentially.
+    async def _process_topic_group(topic_stream_id: str, group_msgs: list[dict]) -> tuple[int, int]:
+        """Process all pending messages for a forum topic sequentially.
         Returns (sent, skipped) counters for this group.
         """
         local_sent = 0
         local_skipped = 0
+        first_meta = (group_msgs[0].get("discovered_credentials") or {}).get("meta") or {}
+        was_closed = bool(first_meta.get("topic_closed_at") or group_msgs[0].get("_delivery_topic_closed"))
 
         async with _topic_semaphore:
+            if was_closed:
+                topic_id = first_meta.get("topic_id")
+                if not await broadcaster.reopen_topic(group_id, topic_id):
+                    logger.error("[Broadcast] unable to reopen closed topic %s; leaving its queue untouched", topic_id)
+                    return 0, len(group_msgs)
+                reopened_meta = dict(first_meta)
+                reopened_meta.pop("topic_closed_at", None)
+                reopened_meta.pop("topic_closed_reason", None)
+                reopened_meta["topic_status"] = "open"
+                await async_execute(
+                    db.table("discovered_credentials").update({"meta": reopened_meta}).eq("id", group_msgs[0]["credential_id"])
+                )
             for msg in group_msgs:
+                cred_id = msg["credential_id"]
                 msg_id = msg["id"]
 
                 try:
@@ -858,7 +869,7 @@ async def _broadcast_logic():
                         if not reclaim_result.data:
                             # Could not claim — either done or freshly claimed by another worker
                             local_skipped += 1
-                            continue
+                            break
 
                         logger.warning(f"    🔄 Stale claim reclaimed for {msg_id}")
 
@@ -923,7 +934,7 @@ async def _broadcast_logic():
                         topic_name = f"Cred-{cred_id[:8]}"
 
                     # 2. Check Cache/DB for ID
-                    thread_id = cached_topic_ids.get(cred_id) or meta.get("topic_id")
+                    thread_id = cached_topic_ids.get(topic_stream_id) or meta.get("topic_id")
 
                     if not thread_id:
                         # Determines if we need to fetch token for legacy fallback
@@ -967,7 +978,7 @@ async def _broadcast_logic():
                         logger.info(f"    📝 [Broadcast] Saved topic_id {thread_id} for {cred_id}")
 
                     # Update local cache
-                    cached_topic_ids[cred_id] = thread_id
+                    cached_topic_ids[topic_stream_id] = thread_id
 
                     # INTR-001: idempotent broadcast — if a prior run already sent this
                     # message (Telegram message-id persisted), skip the send call and
@@ -1000,7 +1011,7 @@ async def _broadcast_logic():
                             ):
                                 logger.warning(f"    ⏱️ Broadcast claim expired before send for {msg_id}")
                                 local_skipped += 1
-                                continue
+                                break
                             sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
                             if sent_message_id and isinstance(msg.get("telegram_msg_id"), int) and msg["telegram_msg_id"] < 0:
                                 try:
@@ -1029,7 +1040,7 @@ async def _broadcast_logic():
                                     meta = dict((fresh2.data or {}).get("meta") or {})
                                     meta["topic_id"] = thread_id
                                     await async_execute(db.table("discovered_credentials").update({"meta": meta}).eq("id", cred_id))
-                                    cached_topic_ids[cred_id] = thread_id
+                                    cached_topic_ids[topic_stream_id] = thread_id
                                     # Retry Send
                                     if not await _is_broadcast_claim_valid(
                                         msg_id,
@@ -1038,7 +1049,7 @@ async def _broadcast_logic():
                                     ):
                                         logger.warning(f"    ⏱️ Broadcast claim expired before retry for {msg_id}")
                                         local_skipped += 1
-                                        continue
+                                        break
                                     sent_message_id = await broadcaster.send_message(group_id, thread_id, msg)
                                     if sent_message_id and isinstance(msg.get("telegram_msg_id"), int) and msg["telegram_msg_id"] < 0:
                                         try:
@@ -1086,6 +1097,9 @@ async def _broadcast_logic():
                         logger.info(f"    ✅ Broadcasted msg {msg_id}")
                     else:
                         logger.warning(f"    🔄 Broadcast failure recorded for retry: {msg_id}")
+                        # A failed head row owns this topic until its retry time;
+                        # never let a sibling credential's newer row overtake it.
+                        break
 
                     # PERF-002: adaptive delay bookkeeping.
                     # Only real send attempts (whether they succeeded or failed) can
@@ -1132,13 +1146,32 @@ async def _broadcast_logic():
                         )
                     except Exception as e_claim:
                         logger.error(f"Failed to clear broadcast claim for msg {msg_id}: {e_claim} — message may be stuck until stale-claim TTL expires")
-                    continue
+                    break
 
+            if was_closed:
+                topic_id = first_meta.get("topic_id")
+                pending_response = await async_execute(
+                    db.rpc("topic_pending_count", {"p_topic_id": int(topic_id)})
+                )
+                pending_count = pending_response.data or 0
+                if isinstance(pending_count, list):
+                    pending_count = pending_count[0] if pending_count else 0
+                if int(pending_count) == 0 and await broadcaster.close_topic(group_id, topic_id):
+                    fresh = await async_execute(
+                        db.table("discovered_credentials").select("meta").eq("id", group_msgs[0]["credential_id"]).single()
+                    )
+                    closed_meta = dict((fresh.data or {}).get("meta") or {})
+                    closed_meta["topic_closed_at"] = datetime.now(UTC).isoformat()
+                    closed_meta["topic_closed_reason"] = first_meta.get("topic_closed_reason", "previously_closed")
+                    closed_meta["topic_status"] = "closed"
+                    await async_execute(
+                        db.table("discovered_credentials").update({"meta": closed_meta}).eq("id", group_msgs[0]["credential_id"])
+                    )
         return local_sent, local_skipped
 
     # Fan out per-cred_id groups in parallel.
     _group_results = await asyncio.gather(
-        *[_process_topic_group(cid, grp) for cid, grp in _grouped.items()],
+        *[_process_topic_group(topic_id, grp) for topic_id, grp in _grouped.items()],
         return_exceptions=True,
     )
     for _r in _group_results:
@@ -1156,6 +1189,8 @@ async def _broadcast_logic():
     _elapsed_s = max(time.time() - _run_started, 1e-6)
     _throughput_per_min = (sent_count * 60.0) / _elapsed_s if sent_count > 0 else 0.0
     try:
+        redis_client.setex("metrics:broadcast:selected_last_run", 3600, str(len(messages)))
+        redis_client.setex("metrics:broadcast:delivered_last_run", 3600, str(sent_count))
         redis_client.setex(
             "metrics:broadcast:throughput_per_min",
             3600,
@@ -1182,6 +1217,20 @@ def retry_failed_broadcasts(limit: int = 50):
     from app.workers.celery_app import get_worker_loop
 
     return get_worker_loop().run_until_complete(_retry_failed_broadcasts_logic(limit))
+
+
+@app.task(name="flow.diagnose_anonymous_senders")
+def diagnose_anonymous_senders() -> dict[str, int]:
+    """Probe configured sessions using Telegram's actual anonymous/post rights."""
+    from app.workers.celery_app import get_worker_loop
+
+    async def _probe() -> dict[str, int]:
+        from app.services.user_agent_srv import user_agent
+
+        eligible = await user_agent.eligible_anonymous_senders(settings.MONITOR_GROUP_ID)
+        return {"eligible_anonymous_senders": len(eligible)}
+
+    return get_worker_loop().run_until_complete(_probe())
 
 async def _retry_failed_broadcasts_logic(limit: int = 50) -> dict:
     limit = max(1, min(int(limit or 50), 500))

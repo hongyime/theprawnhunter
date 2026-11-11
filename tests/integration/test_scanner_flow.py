@@ -26,10 +26,9 @@ class TestScannerWorkflow:
             return len(entries)
 
         monkeypatch.setattr("app.services.validation_queue_srv.enqueue", fake_enqueue)
-        monkeypatch.setattr(scanner_tasks, "_is_own_bot_token", lambda _token: False)
+        monkeypatch.setattr("app.workers.tasks.scanners.common._is_own_bot_token", lambda _token: False)
         monkeypatch.setattr(
-            scanner_tasks,
-            "redis_client",
+            "app.workers.tasks.scanners.common.redis_client",
             SimpleNamespace(set=lambda *_args, **_kwargs: True),
         )
 
@@ -40,7 +39,7 @@ class TestScannerWorkflow:
         assert staged == [{"token": token, "source": "test_source", "meta": {"source": "test"}}]
 
     @patch("app.services.validation_queue_srv.enqueue", new_callable=AsyncMock)
-    @patch("app.workers.tasks.scanner_tasks.db")
+    @patch("app.workers.tasks.scanners.common.db")
     @patch("requests.get")
     def test_skip_invalid_token(self, mock_requests, mock_db, mock_enqueue):
         """_save_credentials stages tokens in validation_queue; format checks happen later.
@@ -55,7 +54,7 @@ class TestScannerWorkflow:
         mock_enqueue.assert_not_awaited()
 
     @patch("app.services.validation_queue_srv.enqueue", new_callable=AsyncMock)
-    @patch("app.workers.tasks.scanner_tasks.db")
+    @patch("app.workers.tasks.scanners.common.db")
     @patch("requests.get")
     def test_skip_duplicate_token(self, mock_requests, mock_db, mock_enqueue):
         """Tokens already in Redis soft-dedup key are skipped (not re-enqueued).
@@ -72,7 +71,7 @@ class TestScannerWorkflow:
         mock_redis.set.return_value = None   # nx=True returns None when key already exists
         mock_redis.get.return_value = b"1"
 
-        with _patch("app.workers.tasks.scanner_tasks.redis_client", mock_redis):
+        with _patch("app.workers.tasks.scanners.common.redis_client", mock_redis):
             results = [{"token": token, "meta": {}}]
             saved = _save_credentials(results, "test_source")
 

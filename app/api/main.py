@@ -109,7 +109,12 @@ from slowapi import (  # noqa: E402 — intentional deferred import
     _rate_limit_exceeded_handler,
 )
 from slowapi.errors import RateLimitExceeded  # noqa: E402 — intentional deferred import
-from slowapi.middleware import SlowAPIMiddleware  # noqa: E402 — intentional deferred import
+from slowapi.middleware import (  # noqa: E402 — intentional deferred import
+    SlowAPIMiddleware,
+    _find_route_handler,
+    _should_exempt,
+    sync_check_limits,
+)
 from slowapi.util import get_remote_address  # noqa: E402 — intentional deferred import
 
 
@@ -135,31 +140,35 @@ limiter = Limiter(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-# slowapi 0.1.9/0.1.10 bug: when Redis is unreachable, _check_limits catches the
-# ConnectionError and looks up `app.exception_handlers.get(ConnectionError, _rate_limit_exceeded_handler)`.
-# Without a ConnectionError handler, it falls back to _rate_limit_exceeded_handler which
-# calls `exc.detail` — a RateLimitExceeded-only attribute. Register a safe fallback so
-# Redis connection failures degrade gracefully instead of crashing the middleware.
-def _redis_error_handler(request, exc):  # noqa: ARG001
-    # Only swallow ConnectionErrors raised from within slowapi's limit check
-    # (the known 0.1.9/0.1.10 Redis-disconnect bug). Any other ConnectionError
-    # (Supabase, Telegram, internal networking) must surface as a real 500 so
-    # callers don't see a blank 200 OK on a genuine failure.
-    import traceback
 
-    from starlette.responses import Response
 
-    tb = exc.__traceback__
-    raised_in_slowapi = any(
-        "slowapi" in (frame.filename or "")
-        for frame, _ in traceback.walk_tb(tb)
-    )
-    if raised_in_slowapi:
-        return Response(status_code=200)  # allow request through on Redis miss
-    # Not a rate-limiter failure — re-raise for the default 500 handling.
-    raise exc
-app.add_exception_handler(ConnectionError, _redis_error_handler)
-app.add_middleware(SlowAPIMiddleware)
+class RedisTolerantSlowAPIMiddleware(SlowAPIMiddleware):
+    """Fail open only when SlowAPI cannot reach its Redis counter store."""
+
+    async def dispatch(self, request, call_next):
+        app = request.app
+        limiter = app.state.limiter
+        if not limiter.enabled:
+            return await call_next(request)
+        handler = _find_route_handler(app.routes, request.scope)
+        if _should_exempt(limiter, handler):
+            return await call_next(request)
+        try:
+            error_response, should_inject_headers = sync_check_limits(
+                limiter, request, handler, app
+            )
+        except ConnectionError:
+            logger.warning("rate limit Redis unavailable; serving request without a limit")
+            return await call_next(request)
+        if error_response is not None:
+            return error_response
+        response = await call_next(request)
+        if should_inject_headers:
+            response = limiter._inject_headers(response, request.state.view_rate_limit)
+        return response
+
+
+app.add_middleware(RedisTolerantSlowAPIMiddleware)
 # ─────────────────────────────────────────────────────────────────────
 
 # Allow browser-based clients (including the Chrome extension) to call the API.

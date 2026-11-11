@@ -23,7 +23,6 @@ from app.services.scanners import (
     ExaService,
     FofaService,
     GithubService,
-    GitlabService,
     ShodanService,
     SourcegraphService,
     UrlScanService,
@@ -36,7 +35,6 @@ from app.services.scanners_extension import (
     GoogleSearchService,
     GrepAppService,
     NetlasService,
-    PastebinService,
     PostmanService,
     PublicWwwService,
     ReplitService,
@@ -61,15 +59,11 @@ urlscan = UrlScanService()
 
 fofa = FofaService()
 
-gitlab_srv = GitlabService()
-
 bitbucket_srv = BitbucketService()
 
 gist_srv = GithubGistService()
 
 grepapp_srv = GrepAppService()
-
-pastebin_srv = PastebinService()
 
 exa_srv = ExaService()
 
@@ -243,4 +237,4 @@ from app.workers.tasks._scanner.queries import (  # noqa: F401, E402
     _shodan_body_query,
 )
 
-__all__ = ['BitbucketService', 'CommonCrawlService', 'ExaService', 'FOFA_DEFAULT_QUERIES', 'FofaService', 'GithubGistService', 'GithubService', 'GitlabService', 'GoogleSearchService', 'GrepAppService', 'MAX_ERRORS_BUFFER', 'NETLAS_QUERIES', 'NetlasService', 'PastebinService', 'PostmanService', 'PublicWwwService', 'ReplitService', 'SHODAN_DEFAULT_QUERIES', 'SearchcodeService', 'ShodanService', 'SourcegraphService', 'UTC', 'UrlScanService', 'WaybackService', '_calculate_hash', '_cb', '_is_own_bot_token', '_run_scanner', '_run_sync', '_save_credentials', '_save_credentials_async', '_send_log_async', '_shodan_body_query', '_token_already_validated', 'app', 'asyncio', 'bitbucket_srv', 'commoncrawl_srv', 'contextlib', 'db', 'exa_srv', 'fofa', 'gist_srv', 'github', 'gitlab_srv', 'google_srv', 'grepapp_srv', 'hashlib', 'logger', 'logging', 'netlas_srv', 'os', 'pastebin_srv', 'postman_srv', 'publicwww_srv', 'random', 're', 'redis_client', 'replit_srv', 'searchcode_srv', 'settings', 'shodan', 'sourcegraph_srv', 'time', 'urlscan', 'wayback_srv']
+__all__ = ['BitbucketService', 'CommonCrawlService', 'ExaService', 'FOFA_DEFAULT_QUERIES', 'FofaService', 'GithubGistService', 'GithubService', 'GoogleSearchService', 'GrepAppService', 'MAX_ERRORS_BUFFER', 'NETLAS_QUERIES', 'NetlasService', 'PostmanService', 'PublicWwwService', 'ReplitService', 'SHODAN_DEFAULT_QUERIES', 'SearchcodeService', 'ShodanService', 'SourcegraphService', 'UTC', 'UrlScanService', 'WaybackService', '_calculate_hash', '_cb', '_is_own_bot_token', '_run_scanner', '_run_sync', '_save_credentials', '_save_credentials_async', '_send_log_async', '_shodan_body_query', '_token_already_validated', 'app', 'asyncio', 'bitbucket_srv', 'commoncrawl_srv', 'contextlib', 'db', 'exa_srv', 'fofa', 'gist_srv', 'github', 'google_srv', 'grepapp_srv', 'hashlib', 'logger', 'logging', 'netlas_srv', 'os', 'postman_srv', 'publicwww_srv', 'random', 're', 'redis_client', 'replit_srv', 'searchcode_srv', 'settings', 'shodan', 'sourcegraph_srv', 'time', 'urlscan', 'wayback_srv']

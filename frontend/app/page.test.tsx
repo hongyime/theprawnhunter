@@ -186,7 +186,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
   });
 
   it('shows dashboard when authenticated', async () => {
-    const mockSession = { user: { email: 'test@example.com' } };
+    const mockSession = { user: { email: 'test@example.com', app_metadata: { operator: true } } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
@@ -211,7 +211,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
   });
 
   it('clicks select button and shows selected credential id', async () => {
-    const mockSession = { user: { email: 'test@example.com' } };
+    const mockSession = { user: { email: 'test@example.com', app_metadata: { operator: true } } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
@@ -237,7 +237,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
     });
   });
 
-  it('clicks view-change button and renders bot telemetry', async () => {    const mockSession = { user: { email: 'test@example.com' } };
+  it('clicks view-change button and renders bot telemetry', async () => {    const mockSession = { user: { email: 'test@example.com', app_metadata: { operator: true } } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
@@ -264,7 +264,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
   });
 
   it('renders the watchlist hits view without the targets panel', async () => {
-    const mockSession = { user: { email: 'test@example.com' } };
+    const mockSession = { user: { email: 'test@example.com', app_metadata: { operator: true } } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
@@ -292,7 +292,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
   });
 
   it('renders the ops panel without the targets panel', async () => {
-    const mockSession = { user: { email: 'test@example.com' } };
+    const mockSession = { user: { email: 'test@example.com', app_metadata: { operator: true } } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
@@ -320,7 +320,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
   });
 
   it('sign-out button calls signOut', async () => {
-    const mockSession = { user: { email: 'test@example.com' } };
+    const mockSession = { user: { email: 'test@example.com', app_metadata: { operator: true } } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
@@ -370,7 +370,7 @@ describe('Dashboard Gate (Production page.tsx)', () => {
   });
 
   it('shows all view tabs when authenticated', async () => {
-    const mockSession = { user: { email: 'test@example.com' } };
+    const mockSession = { user: { email: 'test@example.com', app_metadata: { operator: true } } };
     mockGetSession.mockResolvedValue({
       data: { session: mockSession },
       error: null
