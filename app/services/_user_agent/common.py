@@ -1,29 +1,18 @@
 import asyncio
-
 import contextlib
-
 import logging
-
 import os
-
 import time
-
 import uuid
-
 from dataclasses import dataclass
-
 from datetime import UTC, datetime, timedelta
 
 from telethon import TelegramClient, errors, types
-
 from telethon.errors import SecurityError
 
 from app.core.config import settings
-
 from app.domain.media import telethon_media_info
-
 from app.infrastructure.database import execute_async as _execute_async_shared
-
 from app.services._scraper.lifecycle import TelegramClientLifecycle
 
 logger = logging.getLogger("user_agent")
@@ -119,8 +108,8 @@ def _is_session_file_healthy(path: str) -> bool:
     the worker process. This check opens the file as SQLite and reads the sessions
     table, which is enough to confirm the file is not corrupt.
 
-    On failure, renames the file to .session.corrupt.{timestamp} so it won't
-    be picked up on subsequent scans, and logs a warning.
+    A transient SQLite failure (for example a concurrent writer holding a
+    lock) is not corruption and must never remove the source session.
     """
     import sqlite3
     import time as _time
@@ -129,24 +118,39 @@ def _is_session_file_healthy(path: str) -> bool:
         return False
 
     try:
-        conn = sqlite3.connect(path, timeout=5)
-        cursor = conn.cursor()
-        # Telethon writes a 'sessions' table; reading it verifies file integrity
-        cursor.execute("SELECT dc_id FROM sessions LIMIT 1")
-        conn.close()
+        with sqlite3.connect(path, timeout=5) as conn:
+            if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("SQLite integrity check failed")
+            # Telethon writes a 'sessions' table; reading it verifies the expected schema.
+            conn.execute("SELECT dc_id FROM sessions LIMIT 1")
         return True
-    except Exception as e:
-        # Corrupt / truncated / not a Telethon session file
+    except sqlite3.OperationalError as e:
         logger.warning(
-            f"    [UserAgent] Session file appears corrupt: {path} ({e}) -- "
-            f"renaming to .corrupt and skipping."
+            "    [UserAgent] Session health probe deferred for %s (%s); keeping source session.",
+            path,
+            e,
+        )
+        return False
+    except sqlite3.DatabaseError as e:
+        logger.warning(
+            "    [UserAgent] Session file failed SQLite integrity validation: %s (%s); "
+            "quarantining.",
+            path,
+            e,
         )
         try:
             corrupt_path = f"{path}.corrupt.{int(_time.time())}"
             os.rename(path, corrupt_path)
-            logger.warning(f"    [UserAgent] Moved corrupt session to: {corrupt_path}")
+            logger.warning("    [UserAgent] Moved invalid session to: %s", corrupt_path)
         except Exception as e_rename:
-            logger.error(f"    [UserAgent] Could not rename corrupt session {path}: {e_rename}")
+            logger.error("    [UserAgent] Could not quarantine session %s: %s", path, e_rename)
+        return False
+    except OSError as e:
+        logger.warning(
+            "    [UserAgent] Session health probe failed for %s (%s); keeping source session.",
+            path,
+            e,
+        )
         return False
 
 __all__ = ['ARCHIVE_TMP_DIR', 'ARCHIVE_TMP_PREFIX', 'ArchiveMediaResult', 'BASE_DIR', 'SESSIONS_DIR', 'SESSION_FILE', 'SESSION_NAME', 'SecurityError', 'TelegramClient', 'TelegramClientLifecycle', 'USER_AGENT_SOURCE_FILE', 'UTC', '_MTPROTO_CONFLICT_BACKOFF', '_MTPROTO_MAX_RETRIES', '_async_execute', '_credential_lookup_filter_for_source', '_execute_async_shared', '_is_session_file_healthy', '_is_terminal_invite_error', '_telethon_media_info', '_username_from_meta', 'asyncio', 'contextlib', 'dataclass', 'datetime', 'errors', 'logger', 'logging', 'os', 'settings', 'telethon_media_info', 'time', 'timedelta', 'types', 'uuid']
