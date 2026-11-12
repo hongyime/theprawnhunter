@@ -882,11 +882,19 @@ class UserAgentGroupArchive:
                 except Exception:  # noqa: BLE001
                     pass
 
+    @staticmethod
+    def _can_send_anonymously(entity, rights) -> bool:
+        """Apply Telegram's distinct forum and broadcast-channel admin rights."""
+        if not getattr(rights, "anonymous", False):
+            return False
+        return not getattr(entity, "broadcast", False) or getattr(rights, "post_messages", False)
+
     async def eligible_anonymous_senders(self, group_id: int | str) -> list[str]:
         """Return session paths whose account may post anonymously in the group.
 
-        Requires both ``anonymous`` and ``post_messages`` admin rights; the
-        flags are read from Telegram and cannot be set through the API.
+        Forums require anonymous admin status. Broadcast channels additionally
+        require ``post_messages``. The flags are read from Telegram and cannot
+        be set through the API.
         Cached for five minutes so added/removed accounts take effect quickly.
         """
         from app.core.redis_srv import redis_srv
@@ -923,7 +931,7 @@ class UserAgentGroupArchive:
                     await client(GetParticipantRequest(channel=entity, participant=me.id))
                 ).participant
                 rights = getattr(part, "admin_rights", None)
-                if getattr(rights, "anonymous", False) and getattr(rights, "post_messages", False):
+                if self._can_send_anonymously(entity, rights):
                     eligible.append(path)
             except Exception as error:  # noqa: BLE001
                 logger.debug(f"[UserAgent] sender probe skipped {path}: {type(error).__name__}")
