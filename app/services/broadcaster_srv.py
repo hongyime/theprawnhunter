@@ -1028,8 +1028,8 @@ class BroadcasterService:
         try:
             from app.core.redis_srv import redis_srv
 
-            index = int(redis_srv.get("broadcast:sender_rotation") or 0) % len(senders)
-            redis_srv.setex("broadcast:sender_rotation", 86400, str((index + 1) % len(senders)))
+            index = int(redis_srv.client.get("broadcast:sender_rotation") or 0) % len(senders)
+            redis_srv.client.setex("broadcast:sender_rotation", 86400, str((index + 1) % len(senders)))
         except Exception:  # noqa: BLE001
             index = 0
         return senders[index]
@@ -1068,7 +1068,7 @@ class BroadcasterService:
             try:
                 from app.core.redis_srv import redis_srv
 
-                raw = redis_srv.get("user_agent:anon_sender_index")
+                raw = redis_srv.client.get("user_agent:anon_sender_index")
                 index = int(raw or 0) % len(senders)
             except Exception:  # noqa: BLE001
                 index = 0
@@ -1081,7 +1081,7 @@ class BroadcasterService:
                     try:
                         from app.core.redis_srv import redis_srv
 
-                        redis_srv.setex(
+                        redis_srv.client.setex(
                             "user_agent:anon_sender_index",
                             86400,
                             str((index + offset + 1) % len(senders)),
