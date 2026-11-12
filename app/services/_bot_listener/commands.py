@@ -251,7 +251,7 @@ async def _resolve_attachment_source_chat_id(row: dict[str, Any]) -> int | str |
 
 def _format_archive_result_message(result) -> str:
     if result.ok:
-        return "✅ Attachment retrieval complete."
+        return "Attachment retrieved."
     if result.code == "too_large":
         return f"Attachment skipped: {result.detail}"
     if result.code == "timeout":

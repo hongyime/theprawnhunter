@@ -67,7 +67,7 @@ async def test_attempt_at_limit_is_allowed(monkeypatch, sent_replies):
     result = await bot_listener_login.starthunter(update, context)
 
     assert result == bot_listener_login.WAIT_PHONE
-    assert "Reply with your phone number" in sent_replies[-1]
+    assert "Send your phone number" in sent_replies[-1]
     assert context.user_data["bot_messages"] == [7, 101]
 
 
@@ -83,7 +83,7 @@ async def test_zero_limit_disables_gate_and_never_raises(monkeypatch, sent_repli
     result = await bot_listener_login.starthunter(update, context)
 
     assert result == bot_listener_login.WAIT_PHONE
-    assert "Reply with your phone number" in sent_replies[-1]
+    assert "Send your phone number" in sent_replies[-1]
 
 
 @pytest.mark.asyncio

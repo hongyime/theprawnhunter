@@ -70,7 +70,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 1. Check Redis
-    redis_status = "✅ Online"
+    redis_status = "Online"
     if redis_client:
         try:
             await redis_client.ping()
@@ -102,7 +102,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     locked_count = len(_locked_bots)
 
     msg = (
-        f"📊 **System Status**\n\n"
+        "**System status**\n\n"
         f"**State**: {system_status}\n"
         f"**Redis**: {redis_status}\n"
         f"**Pending Broadcasts**: `{queue_count}`\n"

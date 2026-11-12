@@ -56,7 +56,7 @@ async def starthunter(
             _subject_label(update.effective_user.id),
         )
         await _reply_and_delete(update,
-            "🔒 This bot is not accepting new logins right now.",
+            "New logins are unavailable right now.",
         )
         return ConversationHandler.END
 
@@ -92,9 +92,9 @@ async def starthunter(
             logger.debug(f"[starthunter] rate-limit check skipped: {rl_exc}")
 
     msg = (
-        "Reply with your phone number (+countrycode).\n"
-        "Otherwise reply /cancel.\n\n"
-        "Accepted formats: +1234567890 | +1 234 567 890 | +1-234-567-890"
+        "Send your phone number with country code.\n"
+        "Use /cancel to stop.\n\n"
+        "Example: +1234567890"
     )
     sent_msg = await _reply_and_delete(update, msg, parse_mode=ParseMode.MARKDOWN)
 
@@ -136,10 +136,9 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         context.user_data['login_state'] = "WAITING_FOR_CODE"
 
         msg = (
-            "✅ Code requested!\n\n"
-            "Please check your Telegram app for the login code.\n"
-            "⚠️ Telegram does not allow forwarding the code to bots. Please send the code with spaces in between numbers, or dashes, or commas.\n"
-            "Example: 1 2 3 4 5 instead of 12345"
+            "Code requested. Check Telegram.\n\n"
+            "Send the code with spaces, dashes, or commas.\n"
+            "Example: 1 2 3 4 5"
         )
         sent_msg = await _reply_and_delete(update, msg)
         context.user_data['bot_messages'].append(sent_msg.message_id)
@@ -149,7 +148,7 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error requesting code: {e}")
-        err_msg = await _reply_and_delete(update, f"❌ Error requesting code: {str(e)}\nPlease try again with /starthunter")
+        err_msg = await _reply_and_delete(update, f"Could not request a code: {str(e)}\nTry /starthunter again.")
         context.user_data.setdefault('bot_messages', []).append(err_msg.message_id)
         await _wipe_conversation(context, update.effective_chat.id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -170,7 +169,7 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     if not client or not client.is_connected():
         await _cleanup_login_attempt(context, client)
-        err = await _reply_and_delete(update, "❌ Session expired. Please start over with /starthunter")
+        err = await _reply_and_delete(update, "Session expired. Try /starthunter again.")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -181,7 +180,7 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return await finalize_login(update, context)
 
     except SessionPasswordNeededError:
-        msg = "🔐 Two-Step Verification is enabled.\nPlease enter your password:"
+        msg = "Two-step verification is enabled. Send your password."
         sent_msg = await _reply_and_delete(update, msg)
         context.user_data['bot_messages'].append(sent_msg.message_id)
         context.user_data['login_state'] = "WAITING_FOR_2FA"
@@ -189,7 +188,7 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error signing in: {e}")
-        err = await _reply_and_delete(update, f"❌ Login failed: {str(e)}\nPlease try again with /starthunter")
+        err = await _reply_and_delete(update, f"Login failed: {str(e)}\nTry /starthunter again.")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -205,7 +204,7 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if not client or not client.is_connected():
         await _cleanup_login_attempt(context, client)
-        err = await _reply_and_delete(update, "❌ Session expired. Please start over with /starthunter")
+        err = await _reply_and_delete(update, "Session expired. Try /starthunter again.")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -216,7 +215,7 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error with 2FA password: {e}")
-        err = await _reply_and_delete(update, f"❌ Incorrect password or error: {str(e)}\nPlease try again with /starthunter")
+        err = await _reply_and_delete(update, f"Password was not accepted: {str(e)}\nTry /starthunter again.")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END
@@ -377,18 +376,13 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if other_bots:
                 bot_links = "\n".join([f"• @{b}" for b in other_bots])
                 lock_msg = (
-                    f"🔒 **Session Locked**\n\n"
-                    f"This bot (@{current_bot_username}) could not save the session file "
-                    f"because it is locked by another process.\n\n"
-                    f"👉 **Please use one of these other bots instead:**\n"
+                    f"Session could not be saved. Use another bot:\n"
                     f"{bot_links}\n\n"
-                    f"Just open a chat with the bot above and type /starthunter to login."
+                    "Open it and send /starthunter."
                 )
             else:
                 lock_msg = (
-                    f"🔒 **Session Locked**\n\n"
-                    f"This bot (@{current_bot_username}) could not save the session file.\n"
-                    f"No other bots are available at this time. Please try again later."
+                    "Session could not be saved. Try again later."
                 )
 
             sent_msg = await _reply_and_delete(update, lock_msg, parse_mode=ParseMode.MARKDOWN)
@@ -421,12 +415,9 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             invite_url = invite.invite_link
             join_msg = (
-                "🍤 *Almost done — one more click*\n\n"
-                "Your session is registered, but it must be a member of the "
-                "monitor group to invite bots. Tap the link below to join "
-                "(single-use, expires when consumed):\n\n"
+                "Join the monitor group to finish setup:\n\n"
                 f"{invite_url}\n\n"
-                "_This message will self-delete in 60 seconds._"
+                "This message deletes in 60 seconds."
             )
             sent_join = await _reply_and_delete(update,
                 join_msg,
@@ -449,7 +440,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         await _cleanup_login_attempt(context, client)
         logger.error(f"Error finalizing login: {e}")
-        err = await _reply_and_delete(update, f"❌ Error finalizing login: {str(e)}")
+        err = await _reply_and_delete(update, f"Could not finish login: {str(e)}")
         context.user_data.setdefault('bot_messages', []).append(err.message_id)
         await _wipe_conversation(context, update.effective_chat.id, context.user_data.get('bot_messages', []))
         return ConversationHandler.END

@@ -300,7 +300,7 @@ async def _format_hits(raw_limit: str | None) -> str:
             )
             link = None
         if link:
-            lines.append(f"📎 {link}")
+            lines.append(link)
     return "\n".join(lines)
 
 
