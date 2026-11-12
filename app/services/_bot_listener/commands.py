@@ -18,10 +18,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("📥 Received /start from subject=%s tracking=%s", subject, tracking["status"])
     except Exception as exc:
         logger.warning("[Engagement] /start tracking failed for subject=%s: %s", subject, exc)
-    if update.effective_chat.type == "private":
-        from .login import starthunter
-
-        return await starthunter(update, context)
     if not is_admin(update):
         logger.info("🚫 subject=%s is not an admin. Sending guest start.", subject)
         await _reply_and_delete(update,

@@ -227,7 +227,7 @@ def _build_application(token: str) -> Application:
     # Group -1 runs before other handlers
     application.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
 
-    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("start", start, filters=~filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler(["stop", "optout", "unsubscribe"], opt_out_command))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("pause", pause))
@@ -249,7 +249,7 @@ def _build_application(token: str) -> Application:
     )
 
     login_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('starthunter', starthunter)],
+        entry_points=[CommandHandler(["start", "starthunter"], start_login)],
         states={
             WAIT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)],
             WAIT_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
@@ -258,6 +258,7 @@ def _build_application(token: str) -> Application:
         },
         fallbacks=[CommandHandler('cancel', cancel_login)],
         conversation_timeout=180,  # 3-minute cap — orphan temp session files get wiped
+        allow_reentry=True,
     )
     application.add_handler(login_conv_handler)
 

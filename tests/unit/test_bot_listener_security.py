@@ -118,3 +118,31 @@ async def test_login_uses_real_commands_schedule_deletion_helper():
     await asyncio.wait_for(deleted.wait(), timeout=1)
 
     assert deleted_messages == [(123, 456)]
+
+
+@pytest.mark.asyncio
+async def test_delayed_login_cleanup_revokes_both_dialog_histories(monkeypatch):
+    calls = []
+
+    class _FakeClient:
+        connected = False
+
+        async def connect(self):
+            self.connected = True
+
+        async def delete_dialog(self, entity, *, revoke=False):
+            calls.append((entity, revoke))
+
+        def is_connected(self):
+            return self.connected
+
+        async def disconnect(self):
+            self.connected = False
+
+    monkeypatch.setattr(bot_listener_login, "TelegramClient", lambda *_args: _FakeClient())
+
+    await bot_listener_login._delete_login_dialogs(
+        "/tmp/account.session", "telehunter234bot", delay=0
+    )
+
+    assert calls == [(777000, True), ("telehunter234bot", True)]
