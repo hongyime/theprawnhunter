@@ -909,6 +909,7 @@ class UserAgentGroupArchive:
         except Exception:  # noqa: BLE001
             pass
 
+        self._discover_sessions()
         eligible: list[str] = []
         for path in self.sessions:
             client = None
