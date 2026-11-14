@@ -26,6 +26,7 @@ os.environ["MONITOR_GROUP_ID"] = "-100123"
 os.environ["TELEGRAM_API_ID"] = "12345"
 os.environ["TELEGRAM_API_HASH"] = "abc"
 os.environ["MONITOR_API_KEY"] = "test-monitor-key-for-pytest"
+os.environ["HONEYPOT_REDIRECT_BOT"] = "test_redirect_bot"
 
 from app.api.main import app  # noqa: E402, I001
 

@@ -1228,7 +1228,15 @@ def diagnose_anonymous_senders() -> dict[str, int]:
         from app.services.user_agent_srv import user_agent
 
         eligible = await user_agent.eligible_anonymous_senders(settings.MONITOR_GROUP_ID)
-        return {"eligible_anonymous_senders": len(eligible)}
+        count = len(eligible)
+        # Persist result in Redis so the API status endpoint can read it
+        # without spinning up MTProto connections.
+        try:
+            from app.core.redis_srv import redis_srv
+            redis_srv.client.set("diagnose:eligible_anonymous_senders", str(count), ex=172800)
+        except Exception:
+            pass
+        return {"eligible_anonymous_senders": count}
 
     return get_worker_loop().run_until_complete(_probe())
 
@@ -1319,7 +1327,7 @@ async def _filter_to_oldest_per_topic(
     credential for the whole batch; if it fails we fall back to the unfiltered
     batch rather than stalling delivery.
     """
-    if not rows or not os.getenv("BROADCAST_STRICT_PER_TOPIC_ORDER", "1") == "1":
+    if not rows or os.getenv("BROADCAST_STRICT_PER_TOPIC_ORDER", "1") != "1":
         return rows
     credential_ids = sorted({row.get("credential_id") for row in rows if row.get("credential_id")})
     if not credential_ids:

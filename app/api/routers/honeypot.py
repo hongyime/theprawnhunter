@@ -193,7 +193,7 @@ async def receive_webhook_update(credential_id: str, request: Request):
 
         logger.error(f"[Honeypot] insert failed for {credential_id[:8]}...: {e}")
         # Signal failure to Telegram so it retries delivery per Bot API docs
-        raise HTTPException(status_code=500, detail="Database persistence failed")
+        raise HTTPException(status_code=500, detail="Database persistence failed") from e
 
     try:
         from app.services.membership_srv import process_membership_update

@@ -13,6 +13,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def configured_redirect_bot(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "HONEYPOT_REDIRECT_BOT", "test_redirect_bot")
+
 # ---------------------------------------------------------------------------
 # BUG 1: celery_app.py must import honeypot_redirect_tasks
 # ---------------------------------------------------------------------------

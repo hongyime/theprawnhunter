@@ -4,6 +4,17 @@ from .common import *
 
 router = APIRouter()
 
+# Characters that can trigger formula execution in spreadsheet applications.
+_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_csv_cell(value: str) -> str:
+    """Prepend a single-quote to cell values starting with formula trigger characters."""
+    if isinstance(value, str) and value and value[0] in _FORMULA_TRIGGERS:
+        return f"'{value}"
+    return value
+
+
 @router.get("/export")
 async def export_messages(
     credential_id: UUID | None = Query(None),
@@ -33,8 +44,11 @@ async def export_messages(
         writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for row in rows:
-            # Replace None with empty string for CSV safety
-            writer.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fieldnames})
+            # Replace None with empty string and sanitize formula triggers for CSV safety
+            writer.writerow({
+                k: _sanitize_csv_cell("" if row.get(k) is None else str(row.get(k)))
+                for k in fieldnames
+            })
         ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         buf.seek(0)
         return StreamingResponse(

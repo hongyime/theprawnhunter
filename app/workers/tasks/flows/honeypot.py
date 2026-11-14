@@ -333,6 +333,8 @@ async def _honeypot_redirect_sweep_logic() -> dict:
         return {"status": "disabled", "reason": "mode_disabled"}
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
+    if not settings.HONEYPOT_REDIRECT_BOT:
+        return {"status": "skipped", "reason": "redirect_bot_not_configured"}
 
     from datetime import UTC, datetime, timedelta
 
@@ -638,6 +640,8 @@ async def _honeypot_redirect_one_logic(
     update_type: str = "message",
     claim_token: str | None = None,
 ) -> dict:
+    if not settings.HONEYPOT_REDIRECT_BOT:
+        return {"status": "skipped", "reason": "redirect_bot_not_configured"}
     from datetime import datetime, timedelta
 
     import httpx

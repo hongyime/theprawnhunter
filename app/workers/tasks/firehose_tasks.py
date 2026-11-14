@@ -111,7 +111,7 @@ def _read_pause_until():
     """Read the shared rate-limit wait, while keeping a local fallback."""
     global _LOCAL_PAUSE_UNTIL
     now = time.time()
-    if _LOCAL_PAUSE_UNTIL > now:
+    if now < _LOCAL_PAUSE_UNTIL:
         return _LOCAL_PAUSE_UNTIL
     try:
         value = redis_client.get(RATE_LIMIT_KEY)

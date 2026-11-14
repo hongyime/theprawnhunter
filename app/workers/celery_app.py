@@ -739,6 +739,8 @@ _BEAT_EXPIRY_SECONDS: dict[str, int] = {
     "queue-monitor-5min": 240,
     "health-alert-5min": 240,
     "close-revoked-topics-5min": 240,
+    "diagnose-anonymous-senders-daily": 7200,
+    "recheck-unmonitorable-credentials-daily": 7200,
     "mute-monitor-topics-daily": 1800,
     "canary-flow-check-30min": 300,
     "canary-findings-check-hourly": 600,

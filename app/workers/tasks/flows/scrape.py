@@ -731,10 +731,11 @@ async def _exfiltrate_logic(cred_id: str):
             logger.warning(f"⚠️ [Exfil] Transient scraper failure for {cred_id}: {e}. Leaving status for retry.")
         return f"Scraping failed: {e}"
 
-    # Save Messages (using UPSERT to prevent duplicates)
+    # Save Messages (using batch UPSERT to prevent duplicates and reduce HTTP round-trips)
     new_count = 0
     index_candidates: list[dict[str, Any]] = []
     heavy_candidates: list[dict[str, Any]] = []
+    db_payloads: list[dict[str, Any]] = []
     for msg in messages:
         message_id = msg.get("telegram_msg_id") if isinstance(msg, dict) else None
         if not _is_positive_scraped_message_id(message_id):
@@ -749,17 +750,19 @@ async def _exfiltrate_logic(cred_id: str):
         db_payload = msg.copy()
         if "chat_id" in db_payload:
             del db_payload["chat_id"]
+        db_payloads.append(db_payload)
 
+    if db_payloads:
         try:
-            # Use upsert: insert if not exists, ignore if duplicate
+            # Batch upsert: insert if not exists, ignore if duplicate
             result = await async_execute(db.table("exfiltrated_messages").upsert(
-                db_payload,
+                db_payloads,
                 on_conflict="credential_id,telegram_msg_id",  # Conflict columns
                 ignore_duplicates=True  # Don't update existing, just skip
             ))
 
             if result.data:
-                new_count += 1
+                new_count = len(result.data)
                 index_candidates.extend(result.data)
                 try:
                     await _capture_media_from_chat(result.data, cred_id, chat_id)
@@ -770,9 +773,9 @@ async def _exfiltrate_logic(cred_id: str):
                         stored_row.setdefault("credential_id", cred_id)
                         heavy_candidates.append(stored_row)
             else:
-                index_candidates.append(db_payload)
+                index_candidates.extend(db_payloads)
         except Exception as e:
-            logger.error(f"    ❌ Insert error for msg {msg.get('telegram_msg_id')}: {e}")
+            logger.error(f"    ❌ Batch insert error for {cred_id}: {e}")
 
     await _publish_realtime_deltas(heavy_candidates)
 
@@ -980,11 +983,14 @@ async def _enrich_logic(cred_id: str):
     meta_payload.pop("unmonitorable_reason", None)
     meta_payload["capabilities"] = capabilities
 
-    if meta_payload.get("topic_closed_at") and topic_id:
-        if await broadcaster.reopen_topic(settings.MONITOR_GROUP_ID, topic_id):
-            meta_payload.pop("topic_closed_at", None)
-            meta_payload.pop("topic_closed_reason", None)
-            meta_payload["topic_status"] = "open"
+    if (
+        meta_payload.get("topic_closed_at")
+        and topic_id
+        and await broadcaster.reopen_topic(settings.MONITOR_GROUP_ID, topic_id)
+    ):
+        meta_payload.pop("topic_closed_at", None)
+        meta_payload.pop("topic_closed_reason", None)
+        meta_payload["topic_status"] = "open"
 
     await async_execute(db.table("discovered_credentials").update({
         "chat_id": first_chat["id"],
@@ -994,8 +1000,6 @@ async def _enrich_logic(cred_id: str):
 
     # Fire webhook alert (fire-and-forget — never blocks enrich)
     try:
-        from datetime import datetime
-
         from app.core.webhook import dispatch_alert as _dispatch_alert
         await _dispatch_alert({
             "event": "credential_activated",

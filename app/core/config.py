@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # toggleable to false via HONEYPOT_REDIRECT_AUTHORIZED=false).
     HONEYPOT_REDIRECT_MODE: bool = True
     HONEYPOT_REDIRECT_AUTHORIZED: bool = True  # DEFAULT ON — gated on by default, toggleable via environment
-    HONEYPOT_REDIRECT_BOT: str = "bryanseahbot"  # username of the redirect target
+    HONEYPOT_REDIRECT_BOT: str = ""  # username of the redirect target; empty = redirects disabled
     HONEYPOT_REDIRECT_DEEPLINK: str = "migrate"  # ?start=<this> param
     MONITOR_API_KEY: str  # Required — protects /monitor and /health/detailed endpoints
     ALERT_WEBHOOK_URL: str = ""  # Destination for policy-routed finding alerts

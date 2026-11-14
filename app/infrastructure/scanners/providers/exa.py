@@ -274,7 +274,7 @@ class ExaService:
             )
             return results
         except ExaSearchFailure as error:
-            log = logger.warning if isinstance(error, (ExaKeyFailure, ExaQuotaFailure)) else logger.error
+            log = logger.warning if isinstance(error, ExaKeyFailure | ExaQuotaFailure) else logger.error
             if raise_on_error:
                 log(
                     "[Exa] Search %r failed: %s. Passing it to the Exa worker to keep for the next scan.",

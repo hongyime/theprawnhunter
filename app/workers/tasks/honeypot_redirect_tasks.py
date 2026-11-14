@@ -38,6 +38,8 @@ async def _redirect_touch2_logic() -> dict:
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
+    if not redirect_bot:
+        return {"status": "skipped", "reason": "redirect_bot_not_configured"}
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
 
@@ -201,6 +203,8 @@ async def _redirect_touch3_logic() -> dict:
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
+    if not redirect_bot:
+        return {"status": "skipped", "reason": "redirect_bot_not_configured"}
     deeplink = settings.HONEYPOT_REDIRECT_DEEPLINK
     redirect_url = f"https://t.me/{redirect_bot}?start={deeplink}"
 
@@ -364,6 +368,8 @@ async def _proactive_outreach_logic() -> dict:
     if not settings.HONEYPOT_REDIRECT_AUTHORIZED:
         return {"status": "skipped", "reason": "not_authorized"}
     redirect_bot = settings.HONEYPOT_REDIRECT_BOT
+    if not redirect_bot:
+        return {"status": "skipped", "reason": "redirect_bot_not_configured"}
 
     stale_claim_cutoff = (datetime.now(UTC) - timedelta(minutes=15)).isoformat()
     try:

@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 
 from app.core.queue_monitor import DEFAULT_QUEUES, get_queue_snapshot
 from app.core.redis_srv import redis_srv
-from app.core.config import settings
 from app.services._bot_listener.runtime import PAUSE_KEY
 from app.services.broadcaster_srv import BroadcasterService
 
@@ -190,11 +189,12 @@ async def _delivery_metrics(state: dict[str, Any]) -> DeliveryMetricsOut:
     except Exception as exc:
         logger.warning("monitor/ops delivery metrics failed (%s)", type(exc).__name__)
     try:
-        from app.services.user_agent_srv import user_agent
-
-        values["eligible_anonymous_senders"] = len(
-            await user_agent.eligible_anonymous_senders(settings.MONITOR_GROUP_ID)
-        )
+        _anon_raw = redis_srv.client.get("diagnose:eligible_anonymous_senders")
+        if _anon_raw is not None:
+            values["eligible_anonymous_senders"] = int(_anon_raw)
+        else:
+            # Key not populated yet (task hasn't run); leave field absent.
+            pass
     except Exception as exc:
         logger.warning("monitor/ops anonymous sender probe failed (%s)", type(exc).__name__)
     return DeliveryMetricsOut(**values)

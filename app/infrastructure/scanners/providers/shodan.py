@@ -297,7 +297,7 @@ class ShodanService:
             tasks = [process_match(match) for match in matches]
             batch_results = await asyncio.gather(*tasks, return_exceptions=True) if tasks else []
 
-        for match, result in zip(matches, batch_results):
+        for match, result in zip(matches, batch_results, strict=True):
             if isinstance(result, Exception):
                 logger.warning(
                     "[Shodan] Search %r could not process host %s:%s (%s); continuing with other matches",

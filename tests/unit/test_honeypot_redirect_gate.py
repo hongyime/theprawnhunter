@@ -16,9 +16,17 @@ import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).parents[2]
 REDIRECT_TASKS = REPO_ROOT / "app" / "workers" / "tasks" / "honeypot_redirect_tasks.py"
 FLOW_TASKS = REPO_ROOT / "app" / "workers" / "tasks" / "flows" / "honeypot.py"
+
+
+@pytest.fixture(autouse=True)
+def configured_redirect_bot(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "HONEYPOT_REDIRECT_BOT", "test_redirect_bot")
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +60,21 @@ def test_env_template_declares_authorized_true():
         f"HONEYPOT_REDIRECT_AUTHORIZED must default to true in .env.template. "
         f"Got: {lines!r}"
     )
+
+
+def test_empty_redirect_bot_disables_sweep_without_database_access(monkeypatch):
+    from app.workers.tasks import flow_tasks
+
+    fake_db = MagicMock()
+    monkeypatch.setattr(flow_tasks.settings, "HONEYPOT_REDIRECT_MODE", True)
+    monkeypatch.setattr(flow_tasks.settings, "HONEYPOT_REDIRECT_AUTHORIZED", True)
+    monkeypatch.setattr(flow_tasks.settings, "HONEYPOT_REDIRECT_BOT", "")
+    monkeypatch.setattr(flow_tasks, "db", fake_db)
+
+    assert _run(flow_tasks._honeypot_redirect_sweep_logic()) == {
+        "status": "skipped", "reason": "redirect_bot_not_configured"
+    }
+    fake_db.table.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

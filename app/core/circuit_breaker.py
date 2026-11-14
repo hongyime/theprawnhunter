@@ -2,7 +2,9 @@
 Circuit breaker pattern for external service calls.
 Prevents cascading failures by temporarily disabling failing services.
 """
+import contextlib
 import functools
+import json as _json
 import time
 from collections.abc import Callable
 from enum import Enum
@@ -13,6 +15,38 @@ from app.core.logger import get_logger
 logger = get_logger(__name__)
 
 T = TypeVar('T')
+
+# Redis key prefix for cluster-wide circuit breaker state.
+_CB_REDIS_PREFIX = "circuit_breaker:"
+_CB_TRANSITION_LUA = """
+local raw = redis.call('get', KEYS[1])
+local s = raw and cjson.decode(raw) or {state='closed', failure_count=0, success_count=0}
+local event = ARGV[1]
+if event == 'failure' then
+  s.failure_count = (s.failure_count or 0) + 1
+  s.last_failure_time = tonumber(ARGV[4])
+  if s.state == 'half_open' or s.failure_count >= tonumber(ARGV[2]) then
+    s.state = 'open'; s.success_count = 0
+  end
+elseif event == 'success' then
+  if s.state == 'half_open' then
+    s.success_count = (s.success_count or 0) + 1
+    if s.success_count >= tonumber(ARGV[3]) then
+      s.state = 'closed'; s.failure_count = 0; s.success_count = 0
+    end
+  else
+    s.failure_count = 0
+  end
+end
+redis.call('set', KEYS[1], cjson.encode(s))
+return cjson.encode(s)
+"""
+
+
+def _redis_client():
+    """Lazy accessor — avoids import-time circular deps."""
+    from app.core.redis_srv import redis_srv
+    return redis_srv.client
 
 
 class CircuitState(Enum):
@@ -25,8 +59,10 @@ class CircuitState(Enum):
 class CircuitBreaker:
     """
     Circuit breaker implementation for external service protection.
-    Thread-safe via threading.Lock (Celery prefork workers each get their own instance).
-    Note: state is per-process — not cluster-wide. Each Celery worker has independent state.
+    State is stored in Redis so it is shared cluster-wide across API and
+    worker processes.  Falls back to in-memory state when Redis is
+    unavailable so that the breaker never blocks startup or crashes a
+    request because Redis is down.
 
     States:
     - CLOSED: Normal operation, requests pass through
@@ -57,11 +93,76 @@ class CircuitBreaker:
         self.recovery_timeout = recovery_timeout
         self.success_threshold = success_threshold
 
-        self.state = CircuitState.CLOSED
-        self.failure_count = 0
-        self.success_count = 0
-        self.last_failure_time: float | None = None
-        self._lock = __import__("threading").Lock()  # Thread-safe state mutations
+        # In-memory fallbacks — used only when Redis is unreachable.
+        self._mem_state = CircuitState.CLOSED
+        self._mem_failure_count = 0
+        self._mem_success_count = 0
+        self._mem_last_failure_time: float | None = None
+        self._lock = __import__("threading").Lock()
+
+    # ------------------------------------------------------------------
+    # Redis helpers
+    # ------------------------------------------------------------------
+
+    def _redis_key(self) -> str:
+        return f"{_CB_REDIS_PREFIX}{self.name}"
+
+    def _load_state(self) -> dict:
+        """Load state from Redis, falling back to in-memory."""
+        try:
+            raw = _redis_client().get(self._redis_key())
+            if raw:
+                return _json.loads(raw)
+        except Exception:
+            pass
+        # Fallback: return in-memory state
+        return {
+            "state": self._mem_state.value,
+            "failure_count": self._mem_failure_count,
+            "success_count": self._mem_success_count,
+            "last_failure_time": self._mem_last_failure_time,
+        }
+
+    def _save_state(self, data: dict) -> None:
+        """Persist state to Redis; update in-memory mirror."""
+        self._mem_state = CircuitState(data["state"])
+        self._mem_failure_count = data.get("failure_count", 0)
+        self._mem_success_count = data.get("success_count", 0)
+        self._mem_last_failure_time = data.get("last_failure_time")
+        with contextlib.suppress(Exception):
+            _redis_client().set(
+                self._redis_key(),
+                _json.dumps(data, default=str),
+            )
+
+    def _atomic_transition(self, event: str) -> dict | None:
+        try:
+            raw = _redis_client().eval(
+                _CB_TRANSITION_LUA, 1, self._redis_key(), event,
+                self.failure_threshold, self.success_threshold, time.time(),
+            )
+            return _json.loads(raw)
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # State property
+    # ------------------------------------------------------------------
+
+    @property
+    def state(self) -> CircuitState:
+        data = self._load_state()
+        return CircuitState(data.get("state", "closed"))
+
+    @state.setter
+    def state(self, new: CircuitState) -> None:
+        data = self._load_state()
+        data["state"] = new.value
+        self._save_state(data)
+
+    # ------------------------------------------------------------------
+    # Decorator
+    # ------------------------------------------------------------------
 
     def call(self, func: Callable[..., T]) -> Callable[..., T]:
         """Decorator to protect a sync or async function with circuit breaker."""
@@ -70,7 +171,8 @@ class CircuitBreaker:
         if _asyncio.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
-                if self.state == CircuitState.OPEN:
+                cur = self.state
+                if cur == CircuitState.OPEN:
                     if self._should_attempt_reset():
                         logger.info(f"Circuit breaker [{self.name}] attempting recovery (HALF_OPEN)")
                         self.state = CircuitState.HALF_OPEN
@@ -91,7 +193,8 @@ class CircuitBreaker:
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            if self.state == CircuitState.OPEN:
+            cur = self.state
+            if cur == CircuitState.OPEN:
                 if self._should_attempt_reset():
                     logger.info(f"Circuit breaker [{self.name}] attempting recovery (HALF_OPEN)")
                     self.state = CircuitState.HALF_OPEN
@@ -112,58 +215,87 @@ class CircuitBreaker:
 
     def _should_attempt_reset(self) -> bool:
         """Check if enough time has passed to attempt recovery"""
-        if self.last_failure_time is None:
+        data = self._load_state()
+        last = data.get("last_failure_time")
+        if last is None:
             return True
-        return time.time() - self.last_failure_time >= self.recovery_timeout
+        return time.time() - float(last) >= self.recovery_timeout
 
     def _on_success(self):
         """Handle successful call"""
+        updated = self._atomic_transition("success")
+        if updated is not None:
+            self._save_memory(updated)
+            return
         with self._lock:
-            if self.state == CircuitState.HALF_OPEN:
-                self.success_count += 1
-                if self.success_count >= self.success_threshold:
+            data = self._load_state()
+            cur = CircuitState(data.get("state", "closed"))
+            if cur == CircuitState.HALF_OPEN:
+                sc = data.get("success_count", 0) + 1
+                if sc >= self.success_threshold:
                     logger.info(f"Circuit breaker [{self.name}] recovered (CLOSED)")
-                    self.state = CircuitState.CLOSED
-                    self.failure_count = 0
-                    self.success_count = 0
+                    data["state"] = CircuitState.CLOSED.value
+                    data["failure_count"] = 0
+                    data["success_count"] = 0
+                else:
+                    data["success_count"] = sc
             else:
                 # Reset failure count on success in CLOSED state
-                self.failure_count = 0
+                data["failure_count"] = 0
+            self._save_state(data)
 
     def _on_failure(self):
         """Handle failed call"""
+        updated = self._atomic_transition("failure")
+        if updated is not None:
+            self._save_memory(updated)
+            return
         with self._lock:
-            self.failure_count += 1
-            self.last_failure_time = time.time()
+            data = self._load_state()
+            fc = data.get("failure_count", 0) + 1
+            data["failure_count"] = fc
+            data["last_failure_time"] = time.time()
+            cur = CircuitState(data.get("state", "closed"))
 
-            if self.state == CircuitState.HALF_OPEN:
+            if cur == CircuitState.HALF_OPEN:
                 # Failed during recovery attempt
                 logger.warning(f"Circuit breaker [{self.name}] recovery failed, reopening")
-                self.state = CircuitState.OPEN
-                self.success_count = 0
-            elif self.failure_count >= self.failure_threshold:
+                data["state"] = CircuitState.OPEN.value
+                data["success_count"] = 0
+            elif fc >= self.failure_threshold:
                 logger.error(
-                    f"Circuit breaker [{self.name}] OPENED after {self.failure_count} failures"
+                    f"Circuit breaker [{self.name}] OPENED after {fc} failures"
                 )
-                self.state = CircuitState.OPEN
+                data["state"] = CircuitState.OPEN.value
+            self._save_state(data)
+
+    def _save_memory(self, data: dict) -> None:
+        self._mem_state = CircuitState(data["state"])
+        self._mem_failure_count = data.get("failure_count", 0)
+        self._mem_success_count = data.get("success_count", 0)
+        self._mem_last_failure_time = data.get("last_failure_time")
 
     def reset(self):
         """Manually reset circuit breaker"""
         with self._lock:
             logger.info(f"Circuit breaker [{self.name}] manually reset")
-            self.state = CircuitState.CLOSED
-            self.failure_count = 0
-            self.success_count = 0
-            self.last_failure_time = None
+            data = {
+                "state": CircuitState.CLOSED.value,
+                "failure_count": 0,
+                "success_count": 0,
+                "last_failure_time": None,
+            }
+            self._save_state(data)
 
     def get_status(self) -> dict:
         """Get current circuit breaker status"""
+        data = self._load_state()
         return {
             "name": self.name,
-            "state": self.state.value,
-            "failure_count": self.failure_count,
-            "success_count": self.success_count,
-            "last_failure_time": self.last_failure_time
+            "state": data.get("state", "closed"),
+            "failure_count": data.get("failure_count", 0),
+            "success_count": data.get("success_count", 0),
+            "last_failure_time": data.get("last_failure_time"),
         }
 
 

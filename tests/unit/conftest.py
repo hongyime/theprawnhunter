@@ -17,6 +17,7 @@ os.environ.setdefault("MONITOR_GROUP_ID", "-100123")
 os.environ.setdefault("MONITOR_API_KEY", "test-monitor-key-for-pytest")
 os.environ.setdefault("TELEGRAM_API_ID", "1")
 os.environ.setdefault("TELEGRAM_API_HASH", "abc")
+os.environ.setdefault("HONEYPOT_REDIRECT_BOT", "test_redirect_bot")
 
 # ── Stub app.workers.celery_app BEFORE any task module is imported ───────────
 # This prevents Celery from trying to connect to Redis at import time.

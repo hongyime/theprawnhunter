@@ -1,5 +1,11 @@
 # theprawnhunter — STATE
 
+## Current task — Repository audit & hygiene fixes (2026-11-14)
+
+- **Status:** [x] Audit defects, beat expiry, circuit breaker, batch scrape upsert, API non-blocking metrics, CSV sanitization, explicit queries, config defaults, and style hygiene resolved.
+- **Verification:** 1238/1238 pytest tests passed, 213/213 frontend vitest tests passed, 5/5 extension tests passed.
+- **Push:** Ready to push to main.
+
 ## Current task — 15-bug audit fixes shipped (2026-11-04)
 
 - **Status:** [x] All 15 audit bugs fixed, tested, committed `ed23229`, pushed to `origin/main`, and deployed live on 3410.

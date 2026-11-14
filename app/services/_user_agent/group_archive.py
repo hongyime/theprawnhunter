@@ -785,7 +785,7 @@ class UserAgentGroupArchive:
 
                         if isinstance(
                             result.participant,
-                            (ChannelParticipantAdmin, ChannelParticipantCreator),
+                            ChannelParticipantAdmin | ChannelParticipantCreator,
                         ):
                             continue
 
