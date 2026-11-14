@@ -317,8 +317,6 @@ def test_response_model_exposes_snippet_and_keeps_legacy_fields():
 
 
 def test_route_serializes_snippet_without_dropping_existing_fields(client, monkeypatch):
-    from app.api.routers import monitor
-
     fake_db = _FakeDB(rpc_rows=FTS_ROWS)
     monkeypatch.setattr("app.api.routers._monitor.search.db", fake_db)
 

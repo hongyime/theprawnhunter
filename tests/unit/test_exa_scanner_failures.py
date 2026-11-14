@@ -223,7 +223,7 @@ async def test_rate_limit_waits_then_stops_and_keeps_current_and_later_searches(
         ["limited search", "later search"],
     )
 
-    result = await exa_task._scan_exa_async()
+    await exa_task._scan_exa_async()
 
     assert "stopped this run cleanly" in statuses[1]
     assert redis.lists[exa_task.EXA_RETRY_QUEUE] == ["limited search", "later search"]

@@ -336,14 +336,16 @@ async def test_ensure_topic_does_not_create_when_topic_list_lookup_fails():
     from app.services import broadcaster_srv
 
     service = broadcaster_srv.BroadcasterService.__new__(broadcaster_srv.BroadcasterService)
-    with patch.object(
-        broadcaster_srv.user_agent,
-        "find_topic_id",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("Telegram topic list unavailable"),
-    ) as find_topic:
-        with pytest.raises(RuntimeError, match="Could not resolve existing topic"):
-            await service.ensure_topic(-100123, "@ExampleBot / 123456")
+    with (
+        patch.object(
+            broadcaster_srv.user_agent,
+            "find_topic_id",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Telegram topic list unavailable"),
+        ) as find_topic,
+        pytest.raises(RuntimeError, match="Could not resolve existing topic"),
+    ):
+        await service.ensure_topic(-100123, "@ExampleBot / 123456")
 
     find_topic.assert_awaited_once_with(-100123, "@ExampleBot / 123456")
 

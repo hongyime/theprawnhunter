@@ -1,6 +1,3 @@
-import json
-
-import httpx
 import pytest
 
 from app.services import virustotal_srv

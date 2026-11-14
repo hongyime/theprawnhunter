@@ -5,9 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
-from app.api.main import app
 from app.api.routers import honeypot as hp_router
 from app.services.honeypot_srv import extract_honeypot_message, forward_honeypot_message
 from app.workers.tasks.retention_tasks import _automated_retention_cleanup_async
